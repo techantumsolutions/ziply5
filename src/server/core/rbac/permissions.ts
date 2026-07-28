@@ -74,6 +74,13 @@ export const permissionsByRole: Record<RoleKey, string[]> = {
     "users.create",
     "addresses.read",
     "addresses.write",
+    "product_usage.read",
+    "product_usage.create",
+    "product_usage.update",
+    "product_usage.delete",
+    "product_usage.publish",
+    "product_usage.seo",
+    "product_usage.navigation",
   ],
   customer: [
     "notifications.read",
