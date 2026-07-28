@@ -68,20 +68,14 @@ export default async function ProductUsageDetailPage({ params }: ProductUsageDet
           <ChevronRight size={14} className="text-[#AAA]" />
           <span className="text-[#201A1A] truncate max-w-[200px] sm:max-w-none">{item.title}</span>
         </nav> */}
-        {/* Video Player or Thumbnail */}
-        {item.videoType && item.videoType !== "none" && (item.videoUrl || item.uploadedVideo) ? (
-          <VideoPlayer
-            videoType={item.videoType}
-            videoUrl={item.videoUrl}
-            uploadedVideo={item.uploadedVideo}
-            thumbnail={item.thumbnail}
-            title={item.title}
-          />
-        ) : item.thumbnail ? (
-          <div className="relative aspect-video w-full overflow-hidden rounded-2xl border border-[#E2E2E2] bg-black/5 shadow-md">
-            <Image src={item.thumbnail} alt={item.title} fill className="object-cover" />
-          </div>
-        ) : null}
+        {/* Video Player */}
+        <VideoPlayer
+          videoType={item.videoType}
+          videoUrl={item.videoUrl}
+          uploadedVideo={item.uploadedVideo}
+          thumbnail={item.thumbnail}
+          title={item.title}
+        />
 
         {/* Usage Process & Detailed Description */}
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">

@@ -37,8 +37,8 @@ export default function ProductUsageForm({ initialData, isEdit = false }: Produc
   const [thumbnail, setThumbnail] = useState(initialData?.thumbnail || "")
 
   // Video state
-  const [videoType, setVideoType] = useState<"none" | "upload" | "youtube" | "vimeo" | "cdn">(
-    initialData?.videoType || "none"
+  const [videoType, setVideoType] = useState<"upload" | "youtube" | "vimeo" | "cdn">(
+    initialData?.videoType && initialData.videoType !== "none" ? initialData.videoType : "youtube"
   )
   const [videoUrl, setVideoUrl] = useState(initialData?.videoUrl || "")
   const [uploadedVideo, setUploadedVideo] = useState(initialData?.uploadedVideo || "")
@@ -177,6 +177,13 @@ export default function ProductUsageForm({ initialData, isEdit = false }: Produc
     }
     if (!slug.trim()) {
       toast.error("Slug is required")
+      return
+    }
+
+    const hasVideo = videoType === "upload" ? Boolean(uploadedVideo.trim()) : Boolean(videoUrl.trim())
+    if (!hasVideo) {
+      toast.error("Video is mandatory. Please provide a video URL or upload a video file.")
+      setActiveTab("video")
       return
     }
 
@@ -492,11 +499,10 @@ export default function ProductUsageForm({ initialData, isEdit = false }: Produc
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Radio options */}
-              <div className="grid gap-3 sm:grid-cols-4">
+              <div className="grid gap-3 sm:grid-cols-3">
                 {[
-                  { value: "none", label: "No Video" },
-                  { value: "upload", label: "Video Upload" },
                   { value: "youtube", label: "YouTube / Vimeo" },
+                  { value: "upload", label: "Video Upload" },
                   { value: "cdn", label: "CDN Direct Link" },
                 ].map((opt) => (
                   <button

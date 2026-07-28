@@ -30,7 +30,7 @@ export const createProductUsageSchema = z.object({
   description: z.string().optional().nullable(),
   usageProcess: z.string().optional().nullable(),
   thumbnail: z.string().optional().nullable(),
-  videoType: z.enum(["none", "upload", "youtube", "vimeo", "cdn"]).default("none"),
+  videoType: z.enum(["upload", "youtube", "vimeo", "cdn"]).default("youtube"),
   videoUrl: z.string().optional().nullable(),
   uploadedVideo: z.string().optional().nullable(),
   relatedProductId: z.string().min(1).optional().nullable(),
