@@ -210,7 +210,6 @@ export default function ProductUsageList() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Video Types</SelectItem>
-                <SelectItem value="none">No Video</SelectItem>
                 <SelectItem value="upload">Uploaded Video</SelectItem>
                 <SelectItem value="youtube">YouTube</SelectItem>
                 <SelectItem value="vimeo">Vimeo</SelectItem>
