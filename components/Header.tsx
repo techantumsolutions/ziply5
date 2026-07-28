@@ -45,6 +45,7 @@ export default function Header() {
   const closeCartTimeoutRef = useRef<number | null>(null)
   const [cmsData, setCmsData] = useState<any>(null)
   const [wishlistCount, setWishlistCount] = useState(0)
+  const [productUsageNav, setProductUsageNav] = useState<{ title: string; url: string; enabled: boolean } | null>(null)
 
   const productRef = useRef<HTMLDivElement>(null)
   const [productDropdownOpen, setProductDropdownOpen] = useState(false)
@@ -216,11 +217,24 @@ export default function Header() {
       }
     }
 
+    const fetchNavData = async () => {
+      try {
+        const res = await fetch("/api/v1/navigation")
+        const json = await res.json()
+        if (json.data?.productUsage) {
+          setProductUsageNav(json.data.productUsage)
+        }
+      } catch {
+        /* fallback to default */
+      }
+    }
+
     syncCart()
     syncWishlist()
     syncProfileHref()
     void loadMenuData()
     void fetchCmsData()
+    void fetchNavData()
 
     window.addEventListener("ziply5:cart-updated", syncCart)
     window.addEventListener("ziply5:favorites-updated", syncWishlist)
@@ -436,6 +450,15 @@ export default function Header() {
             >
               {cmsData?.link2Title || "Combos"}
             </Link>
+
+            {productUsageNav?.enabled !== false && (
+              <Link
+                href={productUsageNav?.url || "/product-usage"}
+                className="font-extrabold text-black hover:text-[#f97316] transition-colors text-[15px]"
+              >
+                {productUsageNav?.title || "How to Use"}
+              </Link>
+            )}
           </div>
 
           <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 lg:static lg:translate-x-0 lg:translate-y-0 flex-none flex justify-center z-20 pointer-events-none lg:pointer-events-auto">
@@ -611,6 +634,15 @@ export default function Header() {
             <Link href="/about" onClick={() => setMenuOpen(false)} className="block font-semibold text-black">
               About
             </Link>
+            {productUsageNav?.enabled !== false && (
+              <Link
+                href={productUsageNav?.url || "/product-usage"}
+                onClick={() => setMenuOpen(false)}
+                className="block font-semibold text-black"
+              >
+                {productUsageNav?.title || "How to Use"}
+              </Link>
+            )}
           </m.div>
         ) : null}
       </AnimatePresence>
