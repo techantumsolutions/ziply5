@@ -56,6 +56,22 @@ export function DashboardChrome({
   })
 
   useEffect(() => {
+    const html = document.documentElement
+    const { body } = document
+    const prevHtmlOverflow = html.style.overflow
+    const prevBodyOverflow = body.style.overflow
+    const prevBodyOverscroll = body.style.overscrollBehavior
+    html.style.overflow = "hidden"
+    body.style.overflow = "hidden"
+    body.style.overscrollBehavior = "none"
+    return () => {
+      html.style.overflow = prevHtmlOverflow
+      body.style.overflow = prevBodyOverflow
+      body.style.overscrollBehavior = prevBodyOverscroll
+    }
+  }, [])
+
+  useEffect(() => {
     authFetch("/api/v1/auth/me")
       .then(async (r) => {
         if (r.status === 401) {
@@ -106,6 +122,9 @@ export function DashboardChrome({
 
     const [hrefPath, hrefQuery] = href.split("?");
     const [currentPath, currentQuery] = currentPathWithSearch.split("?");
+
+    // Nested routes (e.g. /admin/products/add) keep the parent nav item selected.
+    if (!hrefQuery && hrefPath !== "/" && currentPath.startsWith(`${hrefPath}/`)) return true;
 
     // 2. Path mismatch
     if (hrefPath !== currentPath) return false;
@@ -175,7 +194,7 @@ export function DashboardChrome({
   )
 
   return (
-    <div className="flex h-screen scrollbar-hide bg-[#F5F1E6] text-[#2A1810]">
+    <div className="fixed inset-0 flex overflow-hidden bg-[#F5F1E6] text-[#2A1810]">
       <AnimatePresence>
         {sidebarOpen ? (
           <m.button
@@ -230,7 +249,7 @@ export function DashboardChrome({
         </div>
       </m.aside>
 
-      <div className="flex min-h-screen min-w-0 flex-1 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="sticky top-0 z-30 flex shrink-0 items-center justify-between gap-3 border-b border-[#E0D5C8] bg-white/95 px-3 py-[18px] backdrop-blur md:px-5">
           <div className="flex items-center gap-2">
             <button
@@ -260,7 +279,7 @@ export function DashboardChrome({
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 md:p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain p-4 md:p-6">{children}</main>
       </div>
     </div>
   )

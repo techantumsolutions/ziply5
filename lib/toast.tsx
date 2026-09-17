@@ -20,8 +20,10 @@ function getToastContainer() {
     if (!toastContainer) {
         toastContainer = document.createElement("div")
         toastContainer.style.position = "fixed"
-        toastContainer.style.top = "0"
+        toastContainer.style.top = "auto"
         toastContainer.style.right = "0"
+        toastContainer.style.bottom = "0"
+        toastContainer.style.left = "auto"
         toastContainer.style.zIndex = "9999"
         document.body.appendChild(toastContainer)
         toastRoot = createRoot(toastContainer)
@@ -50,7 +52,7 @@ function renderToasts() {
             {Array.from(activeToasts.values()).map((toast) => (
                 <Toast key={toast.id} {...toast} />
             ))}
-            <ToastViewport />
+            <ToastViewport className="fixed bottom-4 right-4 top-auto left-auto flex-col" />
         </ToastProvider>
     )
 }

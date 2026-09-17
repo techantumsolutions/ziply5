@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { authedFetch, authedPatch, authedPost } from "@/lib/dashboard-fetch"
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable"
@@ -13,8 +13,8 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Eye, Pencil, Save, Trash2 } from "lucide-react"
-import { toast } from "../ui/use-toast"
+import { Eye, ImagePlus, Pencil, Save, Trash2, X } from "lucide-react"
+import { toast } from "@/lib/toast"
 import { useMasterValues } from "@/hooks/useMasterData"
 
 type Mode = "list" | "add" | "edit" | "view"
@@ -75,6 +75,8 @@ type ProductDetail = {
   sections?: Array<{ id: string; title: string; description: string; sortOrder: number; isActive: boolean }>
   features?: Array<{ title: string; icon?: string | null }>
   createdById?: string | null
+  createdAt?: string | Date | null
+  updatedAt?: string | Date | null
 }
 
 const ViewField = ({ label, value, className = "" }: { label: string; value: React.ReactNode; className?: string }) => (
@@ -94,7 +96,34 @@ const preparationTypes = ["ready_to_eat", "ready_to_cook"] as const
 const spiceLevels = ["mild", "medium", "hot", "extra_hot"] as const
 const fallbackWeightOptions = ["250g", "500g", "1kg"] as const
 const MAX_SECTIONS = 10
+const LIST_PAGE_SIZE = 10
 const uniq = (list: string[]) => [...new Set(list.map((x) => x.trim()).filter(Boolean))]
+const formatCreatedAt = (value?: string | Date | null) => {
+  if (!value) return "—"
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return date.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })
+}
+const formatUpdatedAt = (value?: string | Date | null) => {
+  if (!value) return "—"
+  const date = value instanceof Date ? value : new Date(value)
+  if (Number.isNaN(date.getTime())) return "—"
+  return date.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
+}
+const getProductSortPrice = (p: ProductDetail, mode: "min" | "max") => {
+  if (p.type === "variant" && p.variants?.length) {
+    const prices = p.variants.map((v) => Number(v.price)).filter((n) => Number.isFinite(n))
+    if (prices.length) return mode === "max" ? Math.max(...prices) : Math.min(...prices)
+  }
+  const n = Number(p.price)
+  return Number.isFinite(n) ? n : 0
+}
 const toNumOrNull = (value: string) => {
   const trimmed = value.trim()
   if (!trimmed) return null
@@ -151,6 +180,106 @@ const Field = ({
   </div>
 )
 
+const ImageUploadPicker = ({
+  label,
+  hint,
+  required,
+  urls,
+  coverBadge,
+  emptyTitle,
+  uploading,
+  onPick,
+  onRemove,
+}: {
+  label: string
+  hint: string
+  required?: boolean
+  urls: string[]
+  coverBadge?: boolean
+  emptyTitle: string
+  uploading: boolean
+  onPick: (files: FileList | null) => void
+  onRemove: (url: string) => void
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [dragOver, setDragOver] = useState(false)
+
+  const takeFiles = (files: FileList | null) => {
+    onPick(files)
+    if (inputRef.current) inputRef.current.value = ""
+  }
+
+  return (
+    <Field label={label} required={required}>
+      <p className="-mt-1 mb-2 text-[11px] leading-snug text-[#646464]">{hint}</p>
+      <div
+        onDragOver={(e) => {
+          e.preventDefault()
+          setDragOver(true)
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault()
+          setDragOver(false)
+          takeFiles(e.dataTransfer.files)
+        }}
+        className={`rounded-xl border border-dashed p-3 transition-colors ${
+          dragOver ? "border-[#7B3010] bg-[#FFF6EC]" : "border-[#D9D9D1] bg-[#FFFBF3]/40"
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept="image/*"
+          className="sr-only"
+          onChange={(e) => takeFiles(e.target.files)}
+        />
+        <button
+          type="button"
+          disabled={uploading}
+          onClick={() => inputRef.current?.click()}
+          className="flex w-full flex-col items-center justify-center gap-1 rounded-lg px-3 py-4 text-center hover:bg-white/80 disabled:opacity-60"
+        >
+          <ImagePlus className="h-6 w-6 text-[#7B3010]" strokeWidth={1.75} />
+          <span className="text-sm font-medium text-[#4A1D1F]">
+            {uploading ? "Uploading…" : emptyTitle}
+          </span>
+          <span className="text-[11px] text-[#646464]">PNG, JPG, or WEBP. You can add more later.</span>
+        </button>
+        {urls.length > 0 ? (
+          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+            {urls.map((url, idx) => (
+              <div key={`${url}-${idx}`} className="group relative overflow-hidden rounded-lg border border-[#E8DCC8] bg-white">
+                <img src={url} alt="" className="h-20 w-full object-cover" />
+                {coverBadge && idx === 0 ? (
+                  <span className="absolute left-1 top-1 rounded bg-[#7B3010] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-white">
+                    Cover
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label="Remove image"
+                  onClick={() => onRemove(url)}
+                  className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-white/95 text-[#4A1D1F] shadow-sm hover:bg-white"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {urls.length > 0 ? (
+          <p className="mt-2 text-[11px] text-[#646464]">
+            {urls.length} image{urls.length === 1 ? "" : "s"} added
+            {coverBadge ? ". The first image is used as the product cover." : "."}
+          </p>
+        ) : null}
+      </div>
+    </Field>
+  )
+}
+
 export function ProductConsolePage({
   adminView,
   mode,
@@ -166,8 +295,16 @@ export function ProductConsolePage({
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [uploading, setUploading] = useState(false)
-  const [error, setError] = useState("")
+  const [uploadingThumbnails, setUploadingThumbnails] = useState(false)
+  const [uploadingGallery, setUploadingGallery] = useState(false)
+  const [uploadingIcon, setUploadingIcon] = useState(false)
+  const [error, setErrorState] = useState("")
+  const setError = (message: string) => {
+    setErrorState(message)
+    if (message && (mode === "add" || mode === "edit")) {
+      toast.error(message)
+    }
+  }
   const [rowStatus, setRowStatus] = useState<Record<string, string>>({})
   const [features, setFeatures] = useState<Array<{ title: string; icon?: string | null }>>([])
   const [name, setName] = useState("")
@@ -197,6 +334,8 @@ export function ProductConsolePage({
   const [variants, setVariants] = useState<Array<{ id?: string; name: string; weight: string; sku: string; price: string; mrp: string; discountPercent: string; stock: string; isDefault: boolean }>>([
     { name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true },
   ])
+  const [variantMode, setVariantMode] = useState<"single" | "multiple">("single")
+  const [updatedAt, setUpdatedAt] = useState<string | Date | null>(null)
   const [shelfLife, setShelfLife] = useState("")
   const [preparationType, setPreparationType] = useState<"" | "ready_to_eat" | "ready_to_cook">("")
   const [spiceLevel, setSpiceLevel] = useState<"" | "mild" | "medium" | "hot" | "extra_hot">("")
@@ -208,6 +347,8 @@ export function ProductConsolePage({
   const [metaDescription, setMetaDescription] = useState("")
   const [categoryId, setCategoryId] = useState("")
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
+  const [tagsDropdownOpen, setTagsDropdownOpen] = useState(false)
+  const tagsDropdownRef = useRef<HTMLDivElement>(null)
   const [foodType, setFoodType] = useState<"" | "veg" | "non-veg">("")
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
   const [imageUrls, setImageUrls] = useState<string[]>([])
@@ -235,6 +376,8 @@ export function ProductConsolePage({
   const [filterStockStatus, setFilterStockStatus] = useState<"all" | "in_stock" | "out_of_stock">("all")
   const [filterFoodType, setFilterFoodType] = useState<"all" | "veg" | "non-veg">("all")
   const [filterType, setFilterType] = useState<"all" | "simple" | "variant">("all")
+  const [sortPrice, setSortPrice] = useState<"" | "low_to_high" | "high_to_low">("")
+  const [listPage, setListPage] = useState(1)
   const productWeightMasterQuery = useMasterValues("PRODUCT_WEIGHT")
   const weightOptions = fallbackWeightOptions
 
@@ -251,6 +394,8 @@ export function ProductConsolePage({
     setFilterPreparationType("all")
     setFilterStockStatus("all")
     setFilterFoodType("all")
+    setSortPrice("")
+    setListPage(1)
   }
 
   const loadCombos = useCallback(async () => {
@@ -273,23 +418,20 @@ export function ProductConsolePage({
 
     // Apply search filter
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter(p => {
-        const searchable = [
-          p.name,
-          p.slug,
-          p.sku,
-          p.status,
-          p.price?.toString(),
-          p.description,
-          p.features?.map(f => f.title).join(' ') || '',
-          p.details?.map(d => d.title + ' ' + d.content).join(' ') || '',
-          p.stockStatus,
-          p.totalStock?.toString(),
-          p.shelfLife,
-          p.preparationType,
-        ].join(' ').toLowerCase()
-        return searchable.includes(query)
+      const query = searchQuery.toLowerCase().trim()
+      result = result.filter((p) => {
+        const nameMatch = (p.name ?? "").toLowerCase().includes(query)
+        const priceValues = p.type === "variant" && p.variants?.length
+          ? p.variants.map((v) => v.price)
+          : [p.price]
+        const priceMatch = priceValues.some((value) => {
+          if (value == null || value === "") return false
+          const raw = String(value).toLowerCase()
+          const numeric = Number(value)
+          const formatted = Number.isFinite(numeric) ? numeric.toFixed(2) : ""
+          return raw.includes(query) || formatted.includes(query)
+        })
+        return nameMatch || priceMatch
       })
     }
 
@@ -328,8 +470,26 @@ export function ProductConsolePage({
       })
     }
 
+    if (sortPrice) {
+      const mode = sortPrice === "high_to_low" ? "max" : "min"
+      result = [...result].sort((a, b) => {
+        const diff = getProductSortPrice(a, mode) - getProductSortPrice(b, mode)
+        return sortPrice === "high_to_low" ? -diff : diff
+      })
+    }
+
     return result
-  }, [rows, searchQuery, filterStatus, filterType, filterCategory, filterPreparationType, filterStockStatus, filterFoodType])
+  }, [rows, searchQuery, filterStatus, filterType, filterCategory, filterPreparationType, filterStockStatus, filterFoodType, sortPrice])
+
+  useEffect(() => {
+    setListPage(1)
+  }, [searchQuery, filterStatus, filterType, filterCategory, filterPreparationType, filterStockStatus, filterFoodType, sortPrice])
+
+  const listPageCount = Math.max(1, Math.ceil(filteredRows.length / LIST_PAGE_SIZE))
+  const currentListPage = Math.min(listPage, listPageCount)
+  const pagedRows = filteredRows.slice((currentListPage - 1) * LIST_PAGE_SIZE, currentListPage * LIST_PAGE_SIZE)
+  const listStart = filteredRows.length === 0 ? 0 : (currentListPage - 1) * LIST_PAGE_SIZE + 1
+  const listEnd = Math.min(currentListPage * LIST_PAGE_SIZE, filteredRows.length)
 
   const basePath = adminView ? "/admin/products" : "/admin/products"
 
@@ -402,9 +562,10 @@ export function ProductConsolePage({
       setMetaTitle(p.metaTitle ?? "")
       setMetaDescription(p.metaDescription ?? "")
       setCreatedBy(p.createdById ?? "user_admin_ziply5")
+      setUpdatedAt(p.updatedAt ?? (p as { updated_at?: string | Date | null }).updated_at ?? null)
       setFeatures(p.features ?? [])
       setCategoryId(p.categories?.[0]?.categoryId ?? "")
-      setSelectedTagIds((p.tags ?? []).map((x) => x.tag.id).filter(Boolean))
+      setSelectedTagIds((p.tags ?? []).map((x) => x.tag.id).filter(Boolean).slice(0, 1))
       const tagNames = (p.tags ?? []).map((x) => x.tag.name.toLowerCase())
       setFoodType(tagNames.includes("veg") || tagNames.includes("vegetarian") ? "veg" : tagNames.includes("non-veg") || tagNames.includes("non vegetarian") ? "non-veg" : "")
       setImageUrls(uniq((p.images ?? []).map((img) => img.url)))
@@ -423,6 +584,7 @@ export function ProductConsolePage({
           }))
           : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true }],
       )
+      setVariantMode((p.variants?.length ?? 0) > 1 ? "multiple" : "single")
       const nextSections =
         (p.sections?.length
           ? p.sections.map((s) => ({
@@ -489,6 +651,17 @@ export function ProductConsolePage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode])
 
+  useEffect(() => {
+    if (!tagsDropdownOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!tagsDropdownRef.current?.contains(event.target as Node)) {
+        setTagsDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown)
+    return () => document.removeEventListener("mousedown", onPointerDown)
+  }, [tagsDropdownOpen])
+
   // Auto-calculate Sale Price for Simple Product
   useEffect(() => {
     if (type === "simple") {
@@ -504,7 +677,8 @@ export function ProductConsolePage({
   }, [basePrice, discountPercent, type, price])
 
   const payload = useMemo(() => {
-    const normalizedVariants = variants
+    const sourceVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+    const normalizedVariants = sourceVariants
       .map((v, idx) => ({
         id: v.id,
         name: (v.weight || v.name || `Variant ${idx + 1}`).trim(),
@@ -598,6 +772,7 @@ export function ProductConsolePage({
     totalStock,
     type,
     variants,
+    variantMode,
     spiceLevel,
     sections,
   ])
@@ -786,7 +961,8 @@ export function ProductConsolePage({
   ) => {
     const selected = files ? Array.from(files) : []
     if (selected.length === 0) return
-    setUploading(true)
+    if (kind === "thumbnail") setUploadingThumbnails(true)
+    else setUploadingGallery(true)
     setError("")
     try {
       const token = window.localStorage.getItem("ziply5_access_token")
@@ -821,14 +997,15 @@ export function ProductConsolePage({
     } catch {
       setError("Upload failed")
     } finally {
-      setUploading(false)
+      if (kind === "thumbnail") setUploadingThumbnails(false)
+      else setUploadingGallery(false)
     }
   }
 
   const uploadIcon = async (files: FileList | null | undefined, idx: number) => {
     const selected = files ? Array.from(files).slice(0, 1) : []
     if (selected.length === 0) return
-    setUploading(true)
+    setUploadingIcon(true)
     setError("")
     try {
       const token = window.localStorage.getItem("ziply5_access_token")
@@ -863,7 +1040,7 @@ export function ProductConsolePage({
     } catch {
       setError("Upload failed")
     } finally {
-      setUploading(false)
+      setUploadingIcon(false)
     }
   }
 
@@ -1118,17 +1295,26 @@ export function ProductConsolePage({
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{adminView ? "Products" : "My products"}</h1>
-            <p className="text-sm text-[#646464]">{filteredRows.length} of {total} items. Published products appear on website.</p>
+            <p className="text-sm text-[#646464]">
+              {filteredRows.length} of {total} items
+              {filteredRows.length > 0 ? ` · showing ${listStart}–${listEnd}` : ""}. Published products appear on website.
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Link href={`${basePath}/add`} className="rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white">
+              Add Product
+            </Link>
+            <Link
+              href={`${basePath}/bulk-upload`}
+              className="rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3]"
+            >
+              Bulk Upload
+            </Link>
             <Link
               href={`${basePath}/combos`}
               className="rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3]"
             >
-              View combos
-            </Link>
-            <Link href={`${basePath}/add`} className="rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white">
-              Add product
+              View Combos
             </Link>
             <button type="button" onClick={() => loadList()} className="rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3]">
               Refresh
@@ -1139,7 +1325,7 @@ export function ProductConsolePage({
           <div className="flex gap-2 w-full">
             <Input
               type="text"
-              placeholder="Search products..."
+              placeholder="Search by name or price..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="max-w-sm bg-white rounded-lg"
@@ -1185,7 +1371,8 @@ export function ProductConsolePage({
               </SelectContent>
             </Select>
 
-            <Select value={filterPreparationType} onValueChange={(value) => setFilterPreparationType(value as "all" | "ready_to_eat" | "ready_to_cook")}>
+            {/* Prep Type filter hidden: all catalog products are Ready To Cook */}
+            {/* <Select value={filterPreparationType} onValueChange={(value) => setFilterPreparationType(value as "all" | "ready_to_eat" | "ready_to_cook")}>
               <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
                 <SelectValue placeholder="Filter by Prep Type" />
               </SelectTrigger>
@@ -1197,7 +1384,7 @@ export function ProductConsolePage({
                   </SelectItem>
                 ))}
               </SelectContent>
-            </Select>
+            </Select> */}
 
             <Select value={filterStockStatus} onValueChange={(value) => setFilterStockStatus(value as "all" | "in_stock" | "out_of_stock")}>
               <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
@@ -1207,6 +1394,16 @@ export function ProductConsolePage({
                 <SelectItem value="all">All Stock</SelectItem>
                 <SelectItem value="in_stock">In Stock</SelectItem>
                 <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Select value={sortPrice || undefined} onValueChange={(value) => setSortPrice(value as "low_to_high" | "high_to_low")}>
+              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
+                <SelectValue placeholder="Price" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="low_to_high">Low to High</SelectItem>
+                <SelectItem value="high_to_low">High to Low</SelectItem>
               </SelectContent>
             </Select>
 
@@ -1237,16 +1434,20 @@ export function ProductConsolePage({
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
         {loading && <p className="text-sm text-[#646464]">Loading...</p>}
         {!loading && (
-          <ConsoleTable headers={["Product", "SKU", "Stock Available", "Status", "Sale Price", "Actions"]}>
+          <>
+          <ConsoleTable headers={["S.No", "Product", "SKU", "Stock Available", "Status", "Sale Price", "Created", "Actions"]}>
             {filteredRows.length === 0 ? (
               <tr>
-                <ConsoleTd colSpan={6} className="py-8 text-center text-[#646464]">
+                <ConsoleTd colSpan={8} className="py-8 text-center text-[#646464]">
                   No products yet.
                 </ConsoleTd>
               </tr>
             ) : (
-              filteredRows.map((p) => (
+              pagedRows.map((p, idx) => (
                 <tr key={p.id} className="hover:bg-[#FFFBF3]/80">
+                  <ConsoleTd className="align-middle w-14 text-[#646464]">
+                    {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
+                  </ConsoleTd>
                   <ConsoleTd className="align-middle">
                     <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
                       {p.name}
@@ -1283,6 +1484,9 @@ export function ProductConsolePage({
                         ? `Rs.${Number(p.price).toFixed(2)}`
                         : "—"}
                   </ConsoleTd>
+                  <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
+                    {formatCreatedAt(p.createdAt)}
+                  </ConsoleTd>
                   <ConsoleTd className="align-middle">
                     <div className="flex flex-wrap items-center gap-2">
                       <Link
@@ -1317,16 +1521,44 @@ export function ProductConsolePage({
               ))
             )}
           </ConsoleTable>
+          {filteredRows.length > 0 ? (
+            <div className="flex items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setListPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentListPage <= 1}
+                className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <p className="text-xs text-[#646464]">
+                Page {currentListPage} / {listPageCount}
+              </p>
+              <button
+                type="button"
+                onClick={() => setListPage((prev) => Math.min(listPageCount, prev + 1))}
+                disabled={currentListPage >= listPageCount}
+                className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
+        </>
         )}
       </section>
     )
   }
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4">
-      {/* header section for page */}
+    <section className="mx-auto max-w-7xl space-y-4 pb-2">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{mode === "view" ? "View product" : mode === "edit" ? "Edit product" : "Add product"}</h1>
+        <div>
+          <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{mode === "view" ? "View product" : mode === "edit" ? "Edit product" : "Add product"}</h1>
+          {mode === "view" ? (
+            <p className="text-sm text-[#646464]">Last updated: {formatUpdatedAt(updatedAt)}</p>
+          ) : null}
+        </div>
         <Link href={basePath} className="text-xs font-semibold uppercase text-[#7B3010] underline">
           Back to list
         </Link>
@@ -1335,10 +1567,10 @@ export function ProductConsolePage({
         <p className="text-xs text-[#646464]">Draft/archive saves can be partial. Publishing requires valid name, slug, SKU, food type, price, and at least one section.</p>
       )}
 
-      {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
+      {mode === "view" && error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
       {loading && (mode === "edit" || mode === "view") && <p className="text-sm text-[#646464]">Loading product...</p>}
 
-      <form onSubmit={onSubmit} className="grid bg-white gap-3 rounded-2xl border border-[#E8DCC8] p-4 shadow-sm md:grid-cols-3">
+      <form onSubmit={onSubmit} className="flex flex-col gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
         {/* Product info, images and description and seo meta data */}
         {mode === "view" ?
           // product info for view mode
@@ -1403,6 +1635,7 @@ export function ProductConsolePage({
                   <Info label={type === "variant" ? "Total Stock" : "Stock"} value={totalStock} />
                   <Info label="Stock Status" value={stockStatus} />
                   <Info label="Shelf Life" value={shelfLife ? `${shelfLife} months` : "—"} />
+                  <Info label="Last Updated" value={formatUpdatedAt(updatedAt)} />
                 </Card>
 
                 {/* 🧾 META */}
@@ -1458,6 +1691,7 @@ export function ProductConsolePage({
           //  product info for edit and add mode
           (
             <>
+            <div className="grid auto-rows-max items-start gap-3 md:grid-cols-3">
               {/* product name */}
               <Field label="Name" required>
                 <Input
@@ -1551,17 +1785,44 @@ export function ProductConsolePage({
                   Draft products are not visible on the website until published.
                 </p>
               ) : null}
-              {/* Type simple and variant */}
+              {/* Type: single vs multiple variant (payload still uses type=variant) */}
               <Field label="Type" required={status !== "draft"}>
-                <Select value={type} onValueChange={(value) => setType(value as "simple" | "variant")}>
-                  <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm" disabled={mode === "edit"}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="variant">variant</SelectItem>
-                    <SelectItem value="simple">simple</SelectItem>
-                  </SelectContent>
-                </Select>
+                {mode === "add" || type === "variant" ? (
+                  <Select
+                    value={variantMode}
+                    onValueChange={(value) => {
+                      const next = value as "single" | "multiple"
+                      setType("variant")
+                      setVariantMode(next)
+                      if (next === "single") {
+                        setVariants((prev) => {
+                          const keep = prev.find((v) => v.isDefault) ?? prev[0]
+                          return keep
+                            ? [{ ...keep, isDefault: true }]
+                            : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true }]
+                        })
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm" disabled={mode === "edit"}>
+                      <SelectValue placeholder="Select type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="single">Single variant</SelectItem>
+                      <SelectItem value="multiple">Multiple Variant</SelectItem>
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <Select value={type} onValueChange={(value) => setType(value as "simple" | "variant")}>
+                    <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm" disabled={mode === "edit"}>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="variant">variant</SelectItem>
+                      <SelectItem value="simple">simple</SelectItem>
+                    </SelectContent>
+                  </Select>
+                )}
               </Field>
               {mode === "edit" ? (
                 <p className="text-xs text-[#646464]">Type cannot be changed after product creation.</p>
@@ -1710,72 +1971,68 @@ export function ProductConsolePage({
               </div>
             </Field> */}
               <Field label="Tags">
-                <div className="relative">
-                  <details className="group">
-                    <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm text-[#1F1F1F]">
-                      <div className="flex flex-wrap gap-1">
-                        {selectedTagIds.length > 0 ? (
-                          selectedTagIds.map((selectedId) => {
-                            const tag = tags.find((t) => t.id === selectedId)
-                            if (!tag) return null
+                <div className="relative" ref={tagsDropdownRef}>
+                  <button
+                    type="button"
+                    aria-haspopup="listbox"
+                    aria-expanded={tagsDropdownOpen}
+                    onClick={() => setTagsDropdownOpen((open) => !open)}
+                    className="flex min-h-[44px] w-full cursor-pointer items-center justify-between rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-left text-sm text-[#1F1F1F]"
+                  >
+                    <div className="flex flex-wrap gap-1">
+                      {selectedTagIds[0] ? (
+                        (() => {
+                          const tag = tags.find((t) => t.id === selectedTagIds[0])
+                          return tag ? (
+                            <span className="rounded-full border border-[#D9D9D1] bg-[#F7F7F5] px-2 py-1 text-[11px]">
+                              {tag.name}
+                            </span>
+                          ) : (
+                            <span className="text-[#7A7A72]">Select tags</span>
+                          )
+                        })()
+                      ) : (
+                        <span className="text-[#7A7A72]">Select tags</span>
+                      )}
+                    </div>
+                    <svg
+                      className={`ml-2 h-4 w-4 shrink-0 transition-transform ${tagsDropdownOpen ? "rotate-180" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
 
-                            return (
-                              <span
-                                key={tag.id}
-                                className="rounded-full border border-[#D9D9D1] bg-[#F7F7F5] px-2 py-1 text-[11px]"
-                              >
-                                {tag.name}
-                              </span>
-                            )
-                          })
-                        ) : (
-                          <span className="text-[#7A7A72]">Select tags</span>
-                        )}
-                      </div>
-
-                      <svg
-                        className="ml-2 h-4 w-4 shrink-0 transition-transform group-open:rotate-180"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        viewBox="0 0 24 24"
-                      >
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </summary>
-
+                  {tagsDropdownOpen ? (
                     <div className="absolute z-20 mt-2 max-h-64 w-full overflow-y-auto rounded-xl border border-[#D9D9D1] bg-white p-2 shadow-lg">
-                      <div className="space-y-1">
+                      <div className="space-y-1" role="listbox" aria-label="Tags">
                         {tags.map((tag) => {
-                          const checked = selectedTagIds.includes(tag.id)
-
+                          const selected = selectedTagIds[0] === tag.id
                           return (
                             <label
                               key={tag.id}
                               className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 transition hover:bg-[#F7F7F5]"
                             >
                               <input
-                                type="checkbox"
-                                checked={checked}
-                                onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedTagIds([...selectedTagIds, tag.id])
-                                  } else {
-                                    setSelectedTagIds(
-                                      selectedTagIds.filter((id) => id !== tag.id)
-                                    )
-                                  }
+                                type="radio"
+                                name="product-tag"
+                                checked={selected}
+                                onChange={() => {
+                                  setSelectedTagIds([tag.id])
+                                  setTagsDropdownOpen(false)
                                 }}
-                                className="h-4 w-4 rounded border-[#D9D9D1]"
+                                className="h-4 w-4 border-[#D9D9D1] accent-[#4A1D1F]"
                               />
-
                               <span className="text-sm text-[#1F1F1F]">{tag.name}</span>
                             </label>
                           )
                         })}
                       </div>
                     </div>
-                  </details>
+                  ) : null}
                 </div>
               </Field>
               {/* shelf life in months */}
@@ -1805,46 +2062,28 @@ export function ProductConsolePage({
                   </SelectContent>
                 </Select>
               </Field>
-              {/* thumbnail upload */}
-              <Field label="Upload thumbnails (multiple)" required={status !== "draft"}>
-                <div className="rounded-lg border border-[#D9D9D1] px-3 py-3 text-sm">
-                  <input type="file" multiple accept="image/*" onChange={(e) => void uploadMany(e.target.files, "thumbnail")} />
-                  {thumbnailUrls.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {thumbnailUrls.map((url, idx) => (
-                        <button
-                          key={`${url}-${idx}`}
-                          type="button"
-                          onClick={() => setThumbnailUrls((prev) => prev.filter((x) => x !== url))}
-                          className="rounded-full border border-[#D9D9D1] bg-white px-2 py-1 text-[10px]"
-                        >
-                          Thumb {idx + 1} x
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </Field>
-              {/* gallery images */}
-              <Field label="Upload images (multiple)">
-                <div className="rounded-lg border border-[#D9D9D1] px-3 py-3 text-sm">
-                  <input type="file" multiple accept="image/*" onChange={(e) => void uploadMany(e.target.files, "image")} />
-                  {imageUrls.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {imageUrls.map((url, idx) => (
-                        <button
-                          key={`${url}-${idx}`}
-                          type="button"
-                          onClick={() => setImageUrls((prev) => prev.filter((x) => x !== url))}
-                          className="rounded-full border border-[#D9D9D1] bg-white px-2 py-1 text-[10px]"
-                        >
-                          Image {idx + 1} x
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </Field>
+              <div className="md:col-span-3 grid gap-3 md:grid-cols-2">
+                <ImageUploadPicker
+                  label="Thumbnails"
+                  required={status !== "draft"}
+                  hint="Shown on product cards and as the main cover. Add one or more; the first image is the cover."
+                  emptyTitle="Click or drop thumbnail images"
+                  urls={thumbnailUrls}
+                  coverBadge
+                  uploading={uploadingThumbnails}
+                  onPick={(files) => void uploadMany(files, "thumbnail")}
+                  onRemove={(url) => setThumbnailUrls((prev) => prev.filter((x) => x !== url))}
+                />
+                <ImageUploadPicker
+                  label="Gallery images"
+                  hint="Extra photos on the product page (angles, pack shots, details). Optional."
+                  emptyTitle="Click or drop gallery images"
+                  urls={imageUrls}
+                  uploading={uploadingGallery}
+                  onPick={(files) => void uploadMany(files, "image")}
+                  onRemove={(url) => setImageUrls((prev) => prev.filter((x) => x !== url))}
+                />
+              </div>
               <div className="md:col-span-3 space-y-4 rounded-lg border border-[#E8DCC8] bg-[#FFFBF3]/30 p-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Page SEO</p>
@@ -1879,23 +2118,32 @@ export function ProductConsolePage({
               <Field label="Amazon Link">
                 <Input placeholder="Amazon Link" value={amazonLink} onChange={(e) => setAmazonLink(e.target.value)} className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm md:col-span-2" />
               </Field>
-
+            </div>
               {/* for product type as varient then specify the variant */}
               {type === "variant" && (
-                <div className="md:col-span-3 space-y-2 rounded-lg border border-[#E8DCC8] p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Variants</p>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setVariants((prev) => [...prev, { name: "", weight: "", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: prev.length === 0 }])
-                      }
-                      className="rounded-full border border-[#7B3010] px-3 py-1 text-[11px] font-semibold uppercase text-[#7B3010]"
-                    >
-                      Add Variant
-                    </button>
+                <div className="md:col-span-3 space-y-3 rounded-lg border border-[#E8DCC8] p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Variants</p>
+                      <p className="mt-1 text-[11px] text-[#646464]">
+                        {variantMode === "single"
+                          ? "Enter one weight, price, SKU, and stock."
+                          : "Add several weights with their own price and stock."}
+                      </p>
+                    </div>
+                    {variantMode === "multiple" ? (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setVariants((prev) => [...prev, { name: "", weight: "", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: prev.length === 0 }])
+                        }
+                        className="shrink-0 rounded-full border border-[#7B3010] px-3 py-1 text-[11px] font-semibold uppercase text-[#7B3010]"
+                      >
+                        Add Variant
+                      </button>
+                    ) : null}
                   </div>
-                  {variants.map((variant, idx) => (
+                  {(variantMode === "single" ? variants.slice(0, 1) : variants).map((variant, idx) => (
                     <div key={`${variant.id ?? "new"}-${idx}`} className="space-y-4 rounded-lg border border-[#E8DCC8] bg-[#FFFBF3]/20 p-4">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
                         <div className="space-y-1.5">
@@ -2004,20 +2252,28 @@ export function ProductConsolePage({
                       </div>
 
                       <div className="flex items-center justify-between pt-2 border-t border-[#E8DCC8]/50">
-                        <label className="flex items-center gap-2 text-[11px] font-semibold uppercase text-[#4A1D1F] cursor-pointer">
-                          <Checkbox
-                            checked={variant.isDefault}
-                            onCheckedChange={() => setVariants((prev) => prev.map((x, i) => ({ ...x, isDefault: i === idx })))}
-                          />
-                          Default Variant
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setVariants((prev) => prev.filter((_, i) => i !== idx))}
-                          className="rounded-full border border-red-200 px-3 py-1 text-[10px] font-semibold uppercase text-red-700 hover:bg-red-50 transition-colors"
-                        >
-                          Remove
-                        </button>
+                        {variantMode === "multiple" ? (
+                          <label className="flex items-center gap-2 text-[11px] font-semibold uppercase text-[#4A1D1F] cursor-pointer">
+                            <Checkbox
+                              checked={variant.isDefault}
+                              onCheckedChange={() => setVariants((prev) => prev.map((x, i) => ({ ...x, isDefault: i === idx })))}
+                            />
+                            Default Variant
+                          </label>
+                        ) : (
+                          <p className="text-[11px] font-semibold uppercase text-[#646464]">This is the product variant</p>
+                        )}
+                        {variantMode === "multiple" && variants.length > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => setVariants((prev) => prev.filter((_, i) => i !== idx))}
+                            className="rounded-full border border-red-200 px-3 py-1 text-[10px] font-semibold uppercase text-red-700 hover:bg-red-50 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        ) : (
+                          <span />
+                        )}
                       </div>
                     </div>
                   ))}
@@ -2361,7 +2617,7 @@ export function ProductConsolePage({
         {/* Save or update button */}
         {mode !== "view" && (
           <div className="md:col-span-3">
-            <Button type="submit" disabled={saving || uploading} className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white disabled:opacity-50">
+            <Button type="submit" disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon} className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white disabled:opacity-50">
               {saving ? "Saving..." : mode === "edit" ? "Update product" : "Create product"}
             </Button>
           </div>

@@ -595,6 +595,131 @@ export async function getDynamicRankings() {
   return cachedRankings
 }
 
+const listProductsFromPg = async (input: {
+  page: number
+  limit: number
+  status?: string
+  q?: string
+  inStockOnly?: boolean
+}) => {
+  const page = Math.max(1, input.page)
+  const limit = Math.min(500, Math.max(1, input.limit))
+  const offset = (page - 1) * limit
+  const where: string[] = []
+  const values: unknown[] = []
+  if (input.status) {
+    values.push(input.status)
+    where.push(`status = $${values.length}`)
+  }
+  if (input.q?.trim()) {
+    values.push(`%${input.q.trim()}%`)
+    const i = values.length
+    where.push(`(name ILIKE $${i} OR slug ILIKE $${i} OR sku ILIKE $${i})`)
+  }
+  if (input.inStockOnly) {
+    where.push(`COALESCE("totalStock", 0) > 0`)
+  }
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : ""
+  const countRows = await pgQuery<{ total: number }>(
+    `SELECT COUNT(*)::int as total FROM "Product" ${whereSql}`,
+    values,
+  )
+  const items = await pgQuery(
+    `SELECT * FROM "Product" ${whereSql} ORDER BY "createdAt" DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, limit, offset],
+  )
+  return { items, total: countRows[0]?.total ?? 0, page, limit }
+}
+
+const hydrateProductsFromPg = async <T extends Record<string, unknown>>(items: T[]) => {
+  const ids = items.map((row) => String(row.id ?? "").trim()).filter(Boolean)
+  if (!ids.length) return items
+
+  const [variantRows, categoryRows, productTagRows] = await Promise.all([
+    pgQuery(`SELECT * FROM "ProductVariant" WHERE "productId" = ANY($1::text[])`, [ids]),
+    pgQuery(
+      `SELECT pc."productId" as "productId", pc."categoryId" as "categoryId", c.slug as "categorySlug"
+       FROM "ProductCategory" pc
+       LEFT JOIN "Category" c ON c.id = pc."categoryId"
+       WHERE pc."productId" = ANY($1::text[])`,
+      [ids],
+    ),
+    pgQuery(
+      `SELECT pt."productId" as "productId", t.id, t.name
+       FROM "ProductTag" pt
+       JOIN "Tag" t ON t.id = pt."tagId"
+       WHERE pt."productId" = ANY($1::text[])`,
+      [ids],
+    ),
+  ])
+
+  const variantsByProduct = new Map<string, Array<Record<string, unknown>>>()
+  for (const row of variantRows) {
+    const pid = String((row as { productId?: string }).productId ?? "")
+    if (!pid) continue
+    const list = variantsByProduct.get(pid) ?? []
+    list.push(row as Record<string, unknown>)
+    variantsByProduct.set(pid, list)
+  }
+
+  const categoriesByProduct = new Map<string, Array<Record<string, unknown>>>()
+  for (const row of categoryRows) {
+    const pid = String((row as { productId?: string }).productId ?? "")
+    if (!pid) continue
+    const categoryId = String((row as { categoryId?: string }).categoryId ?? "")
+    const slug = String((row as { categorySlug?: string }).categorySlug ?? "").trim()
+    const list = categoriesByProduct.get(pid) ?? []
+    list.push({
+      categoryId,
+      ...(slug ? { category: { slug }, slug } : {}),
+    })
+    categoriesByProduct.set(pid, list)
+  }
+
+  const tagsByProduct = new Map<string, Array<Record<string, unknown>>>()
+  for (const row of productTagRows) {
+    const pid = String((row as { productId?: string }).productId ?? "")
+    if (!pid) continue
+    const list = tagsByProduct.get(pid) ?? []
+    list.push({ tag: { id: (row as { id?: string }).id, name: (row as { name?: string }).name } })
+    tagsByProduct.set(pid, list)
+  }
+
+  return items.map((row) => {
+    const id = String(row.id ?? "")
+    return {
+      ...row,
+      variants: variantsByProduct.get(id) ?? [],
+      categories: categoriesByProduct.get(id) ?? [],
+      tags: tagsByProduct.get(id) ?? [],
+    }
+  })
+}
+
+const getProductFromPgById = async (id: string) => {
+  const rows = await pgQuery(`SELECT * FROM "Product" WHERE id = $1 LIMIT 1`, [id])
+  const base = rows[0] as Record<string, unknown> | undefined
+  if (!base) return null
+  const [hydrated] = await hydrateProductsFromPg([base])
+  const [images, features, labels, details, sections] = await Promise.all([
+    pgQuery(`SELECT * FROM "ProductImage" WHERE "productId" = $1 ORDER BY position ASC`, [id]).catch(() => []),
+    pgQuery(`SELECT * FROM "ProductFeature" WHERE "productId" = $1`, [id]).catch(() => []),
+    pgQuery(`SELECT * FROM "ProductLabel" WHERE "productId" = $1`, [id]).catch(() => []),
+    pgQuery(`SELECT * FROM "ProductDetailSection" WHERE "productId" = $1 ORDER BY "sortOrder" ASC`, [id]).catch(() => []),
+    pgQuery(`SELECT * FROM "ProductSection" WHERE "productId" = $1 ORDER BY "sortOrder" ASC`, [id]).catch(() => []),
+  ])
+  return { ...hydrated, images, features, labels, details, sections }
+}
+
+const applyRankingFlags = async <T extends { id?: string }>(products: T[]) => {
+  const { bestSellerIds, trendingIds } = await getDynamicRankings()
+  products.forEach((product: any) => {
+    product.isBestSeller = bestSellerIds.has(product.id)
+    product.isFeatured = trendingIds.has(product.id)
+  })
+  return products
+}
+
 export const listProducts = async (
   page = 1,
   limit = 20,
@@ -604,59 +729,85 @@ export const listProducts = async (
   if (process.env.SUPABASE_PRODUCTS_READ_ENABLED !== "true") {
     throw new Error("SUPABASE_PRODUCTS_READ_ENABLED must be true")
   }
-  const payload = await listProductsSupabaseBasic({
-    page,
-    limit,
-    status: scope === "public" ? "published" : filters?.status,
-    q: filters?.q,
-  })
-  const items = (payload.items as any[]).filter((row) => {
-    if (scope === "public" && String(row.status ?? "") !== "published") return false
-    if (scope === "public" && filters?.inStockOnly) return Number(row.totalStock ?? row.total_stock ?? 0) > 0
-    return true
-  })
-  const hydrated = await hydrateProductsForListSupabase(items as any[])
-  
-  // Inject dynamic ranking flags
-  const { bestSellerIds, trendingIds } = await getDynamicRankings()
-  hydrated.forEach((product: any) => {
-    product.isBestSeller = bestSellerIds.has(product.id)
-    product.isFeatured = trendingIds.has(product.id)
-  })
+  const status = scope === "public" ? "published" : filters?.status
+  const filterItems = (rows: any[]) =>
+    rows.filter((row) => {
+      if (scope === "public" && String(row.status ?? "") !== "published") return false
+      if (scope === "public" && filters?.inStockOnly) return Number(row.totalStock ?? row.total_stock ?? 0) > 0
+      return true
+    })
 
-  return { items: hydrated, total: payload.total, page: payload.page, limit: payload.limit }
+  try {
+    const payload = await listProductsSupabaseBasic({
+      page,
+      limit,
+      status,
+      q: filters?.q,
+    })
+    const items = filterItems(payload.items as any[])
+    const hydrated = await hydrateProductsForListSupabase(items as any[])
+    await applyRankingFlags(hydrated as any[])
+    return { items: hydrated, total: payload.total, page: payload.page, limit: payload.limit }
+  } catch (error) {
+    logger.warn("products.list.supabase_pg_fallback", {
+      error: error instanceof Error ? error.message : "unknown",
+    })
+    const payload = await listProductsFromPg({
+      page,
+      limit,
+      status,
+      q: filters?.q,
+      inStockOnly: scope === "public" ? Boolean(filters?.inStockOnly) : false,
+    })
+    const items = filterItems(payload.items as any[])
+    const hydrated = await hydrateProductsFromPg(items as any[])
+    await applyRankingFlags(hydrated as any[])
+    return { items: hydrated, total: payload.total, page: payload.page, limit: payload.limit }
+  }
 }
 
 export const getProductById = async (id: string) => {
   if (process.env.SUPABASE_PRODUCTS_READ_ENABLED !== "true") {
     throw new Error("SUPABASE_PRODUCTS_READ_ENABLED must be true")
   }
-  const product = (await getProductByIdSupabaseHydrated(id)) as any
-  if (product) {
-    const { bestSellerIds, trendingIds } = await getDynamicRankings()
-    product.isBestSeller = bestSellerIds.has(product.id)
-    product.isFeatured = trendingIds.has(product.id)
+  try {
+    const product = (await getProductByIdSupabaseHydrated(id)) as any
+    if (product) await applyRankingFlags([product])
+    return product
+  } catch (error) {
+    logger.warn("products.getById.supabase_pg_fallback", {
+      error: error instanceof Error ? error.message : "unknown",
+    })
+    const product = (await getProductFromPgById(id)) as any
+    if (product) await applyRankingFlags([product])
+    return product
   }
-  return product
 }
 
 export const getProductBySlug = async (slug: string) => {
   if (process.env.SUPABASE_PRODUCTS_READ_ENABLED !== "true") {
     throw new Error("SUPABASE_PRODUCTS_READ_ENABLED must be true")
   }
-  const id = await getProductIdBySlugSupabase(slug)
-  let product: any = null
-  if (id) {
-    product = (await getProductByIdSupabaseHydrated(id)) as any
-  } else {
-    product = (await getProductBySlugSupabaseBasic(slug)) as any
+  try {
+    const id = await getProductIdBySlugSupabase(slug)
+    let product: any = null
+    if (id) {
+      product = (await getProductByIdSupabaseHydrated(id)) as any
+    } else {
+      product = (await getProductBySlugSupabaseBasic(slug)) as any
+    }
+    if (product) await applyRankingFlags([product])
+    return product
+  } catch (error) {
+    logger.warn("products.getBySlug.supabase_pg_fallback", {
+      error: error instanceof Error ? error.message : "unknown",
+    })
+    const rows = await pgQuery(`SELECT * FROM "Product" WHERE slug = $1 LIMIT 1`, [slug])
+    const id = String((rows[0] as { id?: string } | undefined)?.id ?? "")
+    const product = id ? ((await getProductFromPgById(id)) as any) : null
+    if (product) await applyRankingFlags([product])
+    return product
   }
-  if (product) {
-    const { bestSellerIds, trendingIds } = await getDynamicRankings()
-    product.isBestSeller = bestSellerIds.has(product.id)
-    product.isFeatured = trendingIds.has(product.id)
-  }
-  return product
 }
 export const canAccessProduct = (
   product: { status: string },
