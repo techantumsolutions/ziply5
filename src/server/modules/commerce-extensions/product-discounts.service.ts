@@ -1,24 +1,35 @@
 import { pgQuery } from "@/src/server/db/pg"
 
+const isMissingRelation = (error: unknown) => {
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: string }).code) : ""
+  const message = error instanceof Error ? error.message : String(error)
+  return code === "42P01" || /does not exist/i.test(message)
+}
+
 export const listProductDiscounts = async (productId?: string) => {
-  return pgQuery<Array<{
-    id: string
-    product_id: string
-    discount_type: string
-    discount_value: number
-    start_date: Date | null
-    end_date: Date | null
-    is_stackable: boolean
-    created_at: Date
-  }>>(
-    `
+  try {
+    return await pgQuery<Array<{
+      id: string
+      product_id: string
+      discount_type: string
+      discount_value: number
+      start_date: Date | null
+      end_date: Date | null
+      is_stackable: boolean
+      created_at: Date
+    }>>(
+      `
       SELECT *
       FROM product_discounts_v2
       WHERE ($1::text IS NULL OR product_id = $1)
       ORDER BY created_at DESC
     `,
-    [productId ?? null],
-  )
+      [productId ?? null],
+    )
+  } catch (error) {
+    if (isMissingRelation(error)) return []
+    throw error
+  }
 }
 
 export const createProductDiscount = async (input: {
@@ -92,13 +103,14 @@ export const updateProductDiscount = async (
 }
 
 export const getActiveProductDiscount = async (productId: string, now = new Date()) => {
-  const rows = await pgQuery<Array<{
-    id: string
-    discount_type: "percentage" | "flat"
-    discount_value: number
-    is_stackable: boolean
-  }>>(
-    `
+  try {
+    const rows = await pgQuery<Array<{
+      id: string
+      discount_type: "percentage" | "flat"
+      discount_value: number
+      is_stackable: boolean
+    }>>(
+      `
       SELECT id, discount_type, discount_value, is_stackable
       FROM product_discounts_v2
       WHERE product_id = $1
@@ -107,9 +119,13 @@ export const getActiveProductDiscount = async (productId: string, now = new Date
       ORDER BY created_at DESC
       LIMIT 1
     `,
-    [productId, now],
-  )
-  return rows[0] ?? null
+      [productId, now],
+    )
+    return rows[0] ?? null
+  } catch (error) {
+    if (isMissingRelation(error)) return null
+    throw error
+  }
 }
 
 export const applyProductDiscount = (basePrice: number, discount: { discount_type: "percentage" | "flat"; discount_value: number } | null) => {

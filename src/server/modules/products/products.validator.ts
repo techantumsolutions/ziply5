@@ -29,7 +29,7 @@ const detailsSchema = z.object({
 })
 
 const sectionSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().optional().nullable(),
   title: z.string().trim().min(1, "Section title is required"),
   description: z.string().trim().min(1, "Section description is required"),
   sortOrder: z.number().int().min(0).optional(),

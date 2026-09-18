@@ -14,7 +14,8 @@ import {
   updateProductSupabase,
 } from "@/src/lib/db/products"
 import { logger } from "@/lib/logger"
-import { pgQuery } from "@/src/server/db/pg"
+import { pgQuery, pgTx } from "@/src/server/db/pg"
+import crypto from "node:crypto"
 
 export type ListProductsScope = "public" | "admin"
 
@@ -137,6 +138,7 @@ const productSelect = {
   price: true,
   createdAt: true,
   updatedAt: true,
+  priceUpdatedAt: true,
   images: true,
   features: true,
   labels: true,
@@ -173,6 +175,7 @@ const productSelectPublicList = {
   sku: true,
   createdAt: true,
   updatedAt: true,
+  priceUpdatedAt: true,
   images: { take: 1, orderBy: { position: "asc" as const } },
   // Tags drive veg/non-veg detection.
   tags: { include: { tag: true } },
@@ -701,14 +704,291 @@ const getProductFromPgById = async (id: string) => {
   const base = rows[0] as Record<string, unknown> | undefined
   if (!base) return null
   const [hydrated] = await hydrateProductsFromPg([base])
-  const [images, features, labels, details, sections] = await Promise.all([
+  const [images, features, labels, details, pascalSections, snakeSections] = await Promise.all([
     pgQuery(`SELECT * FROM "ProductImage" WHERE "productId" = $1 ORDER BY position ASC`, [id]).catch(() => []),
     pgQuery(`SELECT * FROM "ProductFeature" WHERE "productId" = $1`, [id]).catch(() => []),
     pgQuery(`SELECT * FROM "ProductLabel" WHERE "productId" = $1`, [id]).catch(() => []),
     pgQuery(`SELECT * FROM "ProductDetailSection" WHERE "productId" = $1 ORDER BY "sortOrder" ASC`, [id]).catch(() => []),
     pgQuery(`SELECT * FROM "ProductSection" WHERE "productId" = $1 ORDER BY "sortOrder" ASC`, [id]).catch(() => []),
+    pgQuery(
+      `SELECT id, product_id as "productId", title, description, sort_order as "sortOrder", is_active as "isActive"
+       FROM product_sections WHERE product_id = $1 ORDER BY sort_order ASC`,
+      [id],
+    ).catch(() => []),
   ])
+  const sections = (pascalSections as unknown[]).length ? pascalSections : snakeSections
   return { ...hydrated, images, features, labels, details, sections }
+}
+
+const toMoney = (value: unknown): number | null => {
+  if (value == null || value === "") return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+const sameMoney = (a: unknown, b: unknown) => {
+  const left = toMoney(a)
+  const right = toMoney(b)
+  if (left == null && right == null) return true
+  if (left == null || right == null) return false
+  return Math.abs(left - right) < 0.0001
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+const asUuid = (value?: string | null) => {
+  const trimmed = String(value ?? "").trim()
+  return UUID_RE.test(trimmed) ? trimmed : crypto.randomUUID()
+}
+
+const withSavepoint = async (
+  client: { query: (text: string, values?: unknown[]) => Promise<unknown> },
+  name: string,
+  fn: () => Promise<void>,
+) => {
+  await client.query(`SAVEPOINT ${name}`)
+  try {
+    await fn()
+    await client.query(`RELEASE SAVEPOINT ${name}`)
+    return true
+  } catch {
+    await client.query(`ROLLBACK TO SAVEPOINT ${name}`)
+    return false
+  }
+}
+
+const updateProductFromPg = async (
+  id: string,
+  input: UpdateProductInput,
+  incomingSections: Array<{ id?: string; title: string; description: string; sortOrder: number; isActive: boolean }>,
+  userId: string,
+) => {
+  await pgTx(async (client) => {
+    const existingRes = await client.query(`SELECT * FROM "Product" WHERE id = $1 LIMIT 1`, [id])
+    const existing = existingRes.rows[0] as Record<string, unknown> | undefined
+    if (!existing) throw new Error("Product not found")
+
+    const now = new Date()
+    let stampPrice =
+      ("price" in input && !sameMoney(existing.price, input.price)) ||
+      ("salePrice" in input && !sameMoney(existing.salePrice, input.salePrice)) ||
+      ("basePrice" in input && !sameMoney(existing.basePrice, input.basePrice)) ||
+      ("discountPercent" in input && !sameMoney(existing.discountPercent, input.discountPercent))
+
+    if (input.variants !== undefined) {
+      const current = await client.query(`SELECT * FROM "ProductVariant" WHERE "productId" = $1`, [id])
+      const existingVariants = current.rows as Array<Record<string, unknown>>
+      const usedIds = new Set<string>()
+      for (const incoming of input.variants ?? []) {
+        const incomingId = String(incoming.id ?? "").trim()
+        const incomingSku = String(incoming.sku ?? "").trim().toLowerCase()
+        let match = incomingId
+          ? existingVariants.find((row) => String(row.id ?? "") === incomingId && !usedIds.has(String(row.id ?? "")))
+          : undefined
+        if (!match) {
+          match = existingVariants.find((row) => {
+            const rowId = String(row.id ?? "")
+            return rowId && !usedIds.has(rowId) && String(row.sku ?? "").trim().toLowerCase() === incomingSku
+          })
+        }
+        if (match) {
+          const matchId = String(match.id ?? "")
+          usedIds.add(matchId)
+          const priceChanged =
+            !sameMoney(match.price, incoming.price) ||
+            !sameMoney(match.mrp, incoming.mrp) ||
+            !sameMoney(match.discountPercent, incoming.discountPercent)
+          const anyChanged =
+            priceChanged ||
+            String(match.name ?? "") !== incoming.name ||
+            String(match.weight ?? "") !== String(incoming.weight ?? "") ||
+            String(match.sku ?? "") !== incoming.sku ||
+            !sameMoney(match.stock, incoming.stock ?? 0) ||
+            Boolean(match.isDefault) !== Boolean(incoming.isDefault)
+          if (!anyChanged) continue
+          if (priceChanged) stampPrice = true
+          await client.query(
+            `UPDATE "ProductVariant"
+             SET name = $2, weight = $3, sku = $4, price = $5, mrp = $6, "discountPercent" = $7, stock = $8, "isDefault" = $9, "updatedAt" = $10,
+                 "priceUpdatedAt" = CASE WHEN $11 THEN $10 ELSE "priceUpdatedAt" END
+             WHERE id = $1`,
+            [
+              matchId,
+              incoming.name,
+              incoming.weight ?? null,
+              incoming.sku,
+              incoming.price,
+              incoming.mrp ?? null,
+              incoming.discountPercent ?? null,
+              incoming.stock ?? 0,
+              Boolean(incoming.isDefault),
+              now,
+              priceChanged,
+            ],
+          )
+          continue
+        }
+        stampPrice = true
+        await client.query(
+          `INSERT INTO "ProductVariant" (id, "productId", name, weight, sku, price, mrp, "discountPercent", stock, "isDefault", "createdAt", "updatedAt", "priceUpdatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $11)`,
+          [
+            crypto.randomUUID(),
+            id,
+            incoming.name,
+            incoming.weight ?? null,
+            incoming.sku,
+            incoming.price,
+            incoming.mrp ?? null,
+            incoming.discountPercent ?? null,
+            incoming.stock ?? 0,
+            Boolean(incoming.isDefault),
+            now,
+          ],
+        )
+      }
+      for (const row of existingVariants) {
+        const rowId = String(row.id ?? "")
+        if (!rowId || usedIds.has(rowId)) continue
+        stampPrice = true
+        await client.query(`DELETE FROM "ProductVariant" WHERE id = $1`, [rowId])
+      }
+    }
+
+    const sets: string[] = [`"updatedAt" = $1`]
+    const values: unknown[] = [now]
+    const push = (column: string, value: unknown) => {
+      values.push(value)
+      sets.push(`${column} = $${values.length}`)
+    }
+    if ("name" in input && input.name !== undefined) push("name", input.name)
+    if ("slug" in input && input.slug !== undefined) push("slug", input.slug)
+    if ("sku" in input && input.sku !== undefined) push("sku", input.sku)
+    if ("price" in input && input.price !== undefined) push("price", input.price)
+    if ("description" in input) push("description", input.description ?? null)
+    if ("type" in input && input.type !== undefined) push("type", input.type)
+    if ("basePrice" in input) push(`"basePrice"`, input.basePrice)
+    if ("salePrice" in input) push(`"salePrice"`, input.salePrice)
+    if ("discountPercent" in input) push(`"discountPercent"`, input.discountPercent)
+    if ("weight" in input) push("weight", input.weight)
+    if ("taxIncluded" in input && input.taxIncluded !== undefined) push(`"taxIncluded"`, input.taxIncluded)
+    if ("stockStatus" in input && input.stockStatus !== undefined) push(`"stockStatus"`, input.stockStatus)
+    if ("totalStock" in input && input.totalStock !== undefined) push(`"totalStock"`, input.totalStock)
+    if ("shelfLife" in input) push(`"shelfLife"`, input.shelfLife)
+    if ("preparationType" in input) push(`"preparationType"`, input.preparationType)
+    if ("spiceLevel" in input) push(`"spiceLevel"`, input.spiceLevel)
+    if ("isActive" in input && input.isActive !== undefined) push(`"isActive"`, input.isActive)
+    if ("allowReturn" in input && input.allowReturn !== undefined) push(`"allowReturn"`, input.allowReturn)
+    if ("thumbnail" in input) push("thumbnail", input.thumbnail)
+    if ("metaTitle" in input) push(`"metaTitle"`, input.metaTitle)
+    if ("metaDescription" in input) push(`"metaDescription"`, input.metaDescription)
+    if ("amazonLink" in input) push(`"amazonLink"`, input.amazonLink)
+    if ("status" in input && input.status !== undefined) push("status", input.status)
+    if ("brandId" in input) push(`"brandId"`, input.brandId ?? null)
+    const manager = await client.query(`SELECT 1 FROM "User" WHERE id = $1 LIMIT 1`, [userId])
+    push(`"managedById"`, manager.rows[0] ? userId : null)
+    push(`"isFeatured"`, false)
+    push(`"isBestSeller"`, false)
+    if (stampPrice) push(`"priceUpdatedAt"`, now)
+    values.push(id)
+    await client.query(`UPDATE "Product" SET ${sets.join(", ")} WHERE id = $${values.length}`, values)
+
+    if ("categoryId" in input) {
+      await client.query(`DELETE FROM "ProductCategory" WHERE "productId" = $1`, [id])
+      if (input.categoryId) {
+        await withSavepoint(client, "sp_product_category", async () => {
+          await client.query(
+            `INSERT INTO "ProductCategory" ("productId", "categoryId") VALUES ($1, $2)`,
+            [id, input.categoryId],
+          )
+        })
+      }
+    }
+
+    if (input.images !== undefined) {
+      await client.query(`DELETE FROM "ProductImage" WHERE "productId" = $1`, [id])
+      for (const [i, url] of (input.images ?? []).entries()) {
+        await client.query(
+          `INSERT INTO "ProductImage" (id, "productId", url, position) VALUES ($1, $2, $3, $4)`,
+          [crypto.randomUUID(), id, url, i],
+        )
+      }
+    }
+
+    if (input.features !== undefined) {
+      await client.query(`DELETE FROM "ProductFeature" WHERE "productId" = $1`, [id])
+      for (const feature of input.features ?? []) {
+        await client.query(
+          `INSERT INTO "ProductFeature" (id, "productId", title, icon) VALUES ($1, $2, $3, $4)`,
+          [crypto.randomUUID(), id, feature.title, feature.icon ?? null],
+        )
+      }
+    }
+
+    if (input.labels !== undefined) {
+      await client.query(`DELETE FROM "ProductLabel" WHERE "productId" = $1`, [id])
+      for (const label of input.labels ?? []) {
+        await client.query(
+          `INSERT INTO "ProductLabel" (id, "productId", label, color) VALUES ($1, $2, $3, $4)`,
+          [crypto.randomUUID(), id, label.label, label.color ?? null],
+        )
+      }
+    }
+
+    if (input.details !== undefined) {
+      await withSavepoint(client, "sp_product_details", async () => {
+        await client.query(`DELETE FROM "ProductDetailSection" WHERE "productId" = $1`, [id])
+        for (const [i, detail] of (input.details ?? []).entries()) {
+          await client.query(
+            `INSERT INTO "ProductDetailSection" (id, "productId", title, content, "sortOrder") VALUES ($1, $2, $3, $4, $5)`,
+            [crypto.randomUUID(), id, detail.title, detail.content, detail.sortOrder ?? i],
+          )
+        }
+      })
+    }
+
+    if ("sections" in input || "details" in input) {
+      const wrotePascal = await withSavepoint(client, "sp_product_sections_pascal", async () => {
+        await client.query(`DELETE FROM "ProductSection" WHERE "productId" = $1`, [id])
+        for (const [i, section] of incomingSections.entries()) {
+          await client.query(
+            `INSERT INTO "ProductSection" (id, "productId", title, description, "sortOrder", "isActive")
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [
+              section.id?.trim() || crypto.randomUUID(),
+              id,
+              section.title,
+              section.description,
+              section.sortOrder ?? i,
+              section.isActive ?? true,
+            ],
+          )
+        }
+      })
+      if (!wrotePascal) {
+        await withSavepoint(client, "sp_product_sections_snake", async () => {
+          await client.query(`DELETE FROM product_sections WHERE product_id = $1`, [id])
+          for (const [i, section] of incomingSections.entries()) {
+            await client.query(
+              `INSERT INTO product_sections (id, product_id, title, description, sort_order, is_active)
+               VALUES ($1::uuid, $2, $3, $4, $5, $6)`,
+              [asUuid(section.id), id, section.title, section.description, section.sortOrder ?? i, section.isActive ?? true],
+            )
+          }
+        })
+      }
+    }
+
+    if (input.tagIds !== undefined) {
+      await client.query(`DELETE FROM "ProductTag" WHERE "productId" = $1`, [id])
+      for (const tagId of [...new Set((input.tagIds ?? []).map((tag) => tag.trim()).filter(Boolean))]) {
+        await withSavepoint(client, "sp_product_tag", async () => {
+          await client.query(`INSERT INTO "ProductTag" ("productId", "tagId") VALUES ($1, $2)`, [id, tagId])
+        })
+      }
+    }
+  })
+  return getProductFromPgById(id)
 }
 
 const applyRankingFlags = async <T extends { id?: string }>(products: T[]) => {
@@ -772,16 +1052,18 @@ export const getProductById = async (id: string) => {
   }
   try {
     const product = (await getProductByIdSupabaseHydrated(id)) as any
-    if (product) await applyRankingFlags([product])
-    return product
+    if (product) {
+      await applyRankingFlags([product])
+      return product
+    }
   } catch (error) {
     logger.warn("products.getById.supabase_pg_fallback", {
       error: error instanceof Error ? error.message : "unknown",
     })
-    const product = (await getProductFromPgById(id)) as any
-    if (product) await applyRankingFlags([product])
-    return product
   }
+  const product = (await getProductFromPgById(id)) as any
+  if (product) await applyRankingFlags([product])
+  return product
 }
 
 export const getProductBySlug = async (slug: string) => {
@@ -796,18 +1078,20 @@ export const getProductBySlug = async (slug: string) => {
     } else {
       product = (await getProductBySlugSupabaseBasic(slug)) as any
     }
-    if (product) await applyRankingFlags([product])
-    return product
+    if (product) {
+      await applyRankingFlags([product])
+      return product
+    }
   } catch (error) {
     logger.warn("products.getBySlug.supabase_pg_fallback", {
       error: error instanceof Error ? error.message : "unknown",
     })
-    const rows = await pgQuery(`SELECT * FROM "Product" WHERE slug = $1 LIMIT 1`, [slug])
-    const id = String((rows[0] as { id?: string } | undefined)?.id ?? "")
-    const product = id ? ((await getProductFromPgById(id)) as any) : null
-    if (product) await applyRankingFlags([product])
-    return product
   }
+  const rows = await pgQuery(`SELECT * FROM "Product" WHERE slug = $1 LIMIT 1`, [slug])
+  const id = String((rows[0] as { id?: string } | undefined)?.id ?? "")
+  const product = id ? ((await getProductFromPgById(id)) as any) : null
+  if (product) await applyRankingFlags([product])
+  return product
 }
 export const canAccessProduct = (
   product: { status: string },
@@ -854,6 +1138,7 @@ export const createProduct = async (input: CreateProductInput) => {
       metaTitle: input.metaTitle ?? null,
       metaDescription: input.metaDescription ?? null,
       status: input.status ?? "draft",
+      priceUpdatedAt: new Date(),
       brandId: input.brandId ?? undefined,
       categories: input.categoryId ? { create: [{ categoryId: input.categoryId }] } : undefined,
       variants: input.variants?.length
@@ -867,6 +1152,7 @@ export const createProduct = async (input: CreateProductInput) => {
               discountPercent: v.discountPercent ?? null,
               stock: v.stock ?? 0,
               isDefault: Boolean(v.isDefault),
+              priceUpdatedAt: new Date(),
             })),
           }
         : undefined,
@@ -942,14 +1228,23 @@ export const updateProduct = async (
   opts: { role: string; userId: string },
 ) => {
   if (process.env.SUPABASE_PRODUCTS_READ_ENABLED !== "true") throw new Error("SUPABASE_PRODUCTS_READ_ENABLED must be true")
-  if (process.env.SUPABASE_PRODUCTS_WRITE_ENABLED !== "true") throw new Error("SUPABASE_PRODUCTS_WRITE_ENABLED must be true")
-  const existing: any = await getProductByIdSupabaseBasic(id)
-  if (!existing) throw new Error("Product not found")
-
   const isAdmin = opts.role === "admin" || opts.role === "super_admin"
   if (!isAdmin) {
     throw new Error("Forbidden")
   }
+
+  let existing: any = null
+  let supabaseWritable = process.env.SUPABASE_PRODUCTS_WRITE_ENABLED === "true"
+  try {
+    existing = await getProductByIdSupabaseBasic(id)
+  } catch (error) {
+    supabaseWritable = false
+    logger.warn("products.update.supabase_lookup_failed", {
+      error: error instanceof Error ? error.message : "unknown",
+    })
+  }
+  if (!existing) existing = await getProductFromPgById(id)
+  if (!existing) throw new Error("Product not found")
 
   const incomingRaw = input.sections?.length
     ? input.sections
@@ -970,59 +1265,73 @@ export const updateProduct = async (
     .filter((s) => s.title && s.description)
     .slice(0, 10)
 
-  await updateProductSupabase({
-    productId: id,
-    baseUpdate: {
-      ...("name" in input && input.name !== undefined ? { name: input.name } : {}),
-      ...("slug" in input && input.slug !== undefined ? { slug: input.slug } : {}),
-      ...("sku" in input && input.sku !== undefined ? { sku: input.sku } : {}),
-      ...("price" in input && input.price !== undefined ? { price: input.price } : {}),
-      ...("description" in input ? { description: input.description } : {}),
-      ...("type" in input && input.type !== undefined ? { type: input.type } : {}),
-      ...("basePrice" in input ? { basePrice: input.basePrice } : {}),
-      ...("salePrice" in input ? { salePrice: input.salePrice } : {}),
-      ...("discountPercent" in input ? { discountPercent: input.discountPercent } : {}),
-      ...("weight" in input ? { weight: input.weight } : {}),
-      ...("taxIncluded" in input && input.taxIncluded !== undefined ? { taxIncluded: input.taxIncluded } : {}),
-      ...("stockStatus" in input && input.stockStatus !== undefined ? { stockStatus: input.stockStatus } : {}),
-      ...("totalStock" in input && input.totalStock !== undefined ? { totalStock: input.totalStock } : {}),
-      ...("shelfLife" in input ? { shelfLife: input.shelfLife } : {}),
-      ...("preparationType" in input ? { preparationType: input.preparationType } : {}),
-      ...("spiceLevel" in input ? { spiceLevel: input.spiceLevel } : {}),
-      ...("isActive" in input && input.isActive !== undefined ? { isActive: input.isActive } : {}),
-      isFeatured: false,
-      isBestSeller: false,
-      ...("allowReturn" in input && input.allowReturn !== undefined ? { allowReturn: input.allowReturn } : {}),
-      ...("thumbnail" in input ? { thumbnail: input.thumbnail } : {}),
-      ...("metaTitle" in input ? { metaTitle: input.metaTitle } : {}),
-      ...("metaDescription" in input ? { metaDescription: input.metaDescription } : {}),
-      ...("amazonLink" in input ? { amazonLink: input.amazonLink } : {}),
-      ...("status" in input && input.status !== undefined ? { status: input.status } : {}),
-      ...("brandId" in input ? { brandId: input.brandId ?? null } : {}),
-      managedById: opts.userId,
-    },
-    categoryId: "categoryId" in input ? (input.categoryId ?? null) : undefined,
-    variants:
-      "variants" in input
-        ? (input.variants ?? []).map((v) => ({
-            name: v.name,
-            weight: v.weight ?? null,
-            sku: v.sku,
-            price: v.price,
-            mrp: v.mrp ?? null,
-            discountPercent: v.discountPercent ?? null,
-            stock: v.stock ?? 0,
-            isDefault: Boolean(v.isDefault),
-          }))
-        : undefined,
-    images: "images" in input ? (input.images ?? []) : undefined,
-    features: "features" in input ? (input.features ?? []) : undefined,
-    labels: "labels" in input ? (input.labels ?? []) : undefined,
-    details: "details" in input ? (input.details ?? []) : undefined,
-    sections: "sections" in input || "details" in input ? incomingSections : undefined,
-    tagIds: "tagIds" in input ? [...new Set((input.tagIds ?? []).map((tagId) => tagId.trim()).filter(Boolean))] : undefined,
-  })
-  const hydrated = await getProductByIdSupabaseBasic(id)
+  let hydrated: any = null
+  if (supabaseWritable) {
+    try {
+      await updateProductSupabase({
+        productId: id,
+        baseUpdate: {
+          ...("name" in input && input.name !== undefined ? { name: input.name } : {}),
+          ...("slug" in input && input.slug !== undefined ? { slug: input.slug } : {}),
+          ...("sku" in input && input.sku !== undefined ? { sku: input.sku } : {}),
+          ...("price" in input && input.price !== undefined ? { price: input.price } : {}),
+          ...("description" in input ? { description: input.description } : {}),
+          ...("type" in input && input.type !== undefined ? { type: input.type } : {}),
+          ...("basePrice" in input ? { basePrice: input.basePrice } : {}),
+          ...("salePrice" in input ? { salePrice: input.salePrice } : {}),
+          ...("discountPercent" in input ? { discountPercent: input.discountPercent } : {}),
+          ...("weight" in input ? { weight: input.weight } : {}),
+          ...("taxIncluded" in input && input.taxIncluded !== undefined ? { taxIncluded: input.taxIncluded } : {}),
+          ...("stockStatus" in input && input.stockStatus !== undefined ? { stockStatus: input.stockStatus } : {}),
+          ...("totalStock" in input && input.totalStock !== undefined ? { totalStock: input.totalStock } : {}),
+          ...("shelfLife" in input ? { shelfLife: input.shelfLife } : {}),
+          ...("preparationType" in input ? { preparationType: input.preparationType } : {}),
+          ...("spiceLevel" in input ? { spiceLevel: input.spiceLevel } : {}),
+          ...("isActive" in input && input.isActive !== undefined ? { isActive: input.isActive } : {}),
+          isFeatured: false,
+          isBestSeller: false,
+          ...("allowReturn" in input && input.allowReturn !== undefined ? { allowReturn: input.allowReturn } : {}),
+          ...("thumbnail" in input ? { thumbnail: input.thumbnail } : {}),
+          ...("metaTitle" in input ? { metaTitle: input.metaTitle } : {}),
+          ...("metaDescription" in input ? { metaDescription: input.metaDescription } : {}),
+          ...("amazonLink" in input ? { amazonLink: input.amazonLink } : {}),
+          ...("status" in input && input.status !== undefined ? { status: input.status } : {}),
+          ...("brandId" in input ? { brandId: input.brandId ?? null } : {}),
+          managedById: opts.userId,
+        },
+        categoryId: "categoryId" in input ? (input.categoryId ?? null) : undefined,
+        variants:
+          "variants" in input
+            ? (input.variants ?? []).map((v) => ({
+                id: v.id,
+                name: v.name,
+                weight: v.weight ?? null,
+                sku: v.sku,
+                price: v.price,
+                mrp: v.mrp ?? null,
+                discountPercent: v.discountPercent ?? null,
+                stock: v.stock ?? 0,
+                isDefault: Boolean(v.isDefault),
+              }))
+            : undefined,
+        images: "images" in input ? (input.images ?? []) : undefined,
+        features: "features" in input ? (input.features ?? []) : undefined,
+        labels: "labels" in input ? (input.labels ?? []) : undefined,
+        details: "details" in input ? (input.details ?? []) : undefined,
+        sections: "sections" in input || "details" in input ? incomingSections : undefined,
+        tagIds: "tagIds" in input ? [...new Set((input.tagIds ?? []).map((tagId) => tagId.trim()).filter(Boolean))] : undefined,
+      })
+      hydrated = await getProductById(id)
+    } catch (error) {
+      logger.warn("products.update.supabase_pg_fallback", {
+        error: error instanceof Error ? error.message : "unknown",
+      })
+    }
+  }
+
+  if (!hydrated) {
+    hydrated = await updateProductFromPg(id, input, incomingSections, opts.userId)
+  }
   if (!hydrated) throw new Error("Product not found")
 
   await logActivity({
