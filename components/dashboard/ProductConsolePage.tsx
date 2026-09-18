@@ -69,6 +69,8 @@ type ProductDetail = {
     discountPercent?: string | number | null
     stock: number
     isDefault?: boolean
+    updatedAt?: string | Date | null
+    priceUpdatedAt?: string | Date | null
   }>
   images?: Array<{ url: string }>
   details?: Array<{ title: string; content: string; sortOrder?: number }>
@@ -77,6 +79,7 @@ type ProductDetail = {
   createdById?: string | null
   createdAt?: string | Date | null
   updatedAt?: string | Date | null
+  priceUpdatedAt?: string | Date | null
 }
 
 const ViewField = ({ label, value, className = "" }: { label: string; value: React.ReactNode; className?: string }) => (
@@ -331,11 +334,12 @@ export function ProductConsolePage({
   const [simpleProductWeight, setSimpleProductWeight] = useState(""); // New state for simple product weight
   const [stockStatus, setStockStatus] = useState<"in_stock" | "out_of_stock">("in_stock")
   const [totalStock, setTotalStock] = useState("0")
-  const [variants, setVariants] = useState<Array<{ id?: string; name: string; weight: string; sku: string; price: string; mrp: string; discountPercent: string; stock: string; isDefault: boolean }>>([
+  const [variants, setVariants] = useState<Array<{ id?: string; name: string; weight: string; sku: string; price: string; mrp: string; discountPercent: string; stock: string; isDefault: boolean; updatedAt?: string | Date | null; priceUpdatedAt?: string | Date | null }>>([
     { name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true },
   ])
   const [variantMode, setVariantMode] = useState<"single" | "multiple">("single")
   const [updatedAt, setUpdatedAt] = useState<string | Date | null>(null)
+  const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | Date | null>(null)
   const [shelfLife, setShelfLife] = useState("")
   const [preparationType, setPreparationType] = useState<"" | "ready_to_eat" | "ready_to_cook">("")
   const [spiceLevel, setSpiceLevel] = useState<"" | "mild" | "medium" | "hot" | "extra_hot">("")
@@ -563,6 +567,7 @@ export function ProductConsolePage({
       setMetaDescription(p.metaDescription ?? "")
       setCreatedBy(p.createdById ?? "user_admin_ziply5")
       setUpdatedAt(p.updatedAt ?? (p as { updated_at?: string | Date | null }).updated_at ?? null)
+      setPriceUpdatedAt(p.priceUpdatedAt ?? (p as { price_updated_at?: string | Date | null }).price_updated_at ?? null)
       setFeatures(p.features ?? [])
       setCategoryId(p.categories?.[0]?.categoryId ?? "")
       setSelectedTagIds((p.tags ?? []).map((x) => x.tag.id).filter(Boolean).slice(0, 1))
@@ -581,6 +586,8 @@ export function ProductConsolePage({
             discountPercent: item.discountPercent != null ? String(Number(item.discountPercent)) : "",
             stock: String(item.stock ?? 0),
             isDefault: Boolean(item.isDefault) || idx === 0,
+            updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
+            priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
           }))
           : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true }],
       )
@@ -884,10 +891,6 @@ export function ProductConsolePage({
         setError("Description is required")
         return
       }
-      if (payload.sections.length < 2) {
-        setError("At least 2 product details/sections are required")
-        return
-      }
     }
 
     const isPublishing = status === "published"
@@ -1055,8 +1058,6 @@ export function ProductConsolePage({
     const hasShelfLife = Boolean(product.shelfLife?.trim())
     const hasThumbnail = Boolean(product.thumbnail?.trim())
     const hasDescription = Boolean(product.description?.trim())
-    const sectionCount = (product.sections?.filter((s) => Boolean(s.title) && Boolean(s.description)).length ?? 0) || (product.details?.filter((d) => Boolean(d.title) && Boolean(d.content)).length ?? 0)
-    const hasSections = sectionCount >= 2
     const hasFeatures = (product.features?.filter((f) => Boolean(f.title)).length ?? 0) > 0
 
     if (!hasPrice) return "Provide at least one valid price to publish the product."
@@ -1068,7 +1069,6 @@ export function ProductConsolePage({
     if (!hasShelfLife) return "Shelf life is required to publish the product."
     if (!hasThumbnail) return "Thumbnail image is required to publish the product."
     if (!hasDescription) return "Description is required to publish the product."
-    if (!hasSections) return "At least 2 product details/sections are required to publish the product."
     if (!hasFeatures) return "At least one product feature is required to publish the product."
     return null
   }
@@ -1556,7 +1556,10 @@ export function ProductConsolePage({
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{mode === "view" ? "View product" : mode === "edit" ? "Edit product" : "Add product"}</h1>
           {mode === "view" ? (
-            <p className="text-sm text-[#646464]">Last updated: {formatUpdatedAt(updatedAt)}</p>
+            <div className="space-y-0.5">
+              <p className="text-sm text-[#646464]">Last updated: {formatUpdatedAt(updatedAt)}</p>
+              <p className="text-sm text-[#646464]">Last price update: {formatUpdatedAt(priceUpdatedAt)}</p>
+            </div>
           ) : null}
         </div>
         <Link href={basePath} className="text-xs font-semibold uppercase text-[#7B3010] underline">
@@ -1636,6 +1639,7 @@ export function ProductConsolePage({
                   <Info label="Stock Status" value={stockStatus} />
                   <Info label="Shelf Life" value={shelfLife ? `${shelfLife} months` : "—"} />
                   <Info label="Last Updated" value={formatUpdatedAt(updatedAt)} />
+                  <Info label="Last Price Update" value={formatUpdatedAt(priceUpdatedAt)} />
                 </Card>
 
                 {/* 🧾 META */}
@@ -1650,7 +1654,7 @@ export function ProductConsolePage({
               {type === "variant" && (
                 <div className="bg-white rounded-2xl p-4 border border-[#E5E5DC] shadow-sm">
                   <p className="font-semibold mb-3 text-[#4A1D1F]">Product Variants</p>
-                  <ConsoleTable headers={["Weight", "SKU", "Sale Price", "MRP", "Discount", "Stock", "Default"]}>
+                  <ConsoleTable headers={["Weight", "SKU", "Sale Price", "MRP", "Discount", "Stock", "Default", "Last updated", "Last price update"]}>
                     {variants.map((v, idx) => (
                       <tr key={`${v.id}-${idx}`} className="hover:bg-[#FFFBF3]/50">
                         <ConsoleTd>{v.weight || v.name}</ConsoleTd>
@@ -1671,6 +1675,12 @@ export function ProductConsolePage({
                           {v.isDefault ? (
                             <span className="text-[10px] bg-[#FFC222] text-[#4A1D1F] px-2 py-0.5 rounded-full font-bold uppercase">Default</span>
                           ) : "—"}
+                        </ConsoleTd>
+                        <ConsoleTd className="whitespace-nowrap text-[12px] text-[#646464]">
+                          {formatUpdatedAt(v.updatedAt)}
+                        </ConsoleTd>
+                        <ConsoleTd className="whitespace-nowrap text-[12px] text-[#646464]">
+                          {formatUpdatedAt(v.priceUpdatedAt)}
                         </ConsoleTd>
                       </tr>
                     ))}

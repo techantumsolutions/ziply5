@@ -28,6 +28,7 @@ const PRODUCT_BASE_COLUMNS = [
   "price",
   "createdAt",
   "updatedAt",
+  "priceUpdatedAt",
   "basePrice",
   "discountPercent",
   "isActive",
@@ -136,7 +137,8 @@ const withTimestampsForInsert = (base: Record<string, unknown>) => {
   const now = new Date().toISOString()
   const createdAt = base.createdAt ?? base.created_at ?? now
   const updatedAt = base.updatedAt ?? base.updated_at ?? now
-  return { ...base, createdAt, updatedAt }
+  const priceUpdatedAt = base.priceUpdatedAt ?? base.price_updated_at ?? now
+  return { ...base, createdAt, updatedAt, priceUpdatedAt }
 }
 
 const withTimestampForUpdate = (base: Record<string, unknown>) => {
@@ -155,6 +157,145 @@ const shouldRetryWithTimestamps = (message: string) => {
 const withId = (payload: Record<string, unknown>) => {
   if (payload.id != null && String(payload.id).trim()) return payload
   return { id: crypto.randomUUID(), ...payload }
+}
+
+const toMoney = (value: unknown): number | null => {
+  if (value == null || value === "") return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+const sameMoney = (a: unknown, b: unknown) => {
+  const left = toMoney(a)
+  const right = toMoney(b)
+  if (left == null && right == null) return true
+  if (left == null || right == null) return false
+  return Math.abs(left - right) < 0.0001
+}
+
+const sameText = (a: unknown, b: unknown) => safeString(a) === safeString(b)
+
+const sameBool = (a: unknown, b: unknown) => Boolean(a) === Boolean(b)
+
+const variantPriceChanged = (existing: Record<string, unknown>, incoming: Record<string, unknown>) =>
+  !sameMoney(existing.price, incoming.price) ||
+  !sameMoney(existing.mrp, incoming.mrp) ||
+  !sameMoney(existing.discountPercent ?? existing.discount_percent, incoming.discountPercent)
+
+const variantFieldsChanged = (existing: Record<string, unknown>, incoming: Record<string, unknown>) =>
+  variantPriceChanged(existing, incoming) ||
+  !sameText(existing.name, incoming.name) ||
+  !sameText(existing.weight, incoming.weight) ||
+  !sameText(existing.sku, incoming.sku) ||
+  !sameMoney(existing.stock, incoming.stock) ||
+  !sameBool(existing.isDefault ?? existing.is_default, incoming.isDefault)
+
+const productPriceFieldsChanged = (existing: Record<string, unknown> | null, incoming: Record<string, unknown>) => {
+  if (!existing) return false
+  const keys = ["price", "salePrice", "basePrice", "discountPercent"] as const
+  return keys.some((key) => {
+    if (!(key in incoming)) return false
+    const existingValue = existing[key] ?? existing[camelToSnake(key)]
+    return !sameMoney(existingValue, incoming[key])
+  })
+}
+
+const deleteById = async (tables: string[], id: string) => {
+  const client = getSupabaseAdmin()
+  const value = safeString(id)
+  if (!value) return
+  for (const table of tables) {
+    const { error } = await client.from(table).delete().eq("id", value)
+    if (!error) return
+  }
+}
+
+const syncProductVariants = async (productId: string, incoming: Array<Record<string, unknown>>) => {
+  const now = new Date().toISOString()
+  const existing = await readByProductId<Record<string, unknown>>(PRODUCT_VARIANT_TABLES, productId)
+  const usedIds = new Set<string>()
+  let catalogPriceChanged = false
+
+  for (const raw of incoming) {
+    const payload = {
+      name: raw.name,
+      weight: raw.weight ?? null,
+      sku: raw.sku,
+      price: raw.price,
+      mrp: raw.mrp ?? null,
+      discountPercent: raw.discountPercent ?? null,
+      stock: raw.stock ?? 0,
+      isDefault: Boolean(raw.isDefault),
+    }
+    const incomingId = safeString(raw.id)
+    const incomingSku = safeString(raw.sku).toLowerCase()
+    let match =
+      incomingId && !usedIds.has(incomingId)
+        ? existing.find((row) => safeString(row.id) === incomingId)
+        : undefined
+    if (!match) {
+      match = existing.find((row) => {
+        const id = safeString(row.id)
+        return id && !usedIds.has(id) && safeString(row.sku).toLowerCase() === incomingSku
+      })
+    }
+
+    if (match) {
+      const matchId = safeString(match.id)
+      usedIds.add(matchId)
+      const priceChanged = variantPriceChanged(match, payload)
+      const anyChanged = variantFieldsChanged(match, payload)
+      if (!anyChanged) continue
+      const updatePayload: Record<string, unknown> = {
+        ...payload,
+        updatedAt: now,
+      }
+      if (priceChanged) {
+        updatePayload.priceUpdatedAt = now
+        catalogPriceChanged = true
+      }
+      await updateFirst(
+        PRODUCT_VARIANT_TABLES,
+        [updatePayload, Object.fromEntries(Object.entries(updatePayload).map(([k, v]) => [camelToSnake(k), v]))],
+        matchId,
+      )
+      continue
+    }
+
+    catalogPriceChanged = true
+    const createdVariant = await insertFirst(PRODUCT_VARIANT_TABLES, [
+      withId({
+        ...payload,
+        productId,
+        createdAt: now,
+        updatedAt: now,
+        priceUpdatedAt: now,
+      }),
+      withId({
+        ...payload,
+        product_id: productId,
+        created_at: now,
+        updated_at: now,
+        price_updated_at: now,
+      }),
+    ])
+    if (!createdVariant.row) {
+      logger.error("Supabase insert failed for table 'ProductVariant' with payload", {
+        productId,
+        sku: payload.sku,
+        errors: createdVariant.errors.slice(0, 5),
+      })
+    }
+  }
+
+  for (const row of existing) {
+    const id = safeString(row.id)
+    if (!id || usedIds.has(id)) continue
+    catalogPriceChanged = true
+    await deleteById(PRODUCT_VARIANT_TABLES, id)
+  }
+
+  return { catalogPriceChanged }
 }
 
 const insertFirst = async (
@@ -248,6 +389,7 @@ export const getProductIdBySlugSupabase = async (slug: string) => {
 
 export const getProductByIdSupabaseBasic = async (id: string) => {
   const client = getSupabaseAdmin()
+  const errors: string[] = []
   for (const table of PRODUCT_TABLES) {
     const attempts = [
       () => client.from(table).select(PRODUCT_BASE_COLUMNS).eq("id", id).maybeSingle(),
@@ -256,7 +398,11 @@ export const getProductByIdSupabaseBasic = async (id: string) => {
     for (const run of attempts) {
       const { data, error } = await run()
       if (!error) return (data as ProductRow | null) ?? null
+      if (error) errors.push(`${table}: ${error.message}`)
     }
+  }
+  if (errors.length) {
+    throw new Error(`Unable to get product via Supabase (${errors.slice(0, 3).join(" | ")})`)
   }
   return null
 }
@@ -516,8 +662,22 @@ export const createProductSupabase = async (input: {
   }
 
   for (const v of input.variants ?? []) {
+    const now = new Date().toISOString()
     const createdVariant = await insertFirst(PRODUCT_VARIANT_TABLES, [
-      withId({ ...v, productId }),
+      withId({
+        ...v,
+        productId,
+        createdAt: now,
+        updatedAt: now,
+        priceUpdatedAt: now,
+      }),
+      withId({
+        ...v,
+        product_id: productId,
+        created_at: now,
+        updated_at: now,
+        price_updated_at: now,
+      }),
     ])
     if (!createdVariant.row) {
       logger.error("Supabase insert failed for table 'ProductVariant' with payload", {
@@ -590,7 +750,20 @@ export const updateProductSupabase = async (input: {
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ id?: string; title: string; description: string; sortOrder?: number; isActive?: boolean }>
 }) => {
-  const baseUpdate = await normalizeActorFks(withTimestampForUpdate(input.baseUpdate))
+  const existingProduct = await getProductByIdSupabaseBasic(input.productId)
+  let stampProductPrice = productPriceFieldsChanged(existingProduct, input.baseUpdate)
+
+  if (input.variants !== undefined) {
+    const synced = await syncProductVariants(input.productId, input.variants ?? [])
+    if (synced.catalogPriceChanged) stampProductPrice = true
+  }
+
+  const baseUpdate = await normalizeActorFks(
+    withTimestampForUpdate({
+      ...input.baseUpdate,
+      ...(stampProductPrice ? { priceUpdatedAt: new Date().toISOString() } : {}),
+    }),
+  )
   const updated = await updateFirst(
     PRODUCT_TABLES,
     [
@@ -622,12 +795,6 @@ export const updateProductSupabase = async (input: {
           errors: linked.errors.slice(0, 5),
         })
       }
-    }
-  }
-  if (input.variants !== undefined) {
-    await deleteByProductId(PRODUCT_VARIANT_TABLES, input.productId)
-    for (const v of input.variants ?? []) {
-      await insertFirst(PRODUCT_VARIANT_TABLES, [withId({ ...v, productId: input.productId }), withId({ ...v, product_id: input.productId })])
     }
   }
   if (input.images !== undefined) {
