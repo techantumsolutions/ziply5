@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { authedFormDataPost } from "@/lib/dashboard-fetch"
 import { getValidAccessToken } from "@/lib/auth-session"
 import { toast } from "@/lib/toast"
@@ -17,7 +18,7 @@ import {
 import { Progress } from "@/components/ui/progress"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { Loader2, Download, FileSpreadsheet, ImageIcon, Play, ShieldCheck } from "lucide-react"
+import { Loader2, Download, FileSpreadsheet, ImageIcon, Play, ShieldCheck, X } from "lucide-react"
 
 type UploadType = "simple" | "variant"
 
@@ -89,6 +90,7 @@ const failedRowsToCsv = (rows: Record<string, string | number | boolean | null>[
 }
 
 export default function AdminBulkProductUploadPage() {
+  const router = useRouter()
   const [typeDialogOpen, setTypeDialogOpen] = useState(true)
   const [uploadType, setUploadType] = useState<UploadType | null>(null)
   const [excelFile, setExcelFile] = useState<File | null>(null)
@@ -105,6 +107,11 @@ export default function AdminBulkProductUploadPage() {
     setExcelFile(null)
     setZipFile(null)
     setReport(null)
+  }
+
+  const closeTypeDialog = () => {
+    setTypeDialogOpen(false)
+    if (!uploadType) router.push("/admin/products")
   }
 
   const runValidate = async () => {
@@ -188,18 +195,30 @@ export default function AdminBulkProductUploadPage() {
         </p>
       </div>
 
-      <Dialog open={typeDialogOpen} onOpenChange={setTypeDialogOpen}>
+      <Dialog
+        open={typeDialogOpen}
+        onOpenChange={(open) => {
+          if (open) {
+            setTypeDialogOpen(true)
+            return
+          }
+          setTypeDialogOpen(false)
+        }}
+      >
         <DialogContent
           className="border-[#E8D5D5] bg-white sm:max-w-md"
-          showCloseButton={Boolean(uploadType)}
-          onPointerDownOutside={(e) => {
-            if (!uploadType) e.preventDefault()
-          }}
-          onEscapeKeyDown={(e) => {
-            if (!uploadType) e.preventDefault()
-          }}
+          showCloseButton={false}
         >
-          <DialogHeader>
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={closeTypeDialog}
+            className="absolute top-4 right-4 rounded-sm text-[#4A1D1F] transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4A1D1F]/30"
+          >
+            <X className="h-5 w-5" strokeWidth={2} />
+            <span className="sr-only">Close</span>
+          </button>
+          <DialogHeader className="pr-8">
             <DialogTitle className="font-melon text-[#4A1D1F]">Select product upload type</DialogTitle>
             <DialogDescription>
               Simple products have no variants. Variant products use two sheets (parent + variants).
@@ -210,8 +229,18 @@ export default function AdminBulkProductUploadPage() {
             onValueChange={(v) => onPickType(v as UploadType)}
             className="grid gap-3 pt-2"
           >
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[#E8D5D5] p-3 hover:bg-[#FFF9F9]">
-              <RadioGroupItem value="simple" id="ut-simple" />
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors ${
+                uploadType === "simple"
+                  ? "border-[#4A1D1F] bg-[#FFF9F9] shadow-sm"
+                  : "border-[#E8D5D5] hover:border-[#4A1D1F]/40 hover:bg-[#FFF9F9]"
+              }`}
+            >
+              <RadioGroupItem
+                value="simple"
+                id="ut-simple"
+                className="mt-0.5 size-[18px] border-[#4A1D1F] text-[#4A1D1F] [&_svg]:fill-[#4A1D1F] [&_svg]:size-2.5"
+              />
               <div>
                 <Label htmlFor="ut-simple" className="cursor-pointer font-medium text-[#4A1D1F]">
                   Simple products
@@ -219,8 +248,18 @@ export default function AdminBulkProductUploadPage() {
                 <p className="text-xs text-[#646464]">Single SKU per row, no variants.</p>
               </div>
             </label>
-            <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-[#E8D5D5] p-3 hover:bg-[#FFF9F9]">
-              <RadioGroupItem value="variant" id="ut-variant" />
+            <label
+              className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors ${
+                uploadType === "variant"
+                  ? "border-[#4A1D1F] bg-[#FFF9F9] shadow-sm"
+                  : "border-[#E8D5D5] hover:border-[#4A1D1F]/40 hover:bg-[#FFF9F9]"
+              }`}
+            >
+              <RadioGroupItem
+                value="variant"
+                id="ut-variant"
+                className="mt-0.5 size-[18px] border-[#4A1D1F] text-[#4A1D1F] [&_svg]:fill-[#4A1D1F] [&_svg]:size-2.5"
+              />
               <div>
                 <Label htmlFor="ut-variant" className="cursor-pointer font-medium text-[#4A1D1F]">
                   Variant products

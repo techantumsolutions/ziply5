@@ -24,7 +24,6 @@ import {
   ShoppingBasket,
   Truck,
   Gift,
-  Upload,
 } from "lucide-react"
 import { DashboardChrome, type DashboardNavItem } from "./DashboardChrome"
 import { useEffect, useMemo, useState } from "react"
@@ -33,16 +32,7 @@ import { PageTransition } from "@/components/animations/PageTransition"
 const adminNav: DashboardNavItem[] = [
   { href: "/admin/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
-  {
-    label: "Products",
-    icon: Package,
-    subItems: [
-      { href: "/admin/products", label: "All Products", icon: Package },
-      { href: "/admin/products/add", label: "Add Product", icon: Package },
-      { href: "/admin/products/bulk-upload", label: "Bulk upload", icon: Upload },
-      { href: "/admin/products/combos", label: "Combos", icon: Gift },
-    ],
-  },
+  { href: "/admin/products", label: "Products", icon: Package },
   {
     label: "Content",
     icon: FileText,
