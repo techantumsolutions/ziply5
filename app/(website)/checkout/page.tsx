@@ -21,8 +21,12 @@ import {
   writeCheckoutStorage,
   type CheckoutAddress,
 } from "@/lib/ecommerce-order";
-import { toast } from "@/lib/toast";
-import { calculateZiply5Shipping } from "@/src/lib/shipping/ziply5-shipping";
+import {
+  calculateShippingCharge,
+  validateShippingRules,
+  DEFAULT_SHIPPING_RULES,
+  type ShippingRule,
+} from "@/src/lib/shipping/ziply5-shipping";
 
 type Addr = {
   id: string;
@@ -444,14 +448,40 @@ export default function CheckoutPage() {
   }, [validatedItems]);
   const hasValidationErrors = validatedItems.some(i => i.variantError || i.stock < i.quantity);
 
+  const [shippingRules, setShippingRules] = useState<ShippingRule[]>([...DEFAULT_SHIPPING_RULES]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/v1/settings?group=SHIPPING")
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return;
+        const list = payload?.data;
+        if (Array.isArray(list)) {
+          const row = list.find((item: any) => item.key === "rules");
+          if (row && Array.isArray(row.valueJson)) {
+            const val = validateShippingRules(row.valueJson);
+            if (val.valid && val.rules.length > 0) {
+              setShippingRules(val.rules);
+            }
+          }
+        }
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const totalPacksForShipping = useMemo(
     () => validatedItems.reduce((acc, item) => acc + Math.max(1, Math.floor(Number(item.quantity) || 0)), 0),
     [validatedItems],
   );
   const shipping = useMemo(() => {
-    if (items.length === 0 || totalPacksForShipping < 1) return 0;
-    return calculateZiply5Shipping(totalPacksForShipping).chargeInr;
-  }, [items.length, totalPacksForShipping]);
+    if (items.length === 0 || subTotal <= 0) return 0;
+    const calc = calculateShippingCharge(subTotal, shippingRules);
+    return calc.ok ? calc.shippingCharge : 0;
+  }, [items.length, subTotal, shippingRules]);
 
   const [deliveryCheck, setDeliveryCheck] = useState<{
     loading: boolean;
@@ -482,6 +512,7 @@ export default function CheckoutPage() {
         body: JSON.stringify({
           delivery_postcode: pin,
           cod: false,
+          subtotal: subTotal,
           totalItems: totalPacksForShipping,
         }),
       });
@@ -508,7 +539,7 @@ export default function CheckoutPage() {
       setDeliveryCheck({ loading: false, error: msg, lastOk: false, data: null });
       toast.warning("Could not verify delivery right now. You can still try to place your order.");
     }
-  }, [billing.postalCode, totalPacksForShipping]);
+  }, [billing.postalCode, subTotal, totalPacksForShipping]);
 
   useEffect(() => {
     const pin = billing.postalCode.trim();
@@ -520,7 +551,7 @@ export default function CheckoutPage() {
       void runDeliveryCheck();
     }, 450);
     return () => window.clearTimeout(t);
-  }, [billing.postalCode, totalPacksForShipping, runDeliveryCheck]);
+  }, [billing.postalCode, subTotal, totalPacksForShipping, runDeliveryCheck]);
   const baseTotal =
     offerFinalTotal != null
       ? offerFinalTotal
