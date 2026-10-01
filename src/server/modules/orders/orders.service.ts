@@ -37,9 +37,10 @@ import { assertMasterValueExists } from "@/src/server/modules/master/master.serv
 import { syncOrderStatusFromShiprocket } from "@/src/server/modules/integrations/shiprocket.service"
 import { safeSyncOrderShipmentToShiprocket } from "@/src/server/modules/shipping/shiprocket.orders"
 import {
-  assertZiply5ShippingWithinSlabCap,
   totalPacksFromCheckoutLines,
 } from "@/src/lib/shipping/ziply5-shipping"
+import { calculateAuthoritativeShipping } from "@/src/server/modules/shipping/shipping-settings"
+import { calculateOffers } from "@/src/server/modules/offers/offers.service"
 import { getLatestTrackingSummariesForOrderIds } from "@/src/server/modules/orders/order-tracking.service"
 import { pgQuery } from "@/src/server/db/pg"
 
@@ -649,12 +650,43 @@ export const createOrderFromCheckout = async (input: {
     appliedCouponId = validation.appliedCouponId ?? null
   }
 
-  const shippingCheck = assertZiply5ShippingWithinSlabCap(shipping, totalItemsUsedForShipping)
-  if (!shippingCheck.ok) {
-    throw new Error(shippingCheck.message)
+  const shippingRes = await calculateAuthoritativeShipping(subtotal)
+  if (!shippingRes.ok) {
+    throw new Error(shippingRes.error ?? "Failed to calculate shipping for order subtotal.")
   }
 
-  const total = Math.max(subtotal + shipping + taxTotal - discount, 0)
+  let authoritativeShipping = shippingRes.shippingCharge
+
+  // Check if an offer adjusts shipping (e.g. shipping_discount offers or free shipping promotions)
+  try {
+    const offerCalc = await calculateOffers({
+      userId: input.userId ?? null,
+      items: lines.map((l) => ({
+        productId: l.productId,
+        variantId: l.variantId,
+        quantity: l.quantity,
+        unitPrice: l.unitPrice,
+      })),
+      cartSubtotal: subtotal,
+      shippingAmount: authoritativeShipping,
+      couponCode: input.couponCode?.trim() || null,
+    })
+    if (offerCalc && typeof offerCalc.adjustedShipping === "number") {
+      authoritativeShipping = offerCalc.adjustedShipping
+    }
+  } catch {
+    // Keep base authoritative shipping if offers calculation fails
+  }
+
+  // Anti-tamper: reject client-tampered shipping charges
+  if (input.shipping != null && Math.abs(Number(input.shipping) - authoritativeShipping) > 0.02) {
+    throw new Error(
+      `Shipping charge mismatch. Authoritative shipping is ₹${authoritativeShipping.toFixed(2)}, but received ₹${Number(input.shipping).toFixed(2)}. Please refresh checkout.`,
+    )
+  }
+
+  const finalShipping = authoritativeShipping
+  const total = Math.max(subtotal + finalShipping + taxTotal - discount, 0)
 
   await reserveInventorySupabase(lines.map((line) => ({ productId: line.productId, variantId: line.variantId, quantity: line.quantity })))
 
@@ -676,8 +708,8 @@ export const createOrderFromCheckout = async (input: {
     subtotal,
     discount,
     tax: taxTotal,
-    shippingCharge: shipping,
-    shipping, // Keeping both for backward/forward compatibility
+    shippingCharge: finalShipping,
+    shipping: finalShipping, // Keeping both for backward/forward compatibility
     total,
     totalItemsUsedForShipping,
     savingAmount: input.savingAmount ?? 0,
@@ -735,7 +767,7 @@ export const createOrderFromCheckout = async (input: {
   // For online payments, confirm only if payment was successful and order is still pending.
   if (input.gateway.trim().toLowerCase() !== "cod") {
     const hasSuccessfulTransaction =
-      (order.transactions ?? []).some((tx) => ["paid", "captured", "success"].includes(String(tx?.status ?? "").toLowerCase())) ||
+      (order.transactions ?? []).some((tx: any) => ["paid", "captured", "success"].includes(String(tx?.status ?? "").toLowerCase())) ||
       ["paid", "captured", "success"].includes(transactionStatus.toLowerCase())
     const isPaymentSuccessful = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS" || hasSuccessfulTransaction
 
