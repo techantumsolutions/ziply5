@@ -10,11 +10,22 @@ const variantSchema = z.object({
   stock: z.number().int().min(0).optional(),
   sku: z.string().min(1),
   isDefault: z.boolean().optional(),
+  hsnCode: z.string().trim().max(32).optional().nullable(),
+  eanCode: z.string().trim().max(64).optional().nullable(),
 })
 
 const featureSchema = z.object({
-  title: z.string().min(1),
+  featureDefinitionId: z.string().optional().nullable(),
+  title: z.string().min(1).optional(),
   icon: z.string().optional().nullable(),
+}).superRefine((data, ctx) => {
+  if (!data.featureDefinitionId && !data.title) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Either featureDefinitionId or title is required",
+      path: ["title"],
+    })
+  }
 })
 
 const labelSchema = z.object({
@@ -37,6 +48,7 @@ const sectionSchema = z.object({
 })
 
 export const createProductSchema = z.object({
+  id: z.string().uuid().optional(),
   name: z.string().min(2),
   slug: z.string().min(2),
   sku: z.string().min(2),
@@ -61,6 +73,7 @@ export const createProductSchema = z.object({
   variants: z.array(variantSchema).optional(),
   images: z.array(z.string().min(1)).optional(),
   features: z.array(featureSchema).optional(),
+  featureDefinitionIds: z.array(z.string().min(1)).optional(),
   tagIds: z.array(z.string()).optional(),
   labels: z.array(labelSchema).optional(),
   details: z.array(detailsSchema).optional(),
@@ -116,6 +129,7 @@ export const updateProductSchema = z.object({
   variants: z.array(variantSchema).optional(),
   images: z.array(z.string().min(1)).optional(),
   features: z.array(featureSchema).optional(),
+  featureDefinitionIds: z.array(z.string().min(1)).optional(),
   labels: z.array(labelSchema).optional(),
   details: z.array(detailsSchema).optional(),
   sections: z.array(sectionSchema).max(10).optional(),

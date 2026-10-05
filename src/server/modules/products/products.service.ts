@@ -16,10 +16,12 @@ import {
 import { logger } from "@/lib/logger"
 import { pgQuery, pgTx } from "@/src/server/db/pg"
 import crypto from "node:crypto"
+import { resolveProductFeaturesFromDefinitions } from "@/src/server/modules/feature-definitions/feature-definitions.service"
 
 export type ListProductsScope = "public" | "admin"
 
 type CreateProductInput = {
+  id?: string
   name: string
   slug: string
   sku: string
@@ -58,9 +60,12 @@ type CreateProductInput = {
     stock?: number
     sku: string
     isDefault?: boolean
+    hsnCode?: string | null
+    eanCode?: string | null
   }>
   images?: string[]
-  features?: Array<{ title: string; icon?: string | null }>
+  features?: Array<{ featureDefinitionId?: string | null; title?: string; icon?: string | null }>
+  featureDefinitionIds?: string[]
   labels?: Array<{ label: string; color?: string | null }>
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }>
@@ -103,13 +108,67 @@ type UpdateProductInput = Partial<{
     stock?: number
     sku: string
     isDefault?: boolean
+    hsnCode?: string | null
+    eanCode?: string | null
   }>
   images: string[]
-  features: Array<{ title: string; icon?: string | null }>
+  features: Array<{ featureDefinitionId?: string | null; title?: string; icon?: string | null }>
+  featureDefinitionIds: string[]
   labels: Array<{ label: string; color?: string | null }>
   details: Array<{ title: string; content: string; sortOrder?: number }>
   sections: Array<{ id?: string; title: string; description: string; sortOrder?: number; isActive?: boolean }>
 }>
+
+type NormalizedProductFeature = {
+  featureDefinitionId: string | null
+  title: string
+  icon: string | null
+}
+
+const normalizeIncomingFeatures = async (input: {
+  features?: Array<{ featureDefinitionId?: string | null; title?: string; icon?: string | null }>
+  featureDefinitionIds?: string[]
+}): Promise<NormalizedProductFeature[] | undefined> => {
+  if (input.featureDefinitionIds !== undefined) {
+    const resolved = await resolveProductFeaturesFromDefinitions(input.featureDefinitionIds)
+    return resolved.map((f) => ({
+      featureDefinitionId: f.featureDefinitionId,
+      title: f.title,
+      icon: f.icon,
+    }))
+  }
+  if (input.features === undefined) return undefined
+
+  const definitionIds = input.features
+    .map((f) => f.featureDefinitionId?.trim())
+    .filter((id): id is string => Boolean(id))
+  const resolvedById = definitionIds.length
+    ? new Map((await resolveProductFeaturesFromDefinitions(definitionIds)).map((f) => [f.featureDefinitionId, f]))
+    : new Map<string, { featureDefinitionId: string; title: string; icon: string | null }>()
+
+  const out: NormalizedProductFeature[] = []
+  for (const feature of input.features) {
+    const defId = feature.featureDefinitionId?.trim() || null
+    if (defId) {
+      const resolved = resolvedById.get(defId)
+      if (!resolved) throw new Error(`Unknown feature definition id: ${defId}`)
+      out.push({
+        featureDefinitionId: resolved.featureDefinitionId,
+        title: resolved.title,
+        icon: resolved.icon,
+      })
+      continue
+    }
+    const title = String(feature.title ?? "").trim()
+    if (!title) continue
+    out.push({
+      featureDefinitionId: null,
+      title,
+      icon: feature.icon ?? null,
+    })
+  }
+  return out
+}
 
 const productSelect = {
   id: true,
@@ -865,7 +924,7 @@ const updateProductFromPg = async (
     if ("slug" in input && input.slug !== undefined) push("slug", input.slug)
     if ("sku" in input && input.sku !== undefined) push("sku", input.sku)
     if ("price" in input && input.price !== undefined) push("price", input.price)
-    if ("description" in input) push("description", input.description ?? null)
+    if ("description" in input) push("description", input.description != null ? sanitizeSectionHtml(input.description) || null : null)
     if ("type" in input && input.type !== undefined) push("type", input.type)
     if ("basePrice" in input) push(`"basePrice"`, input.basePrice)
     if ("salePrice" in input) push(`"salePrice"`, input.salePrice)
@@ -919,8 +978,8 @@ const updateProductFromPg = async (
       await client.query(`DELETE FROM "ProductFeature" WHERE "productId" = $1`, [id])
       for (const feature of input.features ?? []) {
         await client.query(
-          `INSERT INTO "ProductFeature" (id, "productId", title, icon) VALUES ($1, $2, $3, $4)`,
-          [crypto.randomUUID(), id, feature.title, feature.icon ?? null],
+          `INSERT INTO "ProductFeature" (id, "productId", title, icon, "featureDefinitionId") VALUES ($1, $2, $3, $4, $5)`,
+          [crypto.randomUUID(), id, feature.title, feature.icon ?? null, (feature as any).featureDefinitionId ?? null],
         )
       }
     }
@@ -1110,7 +1169,9 @@ export const createProduct = async (input: CreateProductInput) => {
   const effectiveStockStatus = input.stockStatus ?? (effectiveTotalStock > 0 ? "in_stock" : "out_of_stock")
   const uniqueTagIds = [...new Set((input.tagIds ?? []).map((tagId) => tagId.trim()).filter(Boolean))]
   const sections = normalizeSections(input)
+  const normalizedFeatures = await normalizeIncomingFeatures(input)
   const baseData = {
+      ...(input.id ? { id: input.id } : {}),
       sellerId: null,
       createdById: input.createdById ?? null,
       managedById: input.managedById ?? input.createdById ?? null,
@@ -1118,7 +1179,7 @@ export const createProduct = async (input: CreateProductInput) => {
       slug: input.slug,
       sku: input.sku,
       price: effectivePrice,
-      description: input.description,
+      description: input.description != null ? sanitizeSectionHtml(input.description) || null : input.description,
       type: input.type ?? "variant",
       basePrice: input.basePrice ?? defaultVariant?.mrp ?? null,
       discountPercent: input.discountPercent ?? defaultVariant?.discountPercent ?? null,
@@ -1152,6 +1213,8 @@ export const createProduct = async (input: CreateProductInput) => {
               discountPercent: v.discountPercent ?? null,
               stock: v.stock ?? 0,
               isDefault: Boolean(v.isDefault),
+              hsnCode: v.hsnCode ?? null,
+              eanCode: v.eanCode ?? null,
               priceUpdatedAt: new Date(),
             })),
           }
@@ -1159,7 +1222,7 @@ export const createProduct = async (input: CreateProductInput) => {
       images: input.images?.length
         ? { create: input.images.map((url, i) => ({ url, position: i })) }
         : undefined,
-      features: input.features?.length ? { create: input.features } : undefined,
+      features: normalizedFeatures?.length ? { create: normalizedFeatures } : undefined,
       labels: input.labels?.length ? { create: input.labels } : undefined,
       details: input.details?.length
         ? {
@@ -1208,9 +1271,11 @@ export const createProduct = async (input: CreateProductInput) => {
         discountPercent: v.discountPercent ?? null,
         stock: v.stock ?? 0,
         isDefault: Boolean(v.isDefault),
+        hsnCode: v.hsnCode ?? null,
+        eanCode: v.eanCode ?? null,
       })),
       images: input.images,
-      features: input.features,
+      features: normalizedFeatures,
       labels: input.labels,
       details: input.details,
       sections,
@@ -1224,7 +1289,7 @@ export const createProduct = async (input: CreateProductInput) => {
 
 export const updateProduct = async (
   id: string,
-  input: UpdateProductInput,
+  input: UpdateProductInput & { featureDefinitionIds?: string[] },
   opts: { role: string; userId: string },
 ) => {
   if (process.env.SUPABASE_PRODUCTS_READ_ENABLED !== "true") throw new Error("SUPABASE_PRODUCTS_READ_ENABLED must be true")
@@ -1275,7 +1340,9 @@ export const updateProduct = async (
           ...("slug" in input && input.slug !== undefined ? { slug: input.slug } : {}),
           ...("sku" in input && input.sku !== undefined ? { sku: input.sku } : {}),
           ...("price" in input && input.price !== undefined ? { price: input.price } : {}),
-          ...("description" in input ? { description: input.description } : {}),
+          ...("description" in input
+            ? { description: input.description != null ? sanitizeSectionHtml(input.description) || null : null }
+            : {}),
           ...("type" in input && input.type !== undefined ? { type: input.type } : {}),
           ...("basePrice" in input ? { basePrice: input.basePrice } : {}),
           ...("salePrice" in input ? { salePrice: input.salePrice } : {}),
@@ -1312,10 +1379,15 @@ export const updateProduct = async (
                 discountPercent: v.discountPercent ?? null,
                 stock: v.stock ?? 0,
                 isDefault: Boolean(v.isDefault),
+                hsnCode: v.hsnCode ?? null,
+                eanCode: v.eanCode ?? null,
               }))
             : undefined,
         images: "images" in input ? (input.images ?? []) : undefined,
-        features: "features" in input ? (input.features ?? []) : undefined,
+        features:
+          "features" in input || "featureDefinitionIds" in input
+            ? (await normalizeIncomingFeatures(input)) ?? []
+            : undefined,
         labels: "labels" in input ? (input.labels ?? []) : undefined,
         details: "details" in input ? (input.details ?? []) : undefined,
         sections: "sections" in input || "details" in input ? incomingSections : undefined,

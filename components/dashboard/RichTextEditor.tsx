@@ -9,10 +9,14 @@ export function RichTextEditor({
   value,
   onChange,
   placeholder,
+  maxLength,
+  compact,
 }: {
   value: string
   onChange: (html: string) => void
   placeholder?: string
+  maxLength?: number
+  compact?: boolean
 }) {
   const editor = useEditor({
     extensions: [
@@ -23,6 +27,10 @@ export function RichTextEditor({
     ],
     content: value || "<p></p>",
     immediatelyRender: false,
+    filterTransaction: (transaction) => {
+      if (maxLength == null || !transaction.docChanged) return true
+      return transaction.doc.textContent.length <= maxLength
+    },
     onUpdate: ({ editor: instance }) => {
       // Inject <br> into empty paragraphs so hitting "Enter" preserves the gap on the frontend
       let html = instance.getHTML();
@@ -34,7 +42,25 @@ export function RichTextEditor({
     },
     editorProps: {
       attributes: {
-        class: "tiptap prose max-w-none min-h-[120px] rounded-b-lg border border-[#D9D9D1] px-3 py-2 text-sm outline-none focus:border-[#7B3010] whitespace-pre-wrap",
+        class: `tiptap prose max-w-none rounded-b-lg border border-[#D9D9D1] px-3 py-2 text-sm outline-none focus:border-[#7B3010] whitespace-pre-wrap ${
+          compact ? "min-h-[3.25rem] max-h-[4.5rem] overflow-y-auto" : "min-h-[120px]"
+        }`,
+      },
+      handlePaste: (view, event) => {
+        if (maxLength == null) return false
+        const pasted = event.clipboardData?.getData("text/plain") ?? ""
+        if (!pasted) return false
+        const { from, to } = view.state.selection
+        const current = view.state.doc.textContent.length
+        const selected = Math.max(0, to - from)
+        if (current - selected + pasted.length <= maxLength) return false
+        event.preventDefault()
+        const allowed = Math.max(0, maxLength - (current - selected))
+        if (allowed > 0) {
+          const truncated = pasted.slice(0, allowed)
+          view.dispatch(view.state.tr.insertText(truncated))
+        }
+        return true
       },
     },
   })
@@ -51,6 +77,8 @@ export function RichTextEditor({
   }, [editor, value])
 
   if (!editor) return null
+
+  const charCount = editor.state.doc.textContent.length
 
   return (
     <div>
@@ -108,6 +136,11 @@ export function RichTextEditor({
         </button>
       </div>
       <EditorContent editor={editor} />
+      {maxLength != null ? (
+        <p className={`mt-1 text-right text-[11px] ${charCount >= maxLength ? "text-red-600" : "text-[#646464]"}`}>
+          {charCount} / {maxLength} characters
+        </p>
+      ) : null}
     </div>
   )
 }

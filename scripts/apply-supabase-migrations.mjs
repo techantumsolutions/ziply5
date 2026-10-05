@@ -21,9 +21,17 @@ if (!connectionString) {
 }
 
 const isLocal = /localhost|127\.0\.0\.1|::1/i.test(connectionString)
+const sslMode = String(process.env.DB_SSL || "").toLowerCase()
+const useSsl =
+  sslMode === "true" || sslMode === "1"
+    ? { rejectUnauthorized: false }
+    : sslMode === "false" || sslMode === "0" || isLocal
+      ? false
+      : { rejectUnauthorized: false }
+
 const client = new pg.Client({
   connectionString,
-  ssl: isLocal ? false : { rejectUnauthorized: false },
+  ssl: useSsl,
 })
 
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "supabase", "migrations")

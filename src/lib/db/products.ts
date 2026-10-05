@@ -188,7 +188,9 @@ const variantFieldsChanged = (existing: Record<string, unknown>, incoming: Recor
   !sameText(existing.weight, incoming.weight) ||
   !sameText(existing.sku, incoming.sku) ||
   !sameMoney(existing.stock, incoming.stock) ||
-  !sameBool(existing.isDefault ?? existing.is_default, incoming.isDefault)
+  !sameBool(existing.isDefault ?? existing.is_default, incoming.isDefault) ||
+  !sameText(existing.hsnCode ?? existing.hsn_code, incoming.hsnCode) ||
+  !sameText(existing.eanCode ?? existing.ean_code, incoming.eanCode)
 
 const productPriceFieldsChanged = (existing: Record<string, unknown> | null, incoming: Record<string, unknown>) => {
   if (!existing) return false
@@ -226,6 +228,8 @@ const syncProductVariants = async (productId: string, incoming: Array<Record<str
       discountPercent: raw.discountPercent ?? null,
       stock: raw.stock ?? 0,
       isDefault: Boolean(raw.isDefault),
+      hsnCode: raw.hsnCode ?? null,
+      eanCode: raw.eanCode ?? null,
     }
     const incomingId = safeString(raw.id)
     const incomingSku = safeString(raw.sku).toLowerCase()
@@ -633,12 +637,12 @@ export const createProductSupabase = async (input: {
   tagIds?: string[]
   variants?: Array<Record<string, unknown>>
   images?: string[]
-  features?: Array<{ title: string; icon?: string | null }>
+  features?: Array<{ title: string; icon?: string | null; featureDefinitionId?: string | null }>
   labels?: Array<{ label: string; color?: string | null }>
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }>
 }) => {
-  const base = await normalizeActorFks(withTimestampsForInsert(input.base))
+  const base = await normalizeActorFks(withId(withTimestampsForInsert(input.base)))
  const created = await insertFirst(PRODUCT_TABLES, [base])
   const productId = safeString(created.row?.id)
   if (!productId) {
@@ -697,8 +701,18 @@ export const createProductSupabase = async (input: {
 
   for (const f of input.features ?? []) {
     await insertFirst(PRODUCT_FEATURE_TABLES, [
-      withId({ productId, title: f.title, icon: f.icon ?? null }),
-      withId({ product_id: productId, title: f.title, icon: f.icon ?? null }),
+      withId({
+        productId,
+        title: f.title,
+        icon: f.icon ?? null,
+        featureDefinitionId: f.featureDefinitionId ?? null,
+      }),
+      withId({
+        product_id: productId,
+        title: f.title,
+        icon: f.icon ?? null,
+        feature_definition_id: f.featureDefinitionId ?? null,
+      }),
     ])
   }
 
@@ -745,7 +759,7 @@ export const updateProductSupabase = async (input: {
   tagIds?: string[]
   variants?: Array<Record<string, unknown>>
   images?: string[]
-  features?: Array<{ title: string; icon?: string | null }>
+  features?: Array<{ title: string; icon?: string | null; featureDefinitionId?: string | null }>
   labels?: Array<{ label: string; color?: string | null }>
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ id?: string; title: string; description: string; sortOrder?: number; isActive?: boolean }>
@@ -810,8 +824,18 @@ export const updateProductSupabase = async (input: {
     await deleteByProductId(PRODUCT_FEATURE_TABLES, input.productId)
     for (const f of input.features ?? []) {
       await insertFirst(PRODUCT_FEATURE_TABLES, [
-        withId({ productId: input.productId, title: f.title, icon: f.icon ?? null }),
-        withId({ product_id: input.productId, title: f.title, icon: f.icon ?? null }),
+        withId({
+          productId: input.productId,
+          title: f.title,
+          icon: f.icon ?? null,
+          featureDefinitionId: f.featureDefinitionId ?? null,
+        }),
+        withId({
+          product_id: input.productId,
+          title: f.title,
+          icon: f.icon ?? null,
+          feature_definition_id: f.featureDefinitionId ?? null,
+        }),
       ])
     }
   }

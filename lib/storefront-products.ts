@@ -26,7 +26,7 @@ export type StorefrontProduct = {
   labels: Array<{ label: string; color: string | null }>
   features: Array<{ title: string; icon: string | null }>
   details: Array<{ title: string; content: string }>
-  sections: Array<{ id: string; title: string; description: string; sort_order: number; is_ative: boolean }>
+  sections: Array<{ id: string; title: string; description: string; sort_order: number; is_active: boolean }>
   variants: Array<{ id: string; name: string; weight: string; price: number; sku: string; stock: number; isDefault: boolean; discountPercent?: number | null; mrp?: number | null; promotion?: { name: string; kind: string } | null }>
   discountPercent?: number | null
   finalPrice?: number | null
@@ -115,8 +115,9 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
   const rawSku = String((p as any).sku ?? "").trim()
   const sku = rawSku || slug.replace(/-/g, "").slice(0, 12).toUpperCase() || `SKU${id.slice(0, 6).toUpperCase()}`
 
-  const sale = Number(p.price ?? firstVariant?.price ?? 0)
-  const oldPrice = Number(p.basePrice ?? sale * 1.2)
+  const defaultVariant = variants.find((v) => v.isDefault) ?? firstVariant
+  const sale = Number(p.price ?? defaultVariant?.price ?? 0)
+  const oldPrice = Number(p.basePrice ?? defaultVariant?.mrp ?? sale)
   const tags = (p.tags ?? [])
     .map((t: any) => String(t?.tag?.name ?? t?.name ?? "").trim().toLowerCase())
     .filter(Boolean)
