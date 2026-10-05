@@ -5,6 +5,8 @@ import { useParams, useRouter } from "next/navigation"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
+import { Download, Loader2 } from "lucide-react"
+import { generateAdminInvoicePDF } from "@/lib/invoice"
 
 type OrderDetail = {
   id: string
@@ -12,11 +14,15 @@ type OrderDetail = {
   total: string | number
   subtotal: string | number
   shipping: string | number
+  tax?: string | number
+  discount?: string | number
   currency: string
   createdAt: string
   items: Array<{
     id?: string
     quantity: number
+    unitPrice?: string | number
+    lineTotal?: string | number
     product?: { id: string; name: string; slug: string } | null
     productId?: string | null
   }>
@@ -38,6 +44,7 @@ type OrderDetail = {
   paymentId?: string | null
   customerName?: string | null
   customerPhone?: string | null
+  customerEmail?: string | null
   customerAddress?: string | null
 }
 
@@ -52,8 +59,22 @@ export default function AdminOrderDetailPage() {
   const [savingNote, setSavingNote] = useState(false)
   const [shiprocketBusy, setShiprocketBusy] = useState<string | null>(null)
   const [serviceabilitySummary, setServiceabilitySummary] = useState<string>("")
+  const [downloadingInvoice, setDownloadingInvoice] = useState(false)
   const lifecycleStatus = (order?.statusHistory?.[0]?.toStatus ?? order?.status ?? "").toLowerCase()
   const refundStatus = (order?.refunds?.[0]?.status ?? "pending").toLowerCase()
+
+  // Generates and downloads the PDF invoice matching the admin commercial/dispatch template.
+  const handleDownloadInvoice = async () => {
+    if (!order) return
+    setDownloadingInvoice(true)
+    try {
+      await generateAdminInvoicePDF(order)
+    } catch (err) {
+      console.error("Failed to generate invoice PDF:", err)
+    } finally {
+      setDownloadingInvoice(false)
+    }
+  }
 
   const loadOrder = async () => {
     if (!params.id) return
@@ -161,7 +182,20 @@ export default function AdminOrderDetailPage() {
             #{order?.id?.slice(0, 8) ?? "----"} • {order ? new Date(order.createdAt).toLocaleString() : "Loading"}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void handleDownloadInvoice()}
+            disabled={!order || downloadingInvoice}
+            
+          >
+            {downloadingInvoice ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            Download invoice
+          </Button>
           <Button variant="outline" onClick={() => void loadOrder()}>
             Refresh
           </Button>
