@@ -13,6 +13,7 @@ import {
   calculateShippingCharge,
   validateShippingRules,
   DEFAULT_SHIPPING_RULES,
+  totalPacksFromCheckoutLines,
   type ShippingRule,
 } from "@/src/lib/shipping/ziply5-shipping";
 
@@ -198,6 +199,7 @@ function PaymentPageInner() {
       window.localStorage.setItem("ziply5_checkout_ref", checkoutRef);
 
       const snap = readCheckoutStorage();
+      const packTotalInner = totalPacksFromCheckoutLines(items);
       const subTotalInner = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
       const calcInner = calculateShippingCharge(subTotalInner, shippingRules);
       const defaultShippingInner = calcInner.ok ? calcInner.shippingCharge : 0;
