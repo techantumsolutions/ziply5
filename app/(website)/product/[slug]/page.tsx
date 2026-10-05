@@ -1,12 +1,13 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, ChevronLeft, ChevronRight, X } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, Play, X } from "lucide-react"
 import { getFavoriteSlugs, toggleFavoriteSlug } from "@/lib/favorites"
 import { addToCart, getCartItems, getCartQuantity, setCartItemQuantity } from "@/lib/cart"
 import { FALLBACK_PRODUCT_IMAGE, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
+import { isVideoUrl } from "@/lib/media-utils"
 import Link from "next/link"
 import { toast } from "@/lib/toast"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -28,6 +29,8 @@ export default function ProductPage() {
   const [favorite, setFavorite] = useState(false)
   const [relatedStart, setRelatedStart] = useState(0)
   const [selectedImage, setSelectedImage] = useState("")
+  const [isMainVideoPlaying, setIsMainVideoPlaying] = useState(false)
+  const mainVideoRef = useRef<HTMLVideoElement | null>(null)
   const [thumbStart, setThumbStart] = useState(0)
   const [reviews, setReviews] = useState<Array<{ id: string; rating: number; body?: string | null; user?: { name?: string | null } | null }>>([])
   const [selectedRelatedProduct, setSelectedRelatedProduct] = useState<StorefrontProduct | null>(null)
@@ -137,18 +140,17 @@ export default function ProductPage() {
     [product],
   )
 
-  const currentPrice = activeVariant?.price ?? product?.price ?? 0
-  const currentOldPrice = activeVariant?.mrp ?? product?.oldPrice ?? 0
+  const currentOldPrice = (activeVariant ? activeVariant.mrp : product?.oldPrice) || 0
+  const currentPrice = (activeVariant ? activeVariant.price : product?.price) || currentOldPrice
+  const hasDiscount = currentOldPrice > currentPrice && currentPrice > 0
   const sku = `SKU:${activeVariant?.sku ?? (product ? product.sku.toUpperCase() : "")}`
 
-  const salePercent =
-    activeVariant != null && activeVariant.discountPercent !== undefined
-      ? activeVariant.discountPercent
-      : product?.discountPercent
+  const salePercent = hasDiscount ? Math.round((1 - currentPrice / currentOldPrice) * 100) : null
 
   useEffect(() => {
     if (!product) return
     setSelectedImage((product.gallery[0] ?? product.image ?? "").trim())
+    setIsMainVideoPlaying(false)
     const defaultVariant = product.variants.find((v) => v.isDefault) ?? product.variants[0]
     setSelectedSize(defaultVariant?.weight || defaultVariant?.name || product.weight)
     const initialQty = getCartQuantity(product.id, defaultVariant?.id ?? null)
@@ -158,6 +160,10 @@ export default function ProductPage() {
     setThumbStart(0)
     setFavorite(getFavoriteSlugs().includes(product.slug))
   }, [product])
+
+  useEffect(() => {
+    setIsMainVideoPlaying(false)
+  }, [selectedImage])
 
   useEffect(() => {
     if (!product) return
@@ -320,9 +326,40 @@ export default function ProductPage() {
         <div className="grid grid-cols-1 gap-10 lg:grid-cols-[420px_1fr]">
           <div>
             <div className="rounded-xl border border-[#E2E2E2] bg-[#ECECEC]">
-              <div className="relative bg-white/70 mx-auto rounded-xl h-100 w-full stretch ">
+              <div className="relative bg-white/70 mx-auto rounded-xl h-100 w-full stretch overflow-hidden">
                 {displayImage ? (
-                  <Image src={displayImage || FALLBACK_PRODUCT_IMAGE} alt={product.name} fill className="object-contain" />
+                  isVideoUrl(displayImage) ? (
+                    <div className="relative h-full w-full bg-black">
+                      <video
+                        key={displayImage}
+                        ref={mainVideoRef}
+                        src={displayImage}
+                        controls={isMainVideoPlaying}
+                        playsInline
+                        className="h-full w-full object-contain"
+                        onPlay={() => setIsMainVideoPlaying(true)}
+                        onPause={() => setIsMainVideoPlaying(false)}
+                        onEnded={() => setIsMainVideoPlaying(false)}
+                      />
+                      {!isMainVideoPlaying ? (
+                        <button
+                          type="button"
+                          aria-label="Play video"
+                          onClick={() => {
+                            setIsMainVideoPlaying(true)
+                            void mainVideoRef.current?.play()
+                          }}
+                          className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/25"
+                        >
+                          <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-white/95 text-[#4A1D1F] shadow-lg">
+                            <Play className="h-7 w-7 fill-current" />
+                          </span>
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <Image src={displayImage || FALLBACK_PRODUCT_IMAGE} alt={product.name} fill className="object-contain" />
+                  )
                 ) : (
                   <div className="flex h-full items-center justify-center text-xs text-[#666]">No image</div>
                 )}
@@ -339,17 +376,31 @@ export default function ProductPage() {
                 <ChevronLeft size={14} />
               </button>
               <div className="flex items-center gap-1 overflow-x-auto pb-1">
-                {visibleThumbs.map((thumb, idx) => (
-                  <button
-                    type="button"
-                    key={`${thumb || "thumb"}-${idx}`}
-                    onClick={() => setSelectedImage(thumb)}
-                    className={`relative h-30 w-30 flex-shrink-0 mt-8 overflow-hidden rounded-md border ${selectedImage === thumb ? "border-[#50272A]" : "border-[#E0E0E0]"
-                      }`}
-                  >
-                    <Image src={thumb || FALLBACK_PRODUCT_IMAGE} alt={`${product.name} preview`} fill className="object-cover" />
-                  </button>
-                ))}
+                {visibleThumbs.map((thumb, idx) => {
+                  const thumbIsVideo = isVideoUrl(thumb)
+                  return (
+                    <button
+                      type="button"
+                      key={`${thumb || "thumb"}-${idx}`}
+                      onClick={() => setSelectedImage(thumb)}
+                      className={`relative h-30 w-30 flex-shrink-0 mt-8 overflow-hidden rounded-md border ${selectedImage === thumb ? "border-[#50272A]" : "border-[#E0E0E0]"
+                        }`}
+                    >
+                      {thumbIsVideo ? (
+                        <>
+                          <video src={thumb} muted preload="metadata" className="h-full w-full object-cover bg-black" />
+                          <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/35">
+                            <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-[#4A1D1F] shadow">
+                              <Play className="h-4 w-4 fill-current" />
+                            </span>
+                          </span>
+                        </>
+                      ) : (
+                        <Image src={thumb || FALLBACK_PRODUCT_IMAGE} alt={`${product.name} preview`} fill className="object-cover" />
+                      )}
+                    </button>
+                  )
+                })}
               </div>
               <button
                 type="button"
@@ -416,11 +467,18 @@ export default function ProductPage() {
 
             <div className="mt-3 flex items-end gap-2">
               <p className="text-[28px] font-extrabold text-[#B44444]">₹{currentPrice.toFixed(2)}</p>
-              <p className="pb-1 text-sm font-semibold text-[#B8B8B8] line-through">₹{currentOldPrice.toFixed(2)}</p>
+              {hasDiscount ? (
+                <p className="pb-1 text-sm font-semibold text-[#B8B8B8] line-through">₹{currentOldPrice.toFixed(2)}</p>
+              ) : null}
             </div>
             <p className="text-sm text-[#8A8A8A]">Taxes included. Shipping calculated at checkout.</p>
 
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-[#595959]">{product.description}</p>
+            {product.description ? (
+              <div
+                className="prose prose-sm mt-2 max-w-2xl text-sm leading-6 text-[#595959] [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
+                dangerouslySetInnerHTML={{ __html: product.description }}
+              />
+            ) : null}
 
             <div className="mt-5 flex items-center gap-2">
               <span className="text-xs font-light font-melon tracking-wide text-[#272727]">Size (Wt)</span>
@@ -876,7 +934,9 @@ export default function ProductPage() {
                   </div>
                   <div>
                     <h4 className="font-melon text-base font-medium text-[#4A1D1F]">{selectedRelatedProduct.name}</h4>
-                    <p className="text-xs text-gray-500 line-clamp-2">{selectedRelatedProduct.description}</p>
+                    <p className="text-xs text-gray-500 line-clamp-2">
+                      {(selectedRelatedProduct.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()}
+                    </p>
                   </div>
                 </div>
 

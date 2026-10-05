@@ -50,7 +50,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   }
 
   try {
-    const product = await updateProduct(id, parsed.data, {
+    const product = await updateProduct(id, parsed.data as any, {
       role: auth.user.role,
       userId: auth.user.sub,
     })

@@ -819,7 +819,9 @@ function ProductsPageContent() {
                   </div>
                   <div>
                     <h4 className="font-melon text-base font-medium text-[#4A1D1F]">{selectedProduct.name}</h4>
-                    <p className="text-xs text-gray-500 line-clamp-2">{selectedProduct.description}</p>
+                    <p className="text-xs text-gray-500 line-clamp-2">
+                      {(selectedProduct.description || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim()}
+                    </p>
                   </div>
                 </div>
 
