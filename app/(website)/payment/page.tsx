@@ -9,7 +9,13 @@ import {
   readCheckoutStorage,
 } from "@/lib/ecommerce-order";
 import { toast } from "@/lib/toast";
-import { calculateZiply5Shipping } from "@/src/lib/shipping/ziply5-shipping";
+import {
+  calculateShippingCharge,
+  validateShippingRules,
+  DEFAULT_SHIPPING_RULES,
+  totalPacksFromCheckoutLines,
+  type ShippingRule,
+} from "@/src/lib/shipping/ziply5-shipping";
 
 declare global {
   interface Window {
@@ -73,25 +79,48 @@ function PaymentPageInner() {
     }
   }, []);
 
-  const packTotal = useMemo(
-    () => items.reduce((sum, item) => sum + Math.max(1, Math.floor(Number(item.quantity) || 0)), 0),
-    [items],
-  );
-  const slabShipping = useMemo(() => {
-    if (!items.length || packTotal < 1) return 0;
-    return calculateZiply5Shipping(packTotal).chargeInr;
-  }, [items.length, packTotal]);
+  const [shippingRules, setShippingRules] = useState<ShippingRule[]>([...DEFAULT_SHIPPING_RULES]);
 
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/v1/settings?group=SHIPPING")
+      .then((res) => res.json())
+      .then((payload) => {
+        if (cancelled) return;
+        const list = payload?.data;
+        if (Array.isArray(list)) {
+          const row = list.find((item: any) => item.key === "rules");
+          if (row && Array.isArray(row.valueJson)) {
+            const val = validateShippingRules(row.valueJson);
+            if (val.valid && val.rules.length > 0) {
+              setShippingRules(val.rules);
+            }
+          }
+        }
+      })
+      .catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const subTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const checkoutSnap = useMemo(() => readCheckoutStorage(), [items]);
+
+  const defaultShipping = useMemo(() => {
+    if (!items.length || subTotal <= 0) return 0;
+    const calc = calculateShippingCharge(subTotal, shippingRules);
+    return calc.ok ? calc.shippingCharge : 0;
+  }, [items.length, subTotal, shippingRules]);
+
   const shippingChargeResolved = useMemo(() => {
     const fromSnap = checkoutSnap?.shippingCharge;
     if (fromSnap != null && Number.isFinite(fromSnap) && fromSnap >= 0) {
       return Number(fromSnap);
     }
-    return slabShipping;
-  }, [checkoutSnap, slabShipping]);
+    return defaultShipping;
+  }, [checkoutSnap, defaultShipping]);
 
-  const subTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const calculatedTotal = subTotal + shippingChargeResolved;
   const payableAmount = useMemo(() => {
     if (retryMode) {
@@ -170,12 +199,11 @@ function PaymentPageInner() {
       window.localStorage.setItem("ziply5_checkout_ref", checkoutRef);
 
       const snap = readCheckoutStorage();
-      const packTotalInner = items.reduce(
-        (s, i) => s + Math.max(1, Math.floor(Number(i.quantity ?? 1) || 0)),
-        0,
-      );
-      const shippingForOrder = calculateZiply5Shipping(packTotalInner).chargeInr;
+      const packTotalInner = totalPacksFromCheckoutLines(items);
       const subTotalInner = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const calcInner = calculateShippingCharge(subTotalInner, shippingRules);
+      const defaultShippingInner = calcInner.ok ? calcInner.shippingCharge : 0;
+      const shippingForOrder = snap?.shippingCharge ?? defaultShippingInner;
       const calculatedTotalInner = subTotalInner + shippingForOrder;
 
       const res = await fetch("/api/orders/create", {

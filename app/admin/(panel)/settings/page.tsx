@@ -7,11 +7,17 @@ import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable";
 import LocationCreatorForm from "../../../../components/ui/LocationCreatorForm";
 import { useLocations } from "../../../../hooks/useLocations";
 import MasterDataCreatorForm from "../../../../components/ui/MasterDataCreatorForm";
-import { Trash2, Loader2, Save } from "lucide-react";
+import { Trash2, Loader2, Save, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  DEFAULT_SHIPPING_RULES,
+  validateShippingRules,
+  type ShippingRule,
+} from "@/src/lib/shipping/ziply5-shipping";
 
 type SettingRow = {
   id: string;
@@ -59,6 +65,21 @@ export default function AdminSettingsPage() {
   const [cartLoading, setCartLoading] = useState(false);
   const [cartSaving, setCartSaving] = useState(false);
   const [cartError, setCartError] = useState("");
+
+  const [shippingRules, setShippingRules] = useState<
+    Array<{
+      id: string;
+      minSubtotal: number | string;
+      maxSubtotal: number | string;
+      shippingCharge: number | string;
+      active: boolean;
+      isOpenEnded?: boolean;
+    }>
+  >([]);
+  const [shippingLoading, setShippingLoading] = useState(false);
+  const [shippingSaving, setShippingSaving] = useState(false);
+  const [shippingError, setShippingError] = useState("");
+  const [shippingSuccess, setShippingSuccess] = useState("");
 
   const { data: warehouses, refetch: refetchWarehouses, loading: loadingWarehouses } = useLocations("warehouse", undefined);
   const { data: states, refetch: refetchStates, loading: loadingStates } = useLocations("state", undefined);
@@ -204,6 +225,155 @@ export default function AdminSettingsPage() {
     }
   };
 
+  useEffect(() => {
+    if (activeTab !== "generic") return;
+    let cancelled = false;
+    setShippingLoading(true);
+    setShippingError("");
+    setShippingSuccess("");
+    authedFetch<SettingRow[]>("/api/v1/settings?group=SHIPPING")
+      .then((list) => {
+        if (cancelled) return;
+        const row = list.find((r) => r.key === "rules");
+        if (row && Array.isArray(row.valueJson) && row.valueJson.length > 0) {
+          setShippingRules(
+            (row.valueJson as any[]).map((r, i, arr) => ({
+              id: r.id || `rule_${i + 1}`,
+              minSubtotal: r.minSubtotal ?? 0,
+              maxSubtotal: r.maxSubtotal != null ? r.maxSubtotal : "",
+              shippingCharge: r.shippingCharge ?? 0,
+              active: r.active !== false,
+              isOpenEnded: i === arr.length - 1 && r.maxSubtotal == null,
+            }))
+          );
+        } else {
+          setShippingRules(
+            DEFAULT_SHIPPING_RULES.map((r, i, arr) => ({
+              id: r.id,
+              minSubtotal: r.minSubtotal,
+              maxSubtotal: r.maxSubtotal != null ? r.maxSubtotal : "",
+              shippingCharge: r.shippingCharge,
+              active: r.active,
+              isOpenEnded: i === arr.length - 1 && r.maxSubtotal == null,
+            }))
+          );
+        }
+      })
+      .catch((e: Error) => {
+        if (!cancelled) setShippingError(e.message);
+      })
+      .finally(() => {
+        if (!cancelled) setShippingLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  const addShippingRule = () => {
+    setShippingRules((prev) => {
+      // Prior rules cannot be open-ended; convert prior last rule to finite
+      const updatedPrev = prev.map((r, i) => {
+        if (i === prev.length - 1 && r.isOpenEnded) {
+          const estimatedMax = Number(r.minSubtotal) > 0 ? Number(r.minSubtotal) * 2 : 1000;
+          return {
+            ...r,
+            isOpenEnded: false,
+            maxSubtotal: r.maxSubtotal !== "" && r.maxSubtotal != null ? r.maxSubtotal : estimatedMax,
+          };
+        }
+        return r;
+      });
+      const last = updatedPrev[updatedPrev.length - 1];
+      const nextMin =
+        last && last.maxSubtotal !== ""
+          ? Number(last.maxSubtotal)
+          : 0;
+      return [
+        ...updatedPrev,
+        {
+          id: `rule_${Date.now()}`,
+          minSubtotal: isNaN(nextMin) ? 0 : nextMin,
+          maxSubtotal: "",
+          shippingCharge: 0,
+          active: true,
+          isOpenEnded: true,
+        },
+      ];
+    });
+  };
+
+  const removeShippingRule = (index: number) => {
+    setShippingRules((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const updateShippingRule = (
+    index: number,
+    updates: Partial<{
+      id: string;
+      minSubtotal: number | string;
+      maxSubtotal: number | string;
+      shippingCharge: number | string;
+      active: boolean;
+      isOpenEnded: boolean;
+    }>
+  ) => {
+    setShippingRules((prev) =>
+      prev.map((r, i) => (i === index ? { ...r, ...updates } : r))
+    );
+  };
+
+  const saveShippingRules = async () => {
+    setShippingSaving(true);
+    setShippingError("");
+    setShippingSuccess("");
+
+    if (shippingRules.length === 0) {
+      setShippingError("Please add at least one shipping rule.");
+      setShippingSaving(false);
+      return;
+    }
+
+    const formattedRules = shippingRules.map((r, i) => {
+      const isLast = i === shippingRules.length - 1;
+      const min = Number(r.minSubtotal);
+      const charge = Number(r.shippingCharge);
+      // Only the last rule supports an open-ended (null) upper limit
+      const max =
+        isLast && (r.isOpenEnded || r.maxSubtotal === "" || r.maxSubtotal == null)
+          ? null
+          : Number(r.maxSubtotal);
+      return {
+        id: r.id || `rule_${i + 1}`,
+        minSubtotal: isNaN(min) ? 0 : min,
+        maxSubtotal: max,
+        shippingCharge: isNaN(charge) ? 0 : charge,
+        active: Boolean(r.active),
+      };
+    });
+
+    const validation = validateShippingRules(formattedRules);
+    if (!validation.valid) {
+      setShippingError(validation.errors.join("; "));
+      setShippingSaving(false);
+      return;
+    }
+
+    try {
+      await authedPost("/api/v1/settings", {
+        group: "SHIPPING",
+        key: "rules",
+        valueJson: formattedRules,
+      });
+      setShippingSuccess("Shipping rules saved successfully.");
+      setTimeout(() => setShippingSuccess(""), 4000);
+    } catch (e: unknown) {
+      setShippingError(e instanceof Error ? e.message : "Failed to save shipping rules.");
+    } finally {
+      setShippingSaving(false);
+    }
+  };
+
   const saveStorefrontSeo = async () => {
     setSeoSaving(true);
     setSeoError("");
@@ -318,9 +488,171 @@ export default function AdminSettingsPage() {
       {loading && <p className="text-sm text-[#646464]">Loading…</p>}
 
       {!loading && activeTab === 'generic' && (
-        <div className="py-16 text-center rounded-2xl border border-[#E8DCC8] bg-white shadow-sm">
-          <h2 className="font-melon text-xl font-bold text-[#4A1D1F]">Coming Soon</h2>
-          <p className="mt-2 text-sm text-[#646464]">Generic settings configuration will be available in a future update.</p>
+        <div className="rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-sm space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-melon text-xl font-bold text-[#4A1D1F]">
+                Shipping Rules & Charges
+              </h2>
+              <p className="mt-1 max-w-2xl text-sm text-[#646464]">
+                Configure tiered shipping rates based on the merchandise subtotal (₹).
+                Ranges are lower-inclusive and upper-exclusive [Min, Max), with an optional open-ended final tier [Min, ∞).
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={addShippingRule}
+                disabled={shippingSaving || shippingLoading}
+                className="gap-2 rounded-full border-[#7B3010] text-[#7B3010] hover:bg-[#FFFBF3]"
+              >
+                <Plus className="h-4 w-4" />
+                Add Range
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void saveShippingRules()}
+                disabled={shippingSaving || shippingLoading}
+                className="gap-2 rounded-full bg-[#7B3010] hover:bg-[#5c240c] text-white"
+              >
+                {shippingSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {shippingSaving ? "Saving…" : "Save Rules"}
+              </Button>
+            </div>
+          </div>
+
+          {shippingError && (
+            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
+              {shippingError}
+            </p>
+          )}
+          {shippingSuccess && (
+            <p className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
+              {shippingSuccess}
+            </p>
+          )}
+
+          {shippingLoading ? (
+            <p className="text-sm text-[#646464]">Loading shipping settings…</p>
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+              <table className="w-full min-w-[650px] text-left text-sm">
+                <thead className="bg-[#4A1D1F] text-[11px] font-semibold uppercase tracking-wide text-[#F5F1E6]">
+                  <tr>
+                    <th className="px-3 py-2.5 md:px-4">Min Subtotal (₹)</th>
+                    <th className="px-3 py-2.5 md:px-4">Max Subtotal (₹)</th>
+                    <th className="px-3 py-2.5 md:px-4">Shipping Charge (₹)</th>
+                    <th className="px-3 py-2.5 md:px-4 text-center">Active</th>
+                    <th className="px-3 py-2.5 md:px-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#E8DCC8] text-[#333]">
+                  {shippingRules.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-sm text-[#646464]">
+                        No shipping rules defined. Click &ldquo;Add Range&rdquo; to create one.
+                      </td>
+                    </tr>
+                  ) : (
+                    shippingRules.map((rule, idx) => {
+                      const isLast = idx === shippingRules.length - 1;
+                      return (
+                      <tr key={rule.id || idx} className="hover:bg-[#FFFBF3]/50">
+                        <td className="px-3 py-3 md:px-4">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={rule.minSubtotal}
+                            onChange={(e) =>
+                              updateShippingRule(idx, { minSubtotal: e.target.value })
+                            }
+                            className="w-32 border-[#E8DCC8]"
+                            placeholder="0"
+                          />
+                        </td>
+                        <td className="px-3 py-3 md:px-4">
+                          <div className="flex items-center gap-2">
+                            {isLast && rule.isOpenEnded ? (
+                              <span className="text-sm font-medium text-[#7B3010] py-1">
+                                No Limit (∞)
+                              </span>
+                            ) : (
+                              <Input
+                                type="number"
+                                min="0"
+                                step="1"
+                                value={rule.maxSubtotal}
+                                onChange={(e) =>
+                                  updateShippingRule(idx, { maxSubtotal: e.target.value })
+                                }
+                                className="w-32 border-[#E8DCC8]"
+                                placeholder="1000"
+                              />
+                            )}
+                            {isLast && (
+                              <label className="flex items-center gap-1.5 text-xs text-[#646464] cursor-pointer select-none">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(rule.isOpenEnded)}
+                                  onChange={(e) =>
+                                    updateShippingRule(idx, {
+                                      isOpenEnded: e.target.checked,
+                                      maxSubtotal: e.target.checked ? "" : rule.maxSubtotal,
+                                    })
+                                  }
+                                  className="rounded border-[#E8DCC8] text-[#7B3010] focus:ring-[#7B3010]"
+                                />
+                                No Max
+                              </label>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 md:px-4">
+                          <Input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={rule.shippingCharge}
+                            onChange={(e) =>
+                              updateShippingRule(idx, { shippingCharge: e.target.value })
+                            }
+                            className="w-32 border-[#E8DCC8]"
+                            placeholder="125"
+                          />
+                        </td>
+                        <td className="px-3 py-3 md:px-4 text-center">
+                          <Switch
+                            checked={rule.active}
+                            onCheckedChange={(checked) =>
+                              updateShippingRule(idx, { active: checked })
+                            }
+                          />
+                        </td>
+                        <td className="px-3 py-3 md:px-4 text-right">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeShippingRule(idx)}
+                            className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </td>
+                      </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

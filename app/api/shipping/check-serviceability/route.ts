@@ -12,15 +12,16 @@ import {
 import type { ShiprocketCourierOption } from "@/src/server/modules/shipping/shiprocket.types"
 import { ShiprocketApiError } from "@/lib/integrations/shiprocket"
 import {
-  calculateZiply5Shipping,
   shiprocketServiceabilityPayload,
 } from "@/src/lib/shipping/ziply5-shipping"
+import { calculateAuthoritativeShipping } from "@/src/server/modules/shipping/shipping-settings"
 
 const bodySchema = z.object({
   pickup_postcode: z.string().regex(/^\d{6}$/).optional(),
   delivery_postcode: z.string().regex(/^\d{6}$/),
   cod: z.boolean(),
-  totalItems: z.number().int().min(0).max(5000),
+  subtotal: z.number().nonnegative().optional(),
+  totalItems: z.number().int().min(0).max(5000).optional(),
 })
 
 const toCourierOptions = (raw: unknown): ShiprocketCourierOption[] => {
@@ -78,13 +79,15 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return fail("Validation failed", 422, parsed.error.flatten())
     }
-    const { delivery_postcode, cod, totalItems } = parsed.data
+    const { delivery_postcode, cod, totalItems, subtotal } = parsed.data
     const pickup =
       parsed.data.pickup_postcode?.trim() ||
       env.SHIPROCKET_PICKUP_POSTCODE?.trim() ||
       "110001"
 
-    const ziply = calculateZiply5Shipping(totalItems)
+    const subtotalToUse = subtotal ?? 0
+    const shippingRes = await calculateAuthoritativeShipping(subtotalToUse)
+    const shippingChargeInr = shippingRes.shippingCharge
 
     try {
       const [r0, r1] = await Promise.all([
@@ -119,10 +122,11 @@ export async function POST(request: NextRequest) {
         estimatedDeliveryDaysMax: withCod.estimatedDeliveryDaysMax,
         codAvailable: withCod.codAvailable,
         prepaidAvailable: withCod.prepaidAvailable,
-        shippingChargeInr: ziply.chargeInr,
-        totalItemsUsedForShipping: ziply.totalPacks,
-        usedHighestSlabFallback: ziply.usedHighestSlabFallback,
-        freeLargeOrderShipping: ziply.freeLargeOrderShipping,
+        shippingChargeInr,
+        totalItemsUsedForShipping: totalItems ?? 0,
+        usedHighestSlabFallback: false,
+        freeLargeOrderShipping: shippingChargeInr === 0,
+        shippingError: shippingRes.ok ? undefined : shippingRes.error,
       })
     } catch (e) {
       const transient = e instanceof ShiprocketApiError ? e.isTransient : false
@@ -141,10 +145,11 @@ export async function POST(request: NextRequest) {
         {
           ...withCod,
           courierAvailability: { count: 0, couriers: [] },
-          shippingChargeInr: ziply.chargeInr,
-          totalItemsUsedForShipping: ziply.totalPacks,
-          usedHighestSlabFallback: ziply.usedHighestSlabFallback,
-          freeLargeOrderShipping: ziply.freeLargeOrderShipping,
+          shippingChargeInr,
+          totalItemsUsedForShipping: totalItems ?? 0,
+          usedHighestSlabFallback: false,
+          freeLargeOrderShipping: shippingChargeInr === 0,
+          shippingError: shippingRes.ok ? undefined : shippingRes.error,
           shiprocketTransient: transient,
           message:
             "Delivery could not be verified right now. You can still place the order; we will confirm serviceability before dispatch.",

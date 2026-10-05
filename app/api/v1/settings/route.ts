@@ -5,11 +5,19 @@ import { requireAuth } from "@/src/server/middleware/auth"
 import { requirePermission } from "@/src/server/middleware/rbac"
 import { upsertSettingSchema } from "@/src/server/modules/settings/settings.validator"
 import { listSettings, upsertSetting } from "@/src/server/modules/settings/settings.service"
+import { validateShippingRules } from "@/src/lib/shipping/ziply5-shipping"
 
 export async function GET(request: NextRequest) {
   const group = request.nextUrl.searchParams.get("group") ?? undefined
 
-  const isPublicGroup = group === "TAX" || group === "CART" || group === "seo";
+  const upperGroup = group?.toUpperCase()
+  const isPublicGroup =
+    upperGroup === "TAX" ||
+    upperGroup === "CART" ||
+    upperGroup === "SEO" ||
+    upperGroup === "SHIPPING" ||
+    group === "seo"
+
   if (!isPublicGroup) {
     const auth = requireAuth(request)
     if ("status" in auth) return auth
@@ -35,18 +43,33 @@ export async function POST(request: NextRequest) {
     return fail("Validation failed", 422, parsed.error.flatten())
   }
 
+  if (
+    (parsed.data.group.toUpperCase() === "SHIPPING" || parsed.data.group === "shipping") &&
+    parsed.data.key === "rules"
+  ) {
+    const validation = validateShippingRules(parsed.data.valueJson)
+    if (!validation.valid) {
+      return fail(validation.errors.join("; "), 422, {
+        errors: validation.errors,
+      })
+    }
+  }
+
   const row = await upsertSetting({
     group: parsed.data.group,
     key: parsed.data.key,
     valueJson: parsed.data.valueJson,
   })
-  console.log("inserted row for the tax:::", row)
 
   if (
     (parsed.data.group === "site" && parsed.data.key === "favicons") ||
     (parsed.data.group === "seo" && parsed.data.key === "storefront")
   ) {
     revalidatePath("/", "layout")
+  }
+
+  if (parsed.data.group.toUpperCase() === "SHIPPING") {
+    revalidatePath("/checkout")
   }
 
   return ok(row, "Setting saved")
