@@ -156,13 +156,20 @@ const readStepFromLocation = (): ProductFormStepId => {
   if (fromUrl >= 1 && fromUrl <= 5) return fromUrl as ProductFormStepId
   return 1
 }
+const createFallbackId = () => `pending-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`
+
 const resolveOrCreatePendingProductId = () => {
   if (typeof window === "undefined") {
-    return typeof crypto !== "undefined" ? crypto.randomUUID() : `pending-${Date.now().toString(36)}`
+    return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : createFallbackId()
   }
   const existing = window.sessionStorage.getItem(ADD_PENDING_ID_KEY)?.trim()
   if (existing) return existing
-  const created = typeof crypto !== "undefined" ? crypto.randomUUID() : `pending-${Date.now().toString(36)}`
+  const created =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : createFallbackId()
   window.sessionStorage.setItem(ADD_PENDING_ID_KEY, created)
   return created
 }
