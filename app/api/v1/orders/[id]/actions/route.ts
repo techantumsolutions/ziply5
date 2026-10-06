@@ -4,15 +4,17 @@ import { fail, ok } from "@/src/server/core/http/response"
 import { requireAuth } from "@/src/server/middleware/auth"
 import {
   getOrderById,
+  releaseOrderInventory,
   setOrderCancelReason,
   setOrderReturnReason,
+  triggerShiprocketAutoSync,
   updateOrderStatus,
 } from "@/src/server/modules/orders/orders.service"
 import {
   cancelCustomerOrderWithShiprocketGate,
   OrderCancellationError,
 } from "@/src/server/modules/orders/order-cancellation.service"
-import { createRefund } from "@/src/server/modules/extended/extended.service"
+import { createRefund, updateRefundStatus } from "@/src/server/modules/extended/extended.service"
 import { triggerRazorpayRefund } from "@/src/server/modules/payments/payments.service"
 import { env } from "@/src/server/core/config/env"
 import { getSupabaseAdmin } from "@/src/lib/supabase/admin"
@@ -134,14 +136,27 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     if (!isAdmin) return fail("Forbidden", 403)
 
     if (parsed.data.action === "approve_order") {
+      if (lifecycleStatus !== "admin_approval_pending") {
+        return fail(`Order cannot be approved from status "${lifecycleStatus}". Only pending approval orders can be approved.`, 422)
+      }
+      if (!order.items || order.items.length === 0) {
+        return fail("Order has no items", 422)
+      }
       const stockCheck = order.items.every((item) => {
         const row = item as any
-        if (row.product?.type === "variant") {
-          const variants = row.product?.variants ?? []
-          const variant = variants.find((v: any) => v.id === row.variantId)
-          return Number(variant?.stock ?? 0) >= Number(row.quantity ?? 0)
+        const qty = Number(row.quantity ?? 0)
+        if (qty <= 0) return false
+        if (row.variantId || row.product?.type === "variant") {
+          const vStock = row.variant?.stock != null
+            ? Number(row.variant.stock)
+            : (row.product?.variants ?? []).find((v: any) => v.id === row.variantId)?.stock
+          if (vStock != null) return Number(vStock) >= 0
+          return Boolean(row.variant)
         }
-        return Number(row.product?.totalStock ?? 0) >= Number(row.quantity ?? 0)
+        if (row.product?.totalStock != null) {
+          return Number(row.product.totalStock) >= 0
+        }
+        return Boolean(row.product && row.product.name !== "Deleted product")
       })
       const serviceableCheck = Boolean(order.customerAddress?.trim())
       const fraudCheckPassed = true
@@ -157,20 +172,63 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         reasonCode: "admin_approved",
         note: parsed.data.reason ?? "Admin approved order",
       })
+
+      const paymentMethod = String(order.paymentMethod ?? "").toLowerCase()
+      const paymentStatus = normalizePaymentStatus(order.paymentStatus)
+      const isEligibleForSync = paymentMethod === "cod" || paymentStatus === "SUCCESS"
+      if (isEligibleForSync) {
+        void triggerShiprocketAutoSync({
+          orderId: order.id,
+          actorId: auth.user.sub,
+          source: "status_confirmed",
+        })
+      }
       return ok(updated, "Order approved")
     }
 
     if (parsed.data.action === "reject_order") {
+      if (lifecycleStatus !== "admin_approval_pending") {
+        return fail(`Order cannot be rejected from status "${lifecycleStatus}". Only pending approval orders can be rejected.`, 422)
+      }
       const paymentStatus = normalizePaymentStatus(order.paymentStatus)
+      const paymentMethod = String(order.paymentMethod ?? "").toLowerCase()
       const updated = await updateOrderStatus(order.id, "cancelled", auth.user.sub, {
         reasonCode: "admin_rejected",
         note: parsed.data.reason ?? "Admin rejected order",
       })
-      if (paymentStatus === "SUCCESS") {
-        const amount = parsed.data.amount ?? Number(order.total)
-        const refund = await createRefund(order.id, amount, "Order rejected by admin")
-        const triggered = await triggerRazorpayRefund({ refundRecordId: refund.id })
-        return ok({ updated, refund, triggered }, "Order rejected and refund initiated")
+
+      // Release reserved inventory
+      try {
+        await releaseOrderInventory(order.id)
+      } catch (invErr) {
+        console.error("[reject_order] Failed to release inventory:", invErr)
+      }
+
+      // If prepaid payment was captured, create and initiate refund for refundable amount
+      if (paymentStatus === "SUCCESS" && paymentMethod !== "cod") {
+        const existingRefund = (order.refunds ?? []).find((r: any) => ["pending", "failed", "initiated", "completed"].includes(r.status))
+        let refund: any = existingRefund
+        if (!refund) {
+          const amount = parsed.data.amount ?? Number(order.total)
+          refund = await createRefund(order.id, amount, "Order rejected by admin")
+        }
+
+        let triggered: any = null
+        let refundError: string | null = null
+        if (refund && ["pending", "failed"].includes(refund.status)) {
+          try {
+            triggered = await triggerRazorpayRefund({ refundRecordId: refund.id })
+          } catch (err: any) {
+            refundError = err instanceof Error ? err.message : String(err)
+            console.error("[reject_order] Razorpay refund failed:", refundError)
+            await updateRefundStatus(refund.id, "failed").catch(() => null)
+            await getSupabaseAdmin().from("Order").update({ refundStatus: "FAILED" }).eq("id", order.id).catch(() => null)
+          }
+        }
+        return ok(
+          { updated, refund, triggered, refundError },
+          refundError ? "Order rejected; refund trigger failed (retry available)" : "Order rejected and refund initiated",
+        )
       }
       return ok(updated, "Order rejected")
     }
@@ -214,21 +272,35 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
     const paymentStatus = normalizePaymentStatus(order.paymentStatus)
     if (paymentStatus !== "SUCCESS") return fail("Refund allowed only when payment_status = SUCCESS", 422)
-    const latestRefund = order.refunds?.[0] ?? null
-    let refund: any = latestRefund ?? null
 
-    if (!refund || ["completed", "initiated"].includes(refund.status)) {
+    const existingRefund = (order.refunds ?? []).find((r: any) => ["pending", "failed"].includes(r.status))
+    let refund: any = existingRefund
+    if (!refund && parsed.data.action === "retry_refund") {
+      const latestRefund = order.refunds?.[0]
+      if (latestRefund && ["pending", "failed"].includes(latestRefund.status)) {
+        refund = latestRefund
+      }
+    }
+
+    if (!refund) {
       const amount = parsed.data.amount ?? Number(order.total)
-      refund = await createRefund(order.id, amount, "Manual refund trigger")
+      refund = await createRefund(order.id, amount, parsed.data.action === "retry_refund" ? "Retry refund trigger" : "Manual refund trigger")
     }
     if (!refund) return fail("Unable to resolve refund record", 400)
 
-    await updateOrderStatus(order.id, "refund_initiated", auth.user.sub, {
-      reasonCode: "refund_initiated",
-      note: "Refund flow initiated by admin",
-    }).catch(() => null)
-    const triggered = await triggerRazorpayRefund({ refundRecordId: refund.id })
-    return ok({ refund, triggered }, parsed.data.action === "retry_refund" ? "Refund retry initiated" : "Refund initiated")
+    try {
+      const triggered = await triggerRazorpayRefund({ refundRecordId: refund.id })
+      await updateOrderStatus(order.id, "refund_initiated", auth.user.sub, {
+        reasonCode: "refund_initiated",
+        note: "Refund flow initiated by admin",
+      }).catch(() => null)
+      return ok({ refund, triggered }, parsed.data.action === "retry_refund" ? "Refund retry initiated" : "Refund initiated")
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err)
+      await updateRefundStatus(refund.id, "failed").catch(() => null)
+      await getSupabaseAdmin().from("Order").update({ refundStatus: "FAILED" }).eq("id", order.id).catch(() => null)
+      return fail(`Refund failed: ${message}`, 400, { refundRecordId: refund.id })
+    }
   } catch (error) {
     if (error instanceof OrderCancellationError) {
       return fail(error.message, error.httpStatus)

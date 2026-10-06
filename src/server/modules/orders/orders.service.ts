@@ -24,6 +24,7 @@ import {
   listOrdersSupabaseBasic,
   mirrorOrderStatusSupabase,
   orderExistsByIdSupabase,
+  releaseInventorySupabase,
   reserveInventorySupabase,
   setOrderCancelReasonSupabase,
   setOrderReturnReasonSupabase,
@@ -248,25 +249,27 @@ const orderDetailSelect = {
   invoice: true,
 } as const
 
-const getInitialLifecycleStatus = (gateway: string, paymentStatus?: string | null): OrderLifecycleStatus => {
-  const normalizedGateway = gateway.trim().toLowerCase()
-  const normalizedPayment = normalizePaymentStatus(paymentStatus)
-  if (normalizedGateway === "cod") return "confirmed"
-  if (normalizedPayment === "SUCCESS") return "payment_success"
-  if (normalizedPayment === "FAILED") return "failed"
-  return "pending_payment"
+const getInitialLifecycleStatus = (_gateway: string, _paymentStatus?: string | null): OrderLifecycleStatus => {
+  return "admin_approval_pending"
 }
 
-const shouldAutoSyncOrders = () => process.env.ORDER_AUTO_SYNC_ENABLED === "true"
+export const shouldAutoSyncOrders = () => process.env.ORDER_AUTO_SYNC_ENABLED === "true"
 
-const latestLifecycleStatus = (order: { status?: string | null; statusHistory?: Array<{ toStatus?: string | null }> }) =>
+export const latestLifecycleStatus = (order: { status?: string | null; statusHistory?: Array<{ toStatus?: string | null }> }) =>
   (((order.statusHistory ?? [])[0]?.toStatus ?? order.status ?? "pending") as OrderLifecycleStatus)
 
-const triggerShiprocketAutoSync = async (input: {
+export const triggerShiprocketAutoSync = async (input: {
   orderId: string
   actorId?: string
-  source: "order_created" | "status_confirmed"
+  source: "order_created" | "status_confirmed" | "payment_success" | "admin_approval"
 }) => {
+  if (!shouldAutoSyncOrders()) {
+    console.log("[shiprocket][auto_sync.disabled]", {
+      orderId: input.orderId,
+      source: input.source,
+    })
+    return
+  }
   const actorId = input.actorId ?? "system"
   console.log("[shiprocket][auto_sync.triggered]", {
     orderId: input.orderId,
@@ -304,6 +307,18 @@ const triggerShiprocketAutoSync = async (input: {
       reason: error instanceof Error ? error.message : "unknown",
     })
   }
+}
+
+export const releaseOrderInventory = async (orderId: string) => {
+  const order = await getOrderByIdSupabaseBasic(orderId)
+  if (!order || !Array.isArray(order.items) || !order.items.length) return
+  await releaseInventorySupabase(
+    order.items.map((line: any) => ({
+      productId: String(line.productId ?? line.product?.id ?? ""),
+      variantId: line.variantId ? String(line.variantId) : null,
+      quantity: Number(line.quantity ?? 0),
+    }))
+  )
 }
 
 type ComboChildResolved = {
@@ -742,14 +757,7 @@ export const createOrderFromCheckout = async (input: {
     orderId: created.id,
     fromStatus: initialLifecycleStatus,
     toStatus: initialLifecycleStatus,
-    notes:
-      initialLifecycleStatus === "pending"
-        ? "Order created with COD; awaiting admin acceptance"
-        : initialLifecycleStatus === "payment_success"
-          ? "Order created after successful payment"
-          : initialLifecycleStatus === "failed"
-            ? "Order created with failed payment state"
-            : "Order created, awaiting payment",
+    notes: "Order created; awaiting admin approval",
     changedById: input.userId ?? null,
   }).catch(() => null)
   console.log("Created order with ID:", created.id)
@@ -763,25 +771,6 @@ export const createOrderFromCheckout = async (input: {
     externalId: input.paymentId ?? null,
   }).catch(() => null)
   console.log("Initial transaction recorded")
-  // For COD orders, the status is already 'confirmed', so no need to re-confirm.
-  // For online payments, confirm only if payment was successful and order is still pending.
-  if (input.gateway.trim().toLowerCase() !== "cod") {
-    const hasSuccessfulTransaction =
-      (order.transactions ?? []).some((tx: any) => ["paid", "captured", "success"].includes(String(tx?.status ?? "").toLowerCase())) ||
-      ["paid", "captured", "success"].includes(transactionStatus.toLowerCase())
-    const isPaymentSuccessful = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS" || hasSuccessfulTransaction
-
-    if (isPaymentSuccessful && String(order.status ?? "").toLowerCase() === "pending") {
-      await updateOrderStatus(String(order.id), "payment_success", input.userId ?? undefined, {
-        reasonCode: "payment_success",
-        note: "Order created with successful payment",
-      }).catch(() => null)
-      await updateOrderStatus(String(order.id), "confirmed", input.userId ?? undefined, {
-        reasonCode: "payment_success",
-        note: "Order confirmed after successful payment",
-      }).catch(() => null)
-    }
-  }
   console.log("Order creation process completed for order ID:", order.id, "with final status:", order.status, "and payment status:", order.paymentStatus)
   await logActivity({
     actorId: input.userId ?? undefined,
@@ -851,21 +840,9 @@ export const createOrderFromCheckout = async (input: {
     payload: { orderId: order.id, total, currency: input.currency ?? "INR" },
   }).catch(() => null)
   setImmediate(() => {
-    const gatewayLower = input.gateway.trim().toLowerCase()
-    const pay = normalizePaymentStatus(input.paymentStatus)
-    if (gatewayLower !== "cod" && pay !== "SUCCESS") {
-      console.log("[shiprocket][auto_sync.skip_order_created]", {
-        orderId: String(order.id),
-        gateway: gatewayLower,
-        paymentStatus: pay,
-        reason: "prepaid_not_paid_yet",
-      })
-      return
-    }
-    void triggerShiprocketAutoSync({
+    console.log("[shiprocket][auto_sync.skip_order_created]", {
       orderId: String(order.id),
-      actorId: input.userId ?? "system",
-      source: "order_created",
+      reason: "awaiting_admin_approval",
     })
   })
   console.log("Outbox event enqueued for order.created")
@@ -883,18 +860,22 @@ export const createOrderFromCheckout = async (input: {
 }
 const autoSyncFromPayment = async (orderId: string, currentStatus: string, paymentStatus: string) => {
   const lifecycle = currentStatus.toLowerCase() as OrderLifecycleStatus
-  // Don't auto-sync if already in a terminal or advanced status
-  if (["confirmed", "cancelled", "returned", "shipped", "delivered", "refund_initiated", "return_requested"].includes(lifecycle)) return
+  // Don't auto-sync or alter status if awaiting approval or already in terminal/advanced status
+  if (["admin_approval_pending", "cancelled", "returned", "shipped", "delivered", "refund_initiated", "return_requested"].includes(lifecycle)) {
+    return
+  }
   const normalizedPayment = normalizePaymentStatus(paymentStatus)
   if (normalizedPayment === "SUCCESS") {
-    await updateOrderStatus(orderId, "payment_success", undefined, {
-      reasonCode: "payment_status_sync",
-      note: `Auto-updated from payment status ${paymentStatus}`,
-    }).catch(() => null)
-    await updateOrderStatus(orderId, "confirmed", undefined, {
-      reasonCode: "payment_status_sync",
-      note: "Order confirmed after payment success",
-    }).catch(() => null)
+    if (lifecycle === "confirmed") {
+      if (shouldAutoSyncOrders()) {
+        void triggerShiprocketAutoSync({
+          orderId,
+          actorId: "system",
+          source: "payment_success",
+        })
+      }
+      return
+    }
     return
   }
   const derived = deriveLifecycleFromPayment(normalizedPayment)
@@ -1029,7 +1010,7 @@ export const updateOrderStatus = async (
   const paymentStatus = normalizePaymentStatus((existing as any).paymentStatus)
   const paymentMethod = String((existing as any).paymentMethod ?? "").toLowerCase()
 
-  if (status === "confirmed" && paymentStatus !== "SUCCESS" && paymentMethod !== "cod") {
+  if (status === "confirmed" && paymentStatus !== "SUCCESS" && paymentMethod !== "cod" && fromStatus !== "admin_approval_pending") {
     console.error(`[STATUS UPDATE ERROR] Cannot move to CONFIRMED without SUCCESS payment status. Current: ${paymentStatus}`)
     throw new Error("Order cannot move to CONFIRMED unless payment_status = SUCCESS")
   }
