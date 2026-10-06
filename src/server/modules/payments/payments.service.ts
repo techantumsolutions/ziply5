@@ -1,8 +1,15 @@
 import crypto, { randomUUID } from "node:crypto"
 import Stripe from "stripe"
 import { env } from "@/src/server/core/config/env"
-import { updateOrderStatus } from "@/src/server/modules/orders/orders.service"
 import {
+  latestLifecycleStatus,
+  triggerShiprocketAutoSync,
+  updateOrderStatus,
+} from "@/src/server/modules/orders/orders.service"
+import { createRefund } from "@/src/server/modules/extended/extended.service"
+import {
+  appendOrderStatusHistorySupabase,
+  getOrderByIdSupabaseBasic,
   markOrderPaymentSuccessSupabase,
   setOrderRefundAndPaymentStatusSupabase,
   setTransactionRefundIdSupabase,
@@ -230,14 +237,49 @@ export const verifyRazorpayPayment = async (input: {
   const paymentUpdated = await markOrderPaymentSuccessSupabase(input.orderId, input.razorpayPaymentId)
   if (!paymentUpdated) throw new Error("Supabase verify payment order update failed")
 
-  await updateOrderStatus(input.orderId, "payment_success", undefined, {
-    reasonCode: "payment_success",
-    note: "Razorpay payment signature verified",
-  })
-  await updateOrderStatus(input.orderId, "confirmed", undefined, {
-    reasonCode: "payment_success",
-    note: "Order confirmed after successful payment",
-  })
+  const order = await getOrderByIdSupabaseBasic(input.orderId)
+  const lifecycle = latestLifecycleStatus(order as any)
+
+  if (lifecycle === "cancelled") {
+    // Late payment on cancelled order: DO NOT resurrect order or trigger shipment!
+    await appendOrderStatusHistorySupabase({
+      orderId: input.orderId,
+      fromStatus: "cancelled",
+      toStatus: "cancelled",
+      notes: "Late payment verified after cancellation; refund required",
+      changedById: "system",
+    }).catch(() => null)
+    try {
+      const amount = Number(order?.total ?? 0)
+      const refund = await createRefund(input.orderId, amount, "Late payment after cancellation")
+      await triggerRazorpayRefund({ refundRecordId: refund.id })
+    } catch (e) {
+      console.error("[verifyRazorpayPayment] Auto-refund for cancelled order failed", e)
+    }
+  } else if (lifecycle === "confirmed") {
+    // Order already approved by admin: trigger auto-sync if enabled
+    await appendOrderStatusHistorySupabase({
+      orderId: input.orderId,
+      fromStatus: "confirmed",
+      toStatus: "confirmed",
+      notes: "Payment verified for approved order",
+      changedById: "system",
+    }).catch(() => null)
+    void triggerShiprocketAutoSync({
+      orderId: input.orderId,
+      actorId: "system",
+      source: "payment_success",
+    })
+  } else if (lifecycle === "admin_approval_pending") {
+    // Awaiting admin approval: keep lifecycle status as admin_approval_pending!
+    await appendOrderStatusHistorySupabase({
+      orderId: input.orderId,
+      fromStatus: "admin_approval_pending",
+      toStatus: "admin_approval_pending",
+      notes: "Payment verified; awaiting admin approval",
+      changedById: "system",
+    }).catch(() => null)
+  }
 
   return { verified: true, orderId: input.orderId, transactionId: txId }
 }
@@ -427,20 +469,60 @@ export const processWebhookEvent = async (
       if (!updated) throw new Error("supabase_refund_record_status_write_failed")
     }
   }
+  const order = await getOrderByIdSupabaseBasic(orderId)
+  const lifecycle = latestLifecycleStatus(order as any)
+
   if (paid) {
-    await updateOrderStatus(orderId, "payment_success", undefined, {
-      reasonCode: "webhook_payment_captured",
-      note: "Payment captured by webhook",
-    }).catch(() => null)
-    await updateOrderStatus(orderId, "confirmed", undefined, {
-      reasonCode: "webhook_payment_captured",
-      note: "Order confirmed after webhook payment capture",
-    }).catch(() => null)
+    if (lifecycle === "cancelled") {
+      // Late payment on cancelled order: DO NOT resurrect order or trigger shipment!
+      await appendOrderStatusHistorySupabase({
+        orderId,
+        fromStatus: "cancelled",
+        toStatus: "cancelled",
+        notes: "Late payment webhook captured after cancellation; refund required",
+        changedById: "system",
+      }).catch(() => null)
+      try {
+        const amount = Number(order?.total ?? 0)
+        const refund = await createRefund(orderId, amount, "Late payment after cancellation")
+        await triggerRazorpayRefund({ refundRecordId: refund.id })
+      } catch (e) {
+        console.error("[processWebhookEvent] Auto-refund for cancelled order failed", e)
+      }
+    } else if (lifecycle === "confirmed") {
+      // Order already approved by admin: trigger auto-sync if enabled
+      await appendOrderStatusHistorySupabase({
+        orderId,
+        fromStatus: "confirmed",
+        toStatus: "confirmed",
+        notes: "Payment captured via webhook for approved order",
+        changedById: "system",
+      }).catch(() => null)
+      void triggerShiprocketAutoSync({
+        orderId,
+        actorId: "system",
+        source: "payment_success",
+      })
+    } else if (lifecycle === "admin_approval_pending") {
+      // Order is awaiting admin approval: keep in admin_approval_pending!
+      await appendOrderStatusHistorySupabase({
+        orderId,
+        fromStatus: "admin_approval_pending",
+        toStatus: "admin_approval_pending",
+        notes: "Payment captured via webhook; awaiting admin approval",
+        changedById: "system",
+      }).catch(() => null)
+    }
   } else if (type === "payment.failed") {
-    await updateOrderStatus(orderId, "failed", undefined, {
-      reasonCode: "payment_failed",
-      note: "Payment failed via webhook",
-    }).catch(() => null)
+    if (lifecycle !== "cancelled") {
+      await appendOrderStatusHistorySupabase({
+        orderId,
+        fromStatus: lifecycle,
+        toStatus: lifecycle,
+        notes: "Payment failed via webhook",
+        changedById: "system",
+      }).catch(() => null)
+    }
   }
   return { applied: true, paid, orderId, transactionId: tx.id }
 }

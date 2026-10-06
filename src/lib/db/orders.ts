@@ -272,6 +272,106 @@ export const reserveInventorySupabase = async (lines: Array<{ productId: string;
   }
 }
 
+export const releaseInventorySupabase = async (lines: Array<{ productId: string; variantId?: string | null; quantity: number }>) => {
+  const client = getSupabaseAdmin()
+  for (const line of lines) {
+    if (!line.productId || line.quantity <= 0) continue
+    let released = false
+    for (const table of INVENTORY_ITEM_TABLES) {
+      const readAttempts = [
+        () => client.from(table).select("id,available,reserved").eq("productId", line.productId).order("updatedAt", { ascending: true }).limit(1),
+        () => client.from(table).select("id,available,reserved").eq("product_id", line.productId).order("updated_at", { ascending: true }).limit(1),
+      ]
+      for (const read of readAttempts) {
+        const { data, error } = await read()
+        if (error || !Array.isArray(data) || !data[0]) continue
+        const row = data[0] as Record<string, unknown>
+        const id = safeString(row.id)
+        const nextAvailable = safeNumber(row.available) + line.quantity
+        const nextReserved = Math.max(0, safeNumber(row.reserved) - line.quantity)
+        const updateAttempts = [
+          () => client.from(table).update({ available: nextAvailable, reserved: nextReserved }).eq("id", id).select("id").maybeSingle(),
+          () => client.from(table).update({ available: nextAvailable, reserved: nextReserved }).eq("id", id).select("id").maybeSingle(),
+        ]
+        for (const update of updateAttempts) {
+          const updated = await update()
+          if (!updated.error && updated.data) {
+            released = true
+            break
+          }
+        }
+        if (released) break
+      }
+      if (released) break
+    }
+    if (released) continue
+
+    if (line.variantId) {
+      let variantReleased = false
+      for (const table of PRODUCT_VARIANT_TABLES) {
+        const attempts = [
+          () => client.from(table).select("id,stock").eq("id", line.variantId).eq("productId", line.productId).maybeSingle(),
+          () => client.from(table).select("id,stock").eq("id", line.variantId).eq("product_id", line.productId).maybeSingle(),
+        ]
+        for (const run of attempts) {
+          const { data, error } = await run()
+          if (error || !data) continue
+          const stock = safeNumber((data as Record<string, unknown>).stock)
+          const nextStock = stock + line.quantity
+          const update = await client.from(table).update({ stock: nextStock }).eq("id", line.variantId).select("id").maybeSingle()
+          if (!update.error && update.data) {
+            variantReleased = true
+            break
+          }
+        }
+        if (variantReleased) break
+      }
+      if (variantReleased) continue
+    }
+
+    let productReleased = false
+    for (const table of PRODUCT_TABLES) {
+      const attempts = [
+        () => client.from(table).select("id,totalStock").eq("id", line.productId).maybeSingle(),
+        () => client.from(table).select("id,total_stock").eq("id", line.productId).maybeSingle(),
+      ]
+      for (const run of attempts) {
+        const { data, error } = await run()
+        if (error || !data) continue
+        const row = data as Record<string, unknown>
+        const stock = safeNumber(row.totalStock ?? row.total_stock)
+        const nextStock = stock + line.quantity
+        const updateAttempts = [
+          () =>
+            client
+              .from(table)
+              .update({ totalStock: nextStock, stockStatus: "in_stock" })
+              .eq("id", line.productId)
+              .select("id")
+              .maybeSingle(),
+          () =>
+            client
+              .from(table)
+              .update({ total_stock: nextStock, stock_status: "in_stock" })
+              .eq("id", line.productId)
+              .select("id")
+              .maybeSingle(),
+        ]
+        for (const update of updateAttempts) {
+          const result = await update()
+          if (!result.error && result.data) {
+            productReleased = true
+            break
+          }
+        }
+        if (productReleased) break
+      }
+      if (productReleased) break
+    }
+  }
+}
+
+
 export type CouponCheckoutRecord = {
   id: string
   code: string
@@ -1276,7 +1376,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         PRODUCT_TABLES,
         "id",
         productIds,
-        "id,name,slug,sku,weight,thumbnail,price",
+        "id,name,slug,sku,weight,thumbnail,price,totalStock,type,stockStatus",
       )
       const productById = new Map<string, Record<string, unknown>>()
       for (const product of productRows) {
@@ -1291,7 +1391,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         PRODUCT_VARIANT_TABLES,
         "id",
         variantIds,
-        "id,name,sku,weight,price",
+        "id,name,sku,weight,price,stock",
       )
       const variantById = new Map<string, Record<string, unknown>>()
       for (const variant of variantRows) {
@@ -1325,6 +1425,9 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               sku: safeString(product.sku) || null,
               weight: safeString(product.weight) || null,
               thumbnail: safeString(product.thumbnail) || null,
+              totalStock: safeNumber(product.totalStock, 0),
+              type: safeString(product.type) || "simple",
+              stockStatus: safeString(product.stockStatus) || "in_stock",
             }
             : {
               id: productId || "",
@@ -1333,6 +1436,9 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               sku: null,
               weight: null,
               thumbnail: null,
+              totalStock: 0,
+              type: "simple",
+              stockStatus: "out_of_stock",
             },
           variant: variant
             ? {
@@ -1341,6 +1447,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               sku: safeString(variant.sku) || null,
               weight: safeString(variant.weight) || null,
               price: safeNumber(variant.price, 0),
+              stock: safeNumber(variant.stock, 0),
             }
             : null,
         }

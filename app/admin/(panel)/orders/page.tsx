@@ -52,6 +52,8 @@ export default function AdminOrdersPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkSyncBusy, setBulkSyncBusy] = useState(false);
   const [syncProgress, setSyncProgress] = useState<{ total: number; synced: number; failed: number; skipped: number } | null>(null);
+  const [rowActionBusy, setRowActionBusy] = useState<Record<string, string>>({});
+  const [rowActionError, setRowActionError] = useState<Record<string, string>>({});
 
   const toPaymentStatus = useCallback((o: OrderRow) => {
     if (o.transactions?.some((t) => /paid|captured|success/i.test(t.status)) || (o.paymentStatus ?? "").toUpperCase() === "SUCCESS") return "success";
@@ -107,6 +109,7 @@ export default function AdminOrdersPage() {
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 
   const paidOrdersCount = useMemo(() => rows.filter((o) => toPaymentStatus(o) === "success").length, [rows, toPaymentStatus]);
+  const pendingApprovalsCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "admin_approval_pending").length, [rows, lifecycleStatus]);
   const pendingOrdersCount = useMemo(() => rows.filter((o) => ["pending", "pending_payment", "payment_success", "admin_approval_pending", "confirmed", "packed"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
   const completedOrdersCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "delivered").length, [rows, lifecycleStatus]);
   const cancelledOrdersCount = useMemo(() => rows.filter((o) => ["cancelled", "returned"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
@@ -188,6 +191,37 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const handleApprovalAction = async (orderId: string, action: "approve_order" | "reject_order") => {
+    if (rowActionBusy[orderId]) return;
+    setRowActionBusy((prev) => ({ ...prev, [orderId]: action }));
+    setRowActionError((prev) => ({ ...prev, [orderId]: "" }));
+    try {
+      await authedPost(`/api/v1/orders/${orderId}/actions`, { action });
+      const nextStatus = action === "approve_order" ? "confirmed" : "cancelled";
+      setRows((prev) =>
+        prev.map((row) =>
+          row.id === orderId
+            ? {
+                ...row,
+                status: nextStatus,
+                statusHistory: [{ toStatus: nextStatus, changedAt: new Date().toISOString() }, ...(row.statusHistory ?? [])],
+              }
+            : row
+        )
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Action failed";
+      setRowActionError((prev) => ({ ...prev, [orderId]: msg }));
+      setError(`Order #${orderId.slice(0, 8)}: ${msg}`);
+    } finally {
+      setRowActionBusy((prev) => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
+  };
+
   const exportCsv = () => {
     const header = ["order_id", "date_time", "customer_name", "mobile", "email", "payment_method", "payment_status", "order_status", "shipment_status", "total_amount", "items_count", "warehouse", "delivery_eta"];
     const body = filteredRows.map((o) => [
@@ -218,7 +252,7 @@ export default function AdminOrdersPage() {
     <section className="mx-auto max-w-7xl space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <article className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-[#646464]">Total orders</p><p className="mt-2 text-3xl font-bold text-[#2A1810]">{rows.length.toLocaleString()}</p></article>
-        <article className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-[#646464]">Orders pending</p><p className="mt-2 text-3xl font-bold text-[#2A1810]">{pendingOrdersCount.toLocaleString()}</p></article>
+        <article className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-[#646464]">Pending approval</p><p className="mt-2 text-3xl font-bold text-[#2A1810]">{pendingApprovalsCount.toLocaleString()}</p></article>
         <article className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-[#646464]">Orders completed</p><p className="mt-2 text-3xl font-bold text-[#2A1810]">{completedOrdersCount.toLocaleString()}</p></article>
         <article className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-[#646464]">Orders cancelled</p><p className="mt-2 text-3xl font-bold text-[#2A1810]">{cancelledOrdersCount.toLocaleString()}</p></article>
       </div>
@@ -355,7 +389,17 @@ export default function AdminOrdersPage() {
                       <p className="break-all text-xs text-[#6F6F6F]">{o.user?.email ?? "No email"}</p>
                     </td>
                     <td className="px-3 py-2"><span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs capitalize">{toPaymentStatus(o)}</span></td>
-                    <td className="px-3 py-2"><span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs capitalize text-[#4A1D1F]">{lifecycleStatus(o).replaceAll("_", " ")}</span></td>
+                    <td className="px-3 py-2">
+                      {lifecycleStatus(o) === "admin_approval_pending" ? (
+                        <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                          Approval Pending
+                        </span>
+                      ) : (
+                        <span className="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs capitalize text-[#4A1D1F]">
+                          {lifecycleStatus(o).replaceAll("_", " ")}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       <span className="inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-xs capitalize text-indigo-700">{latestShipmentStatus(o).replaceAll("_", " ")}</span>
                       <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
@@ -364,33 +408,60 @@ export default function AdminOrdersPage() {
                     <td className="px-3 py-2 font-semibold">Rs.{Number(o.total).toFixed(2)}</td>
                     <td className="px-3 py-2">{itemsCount(o)}</td>
                     <td className="px-3 py-2">
-                      <details className="relative">
-                        <summary className="cursor-pointer rounded-full border border-[#E8DCC8] px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] hover:bg-[#FFFBF3]">Actions</summary>
-                        <div className="absolute right-0 z-20 mt-2 min-w-[180px] rounded-lg border border-[#E8DCC8] bg-white p-2 shadow-md">
-                          <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">View Details</button>
-                          {latestShipmentStatus(o) === "not_shipped" && (
-                            <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "sync_order", generatePickup: true }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
-                              Sync to Shiprocket
+                      <div className="flex items-center gap-1.5">
+                        {lifecycleStatus(o) === "admin_approval_pending" && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={Boolean(rowActionBusy[o.id])}
+                              onClick={() => void handleApprovalAction(o.id, "approve_order")}
+                              className="rounded-full bg-[#2DA66D] px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {rowActionBusy[o.id] === "approve_order" ? "Approving..." : "Approve"}
                             </button>
-                          )}
-                          {latestShipmentStatus(o) !== "not_shipped" && (
-                            <>
-                              <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "resync_order", generatePickup: true }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
-                                Re-sync
+                            <button
+                              type="button"
+                              disabled={Boolean(rowActionBusy[o.id])}
+                              onClick={() => void handleApprovalAction(o.id, "reject_order")}
+                              className="rounded-full bg-[#A32A2A] px-2.5 py-1 text-xs font-semibold text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {rowActionBusy[o.id] === "reject_order" ? "Rejecting..." : "Reject"}
+                            </button>
+                          </>
+                        )}
+                        <details className="relative">
+                          <summary className="cursor-pointer rounded-full border border-[#E8DCC8] px-2.5 py-1 text-xs font-semibold text-[#4A1D1F] hover:bg-[#FFFBF3]">
+                            Actions
+                          </summary>
+                          <div className="absolute right-0 z-20 mt-2 min-w-[180px] rounded-lg border border-[#E8DCC8] bg-white p-2 shadow-md">
+                            <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">View Details</button>
+                            {latestShipmentStatus(o) === "not_shipped" && lifecycleStatus(o) !== "admin_approval_pending" && (
+                              <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "sync_order", generatePickup: true }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
+                                Sync to Shiprocket
                               </button>
-                              <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
-                                View Shipment
-                              </button>
-                              <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
-                                Track Order
-                              </button>
-                              <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "refresh_tracking" }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
-                                Refresh Tracking
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </details>
+                            )}
+                            {latestShipmentStatus(o) !== "not_shipped" && (
+                              <>
+                                <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "resync_order", generatePickup: true }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
+                                  Re-sync
+                                </button>
+                                <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
+                                  View Shipment
+                                </button>
+                                <button type="button" onClick={() => router.push(`/admin/orders/${o.id}`)} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
+                                  Track Order
+                                </button>
+                                <button type="button" onClick={() => void authedPost(`/api/v1/orders/${o.id}/shiprocket`, { action: "refresh_tracking" }).then(() => load())} className="block w-full rounded px-2 py-1.5 text-left text-xs hover:bg-[#FFFBF3]">
+                                  Refresh Tracking
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </details>
+                      </div>
+                      {rowActionError[o.id] && (
+                        <p className="mt-1 text-[11px] text-red-600">{rowActionError[o.id]}</p>
+                      )}
                     </td>
                   </tr>
                 ))

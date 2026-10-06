@@ -104,7 +104,7 @@ const getSqlParamType = (value: unknown) => {
 const resolveSkippedReason = (reason: string) => {
   const normalized = reason.toLowerCase()
   if (normalized.includes("already synced") || normalized.includes("shipment already exists")) return "already_synced"
-  if (normalized.includes("accepted") || normalized.includes("confirmed")) return "order_not_confirmed"
+  if (normalized.includes("accepted") || normalized.includes("confirmed") || normalized.includes("approval")) return "order_not_confirmed"
   if (normalized.includes("address")) return "invalid_address"
   if (normalized.includes("payment")) return "invalid_payment_state"
   if (normalized.includes("phone") || normalized.includes("customer")) return "missing_customer_info"
@@ -1392,7 +1392,10 @@ const getOrderSyncEligibility = async (orderId: string) => {
       validationPayload,
     }
   }
-  const accepted = ["confirmed", "packed", "shipped", "payment_success", "admin_approval_pending"].includes(latest)
+  if (latest === "admin_approval_pending") {
+    return { eligible: false as const, reason: "admin approval pending" }
+  }
+  const accepted = ["confirmed", "packed", "shipped"].includes(latest)
   if (!accepted) return { eligible: false as const, reason: "order not confirmed" }
   const prepaidPaid =
     order.txPaid === true ||
