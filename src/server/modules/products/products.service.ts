@@ -550,41 +550,40 @@ export async function getDynamicRankings() {
   try {
     // 1. Calculate Bestsellers: top completed/delivered orders volume/quantity in last 90 days.
     // Completed/Delivered orders are status NOT IN ('cancelled', 'pending')
-    const bestSellersRes = await pgQuery<{ productId: string; total_qty: string }>(`
-      SELECT oi."productId", SUM(oi.quantity) as total_qty
-      FROM "OrderItem" oi
-      JOIN "Order" o ON oi."orderId" = o.id
-      WHERE o.status NOT IN ('cancelled', 'pending')
-        AND o."createdAt" >= NOW() - INTERVAL '90 days'
-      GROUP BY oi."productId"
-      ORDER BY total_qty DESC
-      LIMIT 10
-    `)
+    // 2. Trending: sales momentum (last 14 days vs previous 14) plus a boost for new products,
+    // scored against all active published products.
+    const [bestSellersRes, trendingRes, activeProducts] = await Promise.all([
+      pgQuery<{ productId: string; total_qty: string }>(`
+        SELECT oi."productId", SUM(oi.quantity) as total_qty
+        FROM "OrderItem" oi
+        JOIN "Order" o ON oi."orderId" = o.id
+        WHERE o.status NOT IN ('cancelled', 'pending')
+          AND o."createdAt" >= NOW() - INTERVAL '90 days'
+        GROUP BY oi."productId"
+        ORDER BY total_qty DESC
+        LIMIT 10
+      `),
+      pgQuery<{ productId: string; qty_recent: string; qty_prev: string }>(`
+        SELECT 
+          oi."productId",
+          SUM(CASE WHEN o."createdAt" >= NOW() - INTERVAL '14 days' THEN oi.quantity ELSE 0 END) as qty_recent,
+          SUM(CASE WHEN o."createdAt" < NOW() - INTERVAL '14 days' AND o."createdAt" >= NOW() - INTERVAL '28 days' THEN oi.quantity ELSE 0 END) as qty_prev
+        FROM "OrderItem" oi
+        JOIN "Order" o ON oi."orderId" = o.id
+        WHERE o.status NOT IN ('cancelled', 'pending')
+          AND o."createdAt" >= NOW() - INTERVAL '28 days'
+        GROUP BY oi."productId"
+      `),
+      pgQuery<{ id: string; createdAt: string }>(`
+        SELECT id, "createdAt" 
+        FROM "Product" 
+        WHERE status = 'published' AND "isActive" = true
+      `),
+    ])
 
     bestSellersRes.forEach(row => {
       if (row.productId) bestSellerIds.add(row.productId)
     })
-
-    // 2. Calculate Trending: sales momentum (recent growth last 14 days vs prev 14 days)
-    // plus boost for new products
-    const trendingRes = await pgQuery<{ productId: string; qty_recent: string; qty_prev: string }>(`
-      SELECT 
-        oi."productId",
-        SUM(CASE WHEN o."createdAt" >= NOW() - INTERVAL '14 days' THEN oi.quantity ELSE 0 END) as qty_recent,
-        SUM(CASE WHEN o."createdAt" < NOW() - INTERVAL '14 days' AND o."createdAt" >= NOW() - INTERVAL '28 days' THEN oi.quantity ELSE 0 END) as qty_prev
-      FROM "OrderItem" oi
-      JOIN "Order" o ON oi."orderId" = o.id
-      WHERE o.status NOT IN ('cancelled', 'pending')
-        AND o."createdAt" >= NOW() - INTERVAL '28 days'
-      GROUP BY oi."productId"
-    `)
-
-    // We also fetch all active published products to compute their score including the new product boost
-    const activeProducts = await pgQuery<{ id: string; createdAt: string }>(`
-      SELECT id, "createdAt" 
-      FROM "Product" 
-      WHERE status = 'published' AND "isActive" = true
-    `)
 
     const trendingScores = new Map<string, number>()
     
@@ -645,7 +644,9 @@ export async function getDynamicRankings() {
     }
 
   } catch (error) {
-    logger.error("Error computing dynamic product rankings:", error)
+    logger.error("Error computing dynamic product rankings:", {
+      error: error instanceof Error ? error.message : String(error),
+    })
   }
 
   cachedRankings = {

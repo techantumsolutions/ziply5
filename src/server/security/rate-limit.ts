@@ -1,4 +1,4 @@
-import { redis } from "@/src/server/db/redis"
+import { isRedisReady, redis, withRedisTimeout } from "@/src/server/db/redis"
 
 const memoryStore = new Map<string, { count: number; resetAt: number }>()
 
@@ -25,12 +25,11 @@ export const rateLimit = async (input: {
 }): Promise<{ ok: boolean; remaining: number; resetSec: number }> => {
   const ttlMs = input.windowSec * 1000
   const resetSec = Math.max(1, input.windowSec)
-  if (process.env.REDIS_ENABLED === "true" && process.env.REDIS_URL) {
+  if (process.env.REDIS_ENABLED === "true" && process.env.REDIS_URL && isRedisReady()) {
     try {
-      if (redis.status !== "ready") await redis.connect()
-      const count = await redis.incr(input.key)
-      if (count === 1) await redis.expire(input.key, input.windowSec)
-      const ttl = await redis.ttl(input.key)
+      const count = await withRedisTimeout(redis.incr(input.key))
+      if (count === 1) await withRedisTimeout(redis.expire(input.key, input.windowSec))
+      const ttl = await withRedisTimeout(redis.ttl(input.key))
       return {
         ok: count <= input.limit,
         remaining: Math.max(0, input.limit - count),
