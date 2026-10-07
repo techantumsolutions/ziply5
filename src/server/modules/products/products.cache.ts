@@ -1,35 +1,10 @@
 import { env } from "@/src/server/core/config/env"
-import { redis } from "@/src/server/db/redis"
+import { isRedisReady, redis, withRedisTimeout } from "@/src/server/db/redis"
 
 const memoryStore = new Map<string, { at: number; value: string }>()
 const PRODUCT_CACHE_PREFIX = "products:v1"
 
-let redisReady = false
-let redisInitAttemptedAt = 0
-let redisErrorHandlerAttached = false
-
-const ensureRedis = async () => {
-  if (!env.REDIS_URL) return false
-  if (!redisErrorHandlerAttached) {
-    redis.on("error", () => {
-      // keep product API healthy even if cache backend is down
-    })
-    redisErrorHandlerAttached = true
-  }
-  if (redisReady) return true
-  if (Date.now() - redisInitAttemptedAt < 30_000) return false
-  redisInitAttemptedAt = Date.now()
-  try {
-    if (redis.status !== "ready") {
-      await redis.connect()
-    }
-    redisReady = true
-    return true
-  } catch {
-    redisReady = false
-    return false
-  }
-}
+const ensureRedis = async () => Boolean(env.REDIS_URL) && isRedisReady()
 
 const now = () => Date.now()
 
@@ -81,7 +56,7 @@ export const getProductCache = async <T>(
 ): Promise<{ value: T; ageMs: number } | null> => {
   if (await ensureRedis()) {
     try {
-      const value = await redis.get(key)
+      const value = await withRedisTimeout(redis.get(key))
       if (!value) return null
       const parsed = parseEnvelope<T>(value)
       if (!parsed) return null
@@ -103,7 +78,8 @@ export const setProductCache = async (key: string, value: unknown, ttlMs: number
   }
   if (await ensureRedis()) {
     try {
-      await redis.set(key, JSON.stringify(envelope), "PX", ttlMs)
+      await withRedisTimeout(redis.set(key, JSON.stringify(envelope), "PX", ttlMs))
+      writeMemory(key, envelope)
       return
     } catch {
       writeMemory(key, envelope)
@@ -123,9 +99,9 @@ export const invalidateProductCache = async () => {
   memoryStore.clear()
   if (await ensureRedis()) {
     try {
-      const keys = await redis.keys(`${PRODUCT_CACHE_PREFIX}:*`)
+      const keys = await withRedisTimeout(redis.keys(`${PRODUCT_CACHE_PREFIX}:*`))
       if (keys.length) {
-        await redis.del(...keys)
+        await withRedisTimeout(redis.del(...keys))
       }
     } catch {
       // no-op: cache invalidation should not break writes

@@ -17,7 +17,10 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import {
   AlertTriangle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ExternalLink,
+  Loader2,
   Percent,
   Eye,
   Image as ImageIcon,
@@ -38,6 +41,7 @@ import { toast } from "@/lib/toast"
 import { useMasterValues } from "@/hooks/useMasterData"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isVideoUrl } from "@/lib/media-utils"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 type Mode = "list" | "add" | "edit" | "view"
 
@@ -107,15 +111,6 @@ type ProductDetail = {
   updatedAt?: string | Date | null
   priceUpdatedAt?: string | Date | null
 }
-
-const ViewField = ({ label, value, className = "" }: { label: string; value: React.ReactNode; className?: string }) => (
-  <div className={`flex flex-col gap-1 rounded-lg w-full border border-[#D9D9D1] bg-[#FDFDFD] px-3 py-2 text-sm ${className}`}>
-    <span className="text-[10px] font-bold uppercase text-[#646464]">{label}</span>
-    <div className="font-medium text-[#2A1810] break-words">
-      {value || <span className="text-gray-400 italic">No data</span>}
-    </div>
-  </div>
-)
 
 type CategoryRow = { id: string; name: string }
 type Tags = { id: string; name: string; slug?: string | null; isActive?: boolean }
@@ -240,6 +235,12 @@ const parseWeight = (w: string | null | undefined) => {
 };
 
 /** Sale price for a variant: MRP minus its discount % only while product discount is enabled. */
+const withSingleDefault = <T extends { isDefault: boolean }>(list: T[]): T[] => {
+  if (list.length === 0) return list
+  const defaultIdx = Math.max(0, list.findIndex((v) => v.isDefault))
+  return list.map((v, i) => (v.isDefault === (i === defaultIdx) ? v : { ...v, isDefault: i === defaultIdx }))
+}
+
 const variantSalePrice = (
   v: { mrp: string; discountPercent: string; price: string },
   discountEnabled: boolean,
@@ -249,20 +250,6 @@ const variantSalePrice = (
   const disc = discountEnabled ? Math.min(Math.max(parseFloat(v.discountPercent) || 0, 0), 100) : 0
   return Number((mrp - (mrp * disc) / 100).toFixed(2))
 }
-
-const Card = ({ title, children }: any) => (
-  <div className="bg-white rounded-2xl p-4 border border-[#E5E5DC] shadow-sm">
-    <p className="font-semibold mb-3 text-[#4A1D1F]">{title}</p>
-    <div className="space-y-2 text-sm">{children}</div>
-  </div>
-)
-
-const Info = ({ label, value }: any) => (
-  <div className="flex justify-between">
-    <span className="text-gray-500">{label}</span>
-    <span className="font-medium text-[#2A1810]">{value || "—"}</span>
-  </div>
-)
 
 const ReviewRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
   <div className="grid grid-cols-[140px_12px_1fr] items-start gap-1 py-1 text-sm">
@@ -280,12 +267,14 @@ const ReviewSectionHeader = ({
   subtitle,
   missing,
   onEdit,
+  readOnly = false,
 }: {
   icon: React.ReactNode
   title: string
   subtitle: string
   missing: string[]
   onEdit: () => void
+  readOnly?: boolean
 }) => (
   <div className="mb-3 flex items-start justify-between gap-3">
     <div className="flex items-start gap-2.5">
@@ -300,7 +289,7 @@ const ReviewSectionHeader = ({
             >
               {missing.length} missing
             </span>
-          ) : (
+          ) : readOnly ? null : (
             <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-semibold text-green-700">
               <Check className="h-3 w-3" />
               Complete
@@ -310,21 +299,17 @@ const ReviewSectionHeader = ({
         <p className="mt-0.5 text-[11px] text-[#646464]">{subtitle}</p>
       </div>
     </div>
-    <button
-      type="button"
-      onClick={onEdit}
-      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[#E8DCC8] bg-[#FFF7EA] px-3 py-1.5 text-[11px] font-semibold text-[#7B3010] hover:bg-[#FFEFD6]"
-    >
-      <Pencil className="h-3 w-3" />
-      Edit
-    </button>
+    {readOnly ? null : (
+      <button
+        type="button"
+        onClick={onEdit}
+        className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-[#E8DCC8] bg-[#FFF7EA] px-3 py-1.5 text-[11px] font-semibold text-[#7B3010] hover:bg-[#FFEFD6]"
+      >
+        <Pencil className="h-3 w-3" />
+        Edit
+      </button>
+    )}
   </div>
-)
-
-const Badge = ({ label }: any) => (
-  <span className="text-xs bg-[#F5F1E6] px-2 py-1 rounded-full border capitalize">
-    {label}
-  </span>
 )
 
 const Field = ({
@@ -565,6 +550,7 @@ export function ProductConsolePage({
   const [categories, setCategories] = useState<CategoryRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [productLoaded, setProductLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [uploadingThumbnails, setUploadingThumbnails] = useState(false)
   const [uploadingGallery, setUploadingGallery] = useState(false)
@@ -582,6 +568,7 @@ export function ProductConsolePage({
   const [selectedFeatureDefinitionIds, setSelectedFeatureDefinitionIds] = useState<string[]>([])
   const [currentStep, setCurrentStep] = useState<ProductFormStepId>(() => readStepFromLocation())
   const [reviewConfirmed, setReviewConfirmed] = useState(false)
+  const [mediaViewerIndex, setMediaViewerIndex] = useState<number | null>(null)
   const [pendingProductId] = useState(() => resolveOrCreatePendingProductId())
   const [editHydrated, setEditHydrated] = useState(mode !== "edit")
   const currentStepRef = useRef<ProductFormStepId>(currentStep)
@@ -662,17 +649,12 @@ export function ProductConsolePage({
   const [filterPreparationType, setFilterPreparationType] = useState<"all" | "ready_to_eat" | "ready_to_cook">("all")
   const [filterStockStatus, setFilterStockStatus] = useState<"all" | "in_stock" | "out_of_stock">("all")
   const [filterFoodType, setFilterFoodType] = useState<"all" | "veg" | "non-veg">("all")
-  const [filterType, setFilterType] = useState<"all" | "simple" | "variant">("all")
+  const [filterType, setFilterType] = useState<"all" | "single" | "multiple">("all")
   const [sortPrice, setSortPrice] = useState<"" | "low_to_high" | "high_to_low">("")
   const [listPage, setListPage] = useState(1)
   const [openDetailSections, setOpenDetailSections] = useState<string[]>([])
   const productWeightMasterQuery = useMasterValues("PRODUCT_WEIGHT")
   const weightOptions = fallbackWeightOptions
-
-  const orderedSections = useMemo(
-    () => [...sections].sort((a, b) => a.sortOrder - b.sortOrder),
-    [sections],
-  )
 
   const resetFilters = () => {
     setSearchQuery("")
@@ -730,7 +712,10 @@ export function ProductConsolePage({
 
     // Apply type filter
     if (filterType !== 'all') {
-      result = result.filter(p => p.type === filterType)
+      result = result.filter((p) => {
+        const isMulti = (p.variants?.length ?? 0) > 1
+        return filterType === "multiple" ? isMulti : !isMulti
+      })
     }
 
     // Apply category filter
@@ -780,6 +765,14 @@ export function ProductConsolePage({
   const listEnd = Math.min(currentListPage * LIST_PAGE_SIZE, filteredRows.length)
 
   const basePath = adminView ? "/admin/products" : "/admin/products"
+
+  const goToEditStep = (step: ProductFormStepId) => {
+    if (mode === "view") {
+      if (productId) router.push(`${basePath}/${productId}/edit?step=${step}`)
+      return
+    }
+    setCurrentStep(step)
+  }
 
   const loadList = useCallback(() => {
     setLoading(true)
@@ -885,7 +878,7 @@ export function ProductConsolePage({
       const loadedVariants = p.variants ?? []
       setVariants(
         loadedVariants.length
-          ? loadedVariants.map((item, idx) => ({
+          ? withSingleDefault(loadedVariants.map((item, idx) => ({
             id: item.id,
             name: item.weight ?? item.name ?? `Variant ${idx + 1}`,
             weight: item.weight ?? item.name ?? "",
@@ -894,12 +887,12 @@ export function ProductConsolePage({
             mrp: item.mrp != null ? String(Number(item.mrp)) : "",
             discountPercent: item.discountPercent != null ? String(Number(item.discountPercent)) : "",
             stock: String(item.stock ?? 0),
-            isDefault: Boolean(item.isDefault) || idx === 0,
+            isDefault: Boolean(item.isDefault),
             hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
             eanCode: String(item.eanCode ?? item.ean_code ?? ""),
             updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
             priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
-          }))
+          })))
           : [{
             name: p.weight || "250g",
             weight: p.weight || "250g",
@@ -961,6 +954,7 @@ export function ProductConsolePage({
         setDiscountEndDate("")
         setDiscountStackable(false)
       }
+      setProductLoaded(true)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load product")
     } finally {
@@ -985,12 +979,21 @@ export function ProductConsolePage({
   }, [mode, productId])
 
   useEffect(() => {
-    if (mode === "list" || mode === "add") {
+    if (mode === "list" || (mode === "add" && catalog === "combos")) {
       if (catalog === "combos") {
         void loadCombos()
       } else {
         loadList()
       }
+    }
+    if (mode === "add" && catalog !== "combos") {
+      Promise.all([
+        authedFetch<CategoryRow[]>("/api/v1/categories").catch(() => []),
+        authedFetch<Tags[]>("/api/v1/tags").catch(() => []),
+      ]).then(([cats, tagRows]) => {
+        setCategories(cats.filter((c) => Boolean(c.id)))
+        setTags(tagRows.filter((t) => t.isActive !== false || foodTypeOfTag(t)))
+      })
     }
     if (mode === "edit" || mode === "view") void loadEdit()
     if (mode === "add") {
@@ -1081,7 +1084,7 @@ export function ProductConsolePage({
 
   const payload = useMemo(() => {
     const sourceVariants = variantMode === "single" ? variants.slice(0, 1) : variants
-    const normalizedVariants = sourceVariants
+    const normalizedVariants = withSingleDefault(sourceVariants
       .map((v, idx) => ({
         id: v.id,
         name: (v.weight || v.name || `Variant ${idx + 1}`).trim(),
@@ -1095,10 +1098,7 @@ export function ProductConsolePage({
         hsnCode: v.hsnCode.trim() || null,
         eanCode: v.eanCode.trim() || null,
       }))
-      .filter((v) => v.name && v.sku)
-    if (normalizedVariants.length > 0 && !normalizedVariants.some((v) => v.isDefault)) {
-      normalizedVariants[0].isDefault = true
-    }
+      .filter((v) => v.name && v.sku))
     const defaultVariant = normalizedVariants.find((v) => v.isDefault) ?? normalizedVariants[0]
     const parsedPrice =
       type === "variant"
@@ -1312,7 +1312,7 @@ export function ProductConsolePage({
     const tempSku = draftSkuSeedRef.current
 
     const source = variantModeRef.current === "single" ? variantsRef.current.slice(0, 1) : variantsRef.current
-    const softVariants = source
+    let softVariants = source
       .map((v, idx) => {
         const weight = (v.weight || v.name || "").trim()
         const touched =
@@ -1356,9 +1356,7 @@ export function ProductConsolePage({
       eanCode: string | null
     }>
 
-    if (softVariants.length > 0 && !softVariants.some((v) => v.isDefault)) {
-      softVariants[0].isDefault = true
-    }
+    softVariants = withSingleDefault(softVariants)
 
     let type: "simple" | "variant" = base.type
     let variants = softVariants
@@ -1393,9 +1391,24 @@ export function ProductConsolePage({
     }
   }, [])
 
+  // Autosave only while creating a product (including its draft continued on /edit after the first autosave);
+  // editing an existing product saves only when the admin clicks Save Draft / Publish.
+  const [autosaveEnabled, setAutosaveEnabled] = useState(mode === "add")
+  useEffect(() => {
+    if (mode === "add") {
+      setAutosaveEnabled(true)
+      return
+    }
+    if (mode === "edit" && productId) {
+      setAutosaveEnabled(window.sessionStorage.getItem(ADD_DRAFT_ID_KEY)?.trim() === productId)
+      return
+    }
+    setAutosaveEnabled(false)
+  }, [mode, productId])
+
   const flushAutosaveDraft = useCallback(
     async (opts?: { keepalive?: boolean; navigateToEdit?: boolean }) => {
-      if (mode !== "add" && mode !== "edit") return
+      if (!autosaveEnabled) return
       if (mode === "edit" && !editHydrated) return
       if (skipAutosaveRef.current) return
       if (!hasDraftWorthyContent()) return
@@ -1495,7 +1508,7 @@ export function ProductConsolePage({
       autosaveLockRef.current = pending
       await pending
     },
-    [buildSoftDraftPayload, editHydrated, hasDraftWorthyContent, mode, productId, router],
+    [autosaveEnabled, buildSoftDraftPayload, editHydrated, hasDraftWorthyContent, mode, productId, router],
   )
 
   // When form changes after a save, mark draft as not yet saved again.
@@ -1519,7 +1532,7 @@ export function ProductConsolePage({
 
   // Debounced autosave while filling fields on every step.
   useEffect(() => {
-    if (mode !== "add" && mode !== "edit") return
+    if (!autosaveEnabled) return
     if (mode === "edit" && !editHydrated) return
     if (skipAutosaveRef.current) return
     if (!hasDraftWorthyContent()) return
@@ -1527,11 +1540,11 @@ export function ProductConsolePage({
       void flushAutosaveDraft()
     }, 1200)
     return () => window.clearTimeout(timer)
-  }, [editHydrated, flushAutosaveDraft, hasDraftWorthyContent, mode, payload])
+  }, [autosaveEnabled, editHydrated, flushAutosaveDraft, hasDraftWorthyContent, mode, payload])
 
   // Flush instantly when leaving the page / switching tabs / closing.
   useEffect(() => {
-    if (mode !== "add" && mode !== "edit") return
+    if (!autosaveEnabled) return
     if (mode === "edit" && !editHydrated) return
 
     const onHidden = () => {
@@ -1554,11 +1567,11 @@ export function ProductConsolePage({
         void flushAutosaveDraft({ keepalive: true, navigateToEdit: false })
       }
     }
-  }, [editHydrated, flushAutosaveDraft, mode])
+  }, [autosaveEnabled, editHydrated, flushAutosaveDraft, mode])
 
   // Intercept in-app link navigation away from product form.
   useEffect(() => {
-    if (mode !== "add" && mode !== "edit") return
+    if (!autosaveEnabled) return
 
     const onClickCapture = (event: MouseEvent) => {
       if (event.defaultPrevented) return
@@ -1590,7 +1603,7 @@ export function ProductConsolePage({
 
     document.addEventListener("click", onClickCapture, true)
     return () => document.removeEventListener("click", onClickCapture, true)
-  }, [flushAutosaveDraft, hasDraftWorthyContent, mode, router])
+  }, [autosaveEnabled, flushAutosaveDraft, hasDraftWorthyContent, mode, router])
 
   const onSubmit = async (e: React.FormEvent, statusOverride?: (typeof statuses)[number]) => {
     e.preventDefault()
@@ -2179,14 +2192,14 @@ export function ProductConsolePage({
               </SelectContent>
             </Select>
 
-            <Select value={filterType} onValueChange={(value) => setFilterType(value as "all" | "simple" | "variant")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Product Type" />
+            <Select value={filterType} onValueChange={(value) => setFilterType(value as "all" | "single" | "multiple")}>
+              <SelectTrigger className="w-44 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
+                <SelectValue placeholder="All Variant Types" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="simple">Simple</SelectItem>
-                <SelectItem value="variant">Variant</SelectItem>
+                <SelectItem value="all">All Variant Types</SelectItem>
+                <SelectItem value="single">Single Variant</SelectItem>
+                <SelectItem value="multiple">Multi Variant</SelectItem>
               </SelectContent>
             </Select>
 
@@ -2268,7 +2281,7 @@ export function ProductConsolePage({
         {loading && <p className="text-sm text-[#646464]">Loading...</p>}
         {!loading && (
           <>
-          <ConsoleTable headers={["S.No", "Product", "SKU", "Stock Available", "Status", "Sale Price", "Created", "Actions"]}>
+          <ConsoleTable headers={["S.No", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}>
             {filteredRows.length === 0 ? (
               <tr>
                 <ConsoleTd colSpan={8} className="py-8 text-center text-[#646464]">
@@ -2281,13 +2294,16 @@ export function ProductConsolePage({
                   <ConsoleTd className="align-middle w-14 text-[#646464]">
                     {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
                   </ConsoleTd>
+                  <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
+                    {formatCreatedAt(p.createdAt)}
+                  </ConsoleTd>
+                  <ConsoleTd className="align-middle">
+                    <code className="text-[11px]">{p.sku}</code>
+                  </ConsoleTd>
                   <ConsoleTd className="align-middle">
                     <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
                       {p.name}
                     </Link>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <code className="text-[11px]">{p.sku}</code>
                   </ConsoleTd>
                   <ConsoleTd className="align-middle">
                     <span className="text-[12px] font-semibold text-[#2A1810]">
@@ -2296,20 +2312,6 @@ export function ProductConsolePage({
                         : Number(p.totalStock ?? 0)}
                     </span>
                   </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <Select value={rowStatus[p.id] ?? p.status} onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs w-auto capitalize" size="sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statuses.map((s) => (
-                          <SelectItem key={s} value={s}>
-                            {s}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </ConsoleTd>
                   <ConsoleTd className="align-middle font-semibold text-[11px]">
                     {p.type === "variant"
                       ? p.variants?.map(v => `Rs.${Number(v.price).toFixed(2)}`).join(", ") || "—"
@@ -2317,8 +2319,19 @@ export function ProductConsolePage({
                         ? `Rs.${Number(p.price).toFixed(2)}`
                         : "—"}
                   </ConsoleTd>
-                  <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
-                    {formatCreatedAt(p.createdAt)}
+                  <ConsoleTd className="align-middle">
+                    <Select value={rowStatus[p.id] ?? p.status} onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}>
+                      <SelectTrigger className="w-[112px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs capitalize" size="sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {(p.status === "draft" ? (["draft", "published"] as const) : (["published", "archived"] as const)).map((s) => (
+                          <SelectItem key={s} value={s} className="capitalize">
+                            {s}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </ConsoleTd>
                   <ConsoleTd className="align-middle">
                     <div className="flex flex-wrap items-center gap-2">
@@ -2392,7 +2405,7 @@ export function ProductConsolePage({
           </Link>
           <h1 className="mt-2 font-melon text-2xl font-bold text-[#4A1D1F]">
             {mode === "view"
-              ? "View product"
+              ? "Product Details"
               : mode === "edit"
                 ? currentStep === 5
                   ? "Review & Publish"
@@ -2402,7 +2415,7 @@ export function ProductConsolePage({
                   : "Add Product"}
           </h1>
           {mode === "view" ? (
-            <div className="space-y-0.5">
+            <div className={`space-y-0.5 ${productLoaded ? "" : "invisible"}`}>
               <p className="text-sm text-[#646464]">Last updated: {formatUpdatedAt(updatedAt)}</p>
               <p className="text-sm text-[#646464]">Last price update: {formatUpdatedAt(priceUpdatedAt)}</p>
             </div>
@@ -2412,28 +2425,15 @@ export function ProductConsolePage({
             </p>
           ) : (
             <p className="text-sm text-[#646464]">
-              Add product details to list it on Ziply5. Progress is auto-saved as a draft if you leave this page.
+              {autosaveEnabled
+                ? "Add product details to list it on Ziply5. Progress is auto-saved as a draft if you leave this page."
+                : "Edit product details. Changes are saved only when you click Save Draft or Publish."}
             </p>
           )}
         </div>
         {mode !== "view" ? (
           <div className="flex flex-wrap gap-2">
-            {currentStep === 5 ? (
-              <Link
-                href={slug ? `/product/${encodeURIComponent(slug)}` : "#"}
-                target={slug ? "_blank" : undefined}
-                rel={slug ? "noopener noreferrer" : undefined}
-                onClick={(e) => {
-                  if (!slug) e.preventDefault()
-                }}
-                className={`inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase text-[#4A1D1F] ${
-                  slug ? "hover:bg-[#FFF7EA]" : "pointer-events-none opacity-50"
-                }`}
-              >
-                View on Store
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Link>
-            ) : (
+            {currentStep === 5 ? null : (
               <>
                 <Button
                   type="button"
@@ -2472,9 +2472,29 @@ export function ProductConsolePage({
             )}
           </div>
         ) : (
-          <Link href={basePath} className="text-xs font-semibold uppercase text-[#7B3010] underline">
-            Back to list
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={slug ? `/product/${encodeURIComponent(slug)}` : "#"}
+              target={slug ? "_blank" : undefined}
+              rel={slug ? "noopener noreferrer" : undefined}
+              onClick={(e) => {
+                if (!slug) e.preventDefault()
+              }}
+              className={`inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase text-[#4A1D1F] ${
+                slug ? "hover:bg-[#FFF7EA]" : "pointer-events-none opacity-50"
+              }`}
+            >
+              View on Store
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
+            <Link
+              href={productId ? `${basePath}/${productId}/edit?step=1` : basePath}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold uppercase text-white hover:bg-[#6A280D]"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              Edit Product
+            </Link>
+          </div>
         )}
       </div>
       {mode !== "view" && (
@@ -2491,140 +2511,19 @@ export function ProductConsolePage({
 
       {mode === "view" && error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
       {mode !== "view" && error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
-      {loading && (mode === "edit" || mode === "view") && <p className="text-sm text-[#646464]">Loading product...</p>}
+      {loading && mode === "edit" && <p className="text-sm text-[#646464]">Loading product...</p>}
 
+      {mode === "view" && !productLoaded ? (
+        loading ? (
+          <div className="flex min-h-[320px] flex-col items-center justify-center gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 text-sm text-[#646464] shadow-sm">
+            <Loader2 className="h-7 w-7 animate-spin text-[#7B3010]" />
+            Loading product details...
+          </div>
+        ) : null
+      ) : (
       <form onSubmit={onSubmit} className="flex flex-col gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
         {/* Product info, images and description and seo meta data */}
-        {mode === "view" ?
-          // product info for view mode
-          (
-            <div className="space-y-6 w-full md:col-span-3">
-
-              {/* 🔥 TOP SECTION */}
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Basic Info */}
-                <div className="bg-white rounded-2xl p-4 border border-[#E5E5DC] space-y-3 shadow-sm">
-                  <div className="flex justify-between items-center ">
-                    <h2 className="text-xl font-bold text-[#4A1D1F]">{name}</h2>
-
-                    {type === "simple" && (
-                      <div className="flex items-center gap-3">
-                        {simpleProductWeight && <span className="text-sm text-gray-600">Weight: {simpleProductWeight}</span>}
-                        <span className="text-lg font-semibold text-green-600">
-                          ₹{price}
-                        </span>
-                        {basePrice && (
-                          <span className="line-through text-gray-400">
-                            ₹{basePrice}
-                          </span>
-                        )}
-                        {discountPercent && (
-                          <span className="text-sm bg-green-100 text-green-700 px-2 py-1 rounded">
-                            {discountPercent}% OFF
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {type === "simple" && (
-                    <div className="text-sm text-gray-600">
-                      SKU: {sku}
-                    </div>
-                  )}
-
-                  <div className="flex gap-2 flex-wrap">
-                    <Badge label={foodType} />
-                    <Badge label={status} />
-                    <Badge label={type} />
-                    {preparationType ? <Badge label={preparationType.replace(/_/g, " ")} /> : null}
-                    {spiceLevel ? <Badge label={`Spice Level: ${spiceLevel.replace(/_/g, " ")}`} /> : null}
-                  </div>
-
-                  <p className="text-sm text-gray-600">
-                    Category: {categories.find((c) => c.id === categoryId)?.name || "—"}
-                  </p>
-                </div>
-
-                {/* 💰 PRICING (Only for Simple) */}
-                {type === "simple" && (
-                  <Card title="Pricing">
-                    <Info label="Sale Price" value={`₹${price}`} />
-                    <Info label="MRP" value={basePrice ? `₹${basePrice}` : "—"} />
-                    <Info label="Discount" value={discountPercent ? `${discountPercent}%` : "—"} />
-                  </Card>
-                )}
-
-                <Card title="Inventory">
-                  <Info label={type === "variant" ? "Total Stock" : "Stock"} value={totalStock} />
-                  <Info label="Stock Status" value={stockStatus} />
-                  <Info label="Shelf Life" value={shelfLife ? `${shelfLife} months` : "—"} />
-                  <Info label="Last Updated" value={formatUpdatedAt(updatedAt)} />
-                  <Info label="Last Price Update" value={formatUpdatedAt(priceUpdatedAt)} />
-                </Card>
-
-                {/* 🧾 META */}
-                <Card title="SEO & Metadata">
-                  <Info label="Slug" value={slug} />
-                  <Info label="Meta Title" value={metaTitle} />
-                  <Info label="Meta Description" value={metaDescription} />
-                </Card>
-              </div>
-
-              {/* 📋 VARIANTS SECTION */}
-              {type === "variant" && (
-                <div className="bg-white rounded-2xl p-4 border border-[#E5E5DC] shadow-sm">
-                  <p className="font-semibold mb-3 text-[#4A1D1F]">Product Variants</p>
-                  <ConsoleTable headers={["Weight", "SKU", "Sale Price", "MRP", "Discount", "Stock", "Default", "Last updated", "Last price update"]}>
-                    {variants.map((v, idx) => (
-                      <tr key={`${v.id}-${idx}`} className="hover:bg-[#FFFBF3]/50">
-                        <ConsoleTd>{v.weight || v.name}</ConsoleTd>
-                        <ConsoleTd><code className="text-[11px]">{v.sku}</code></ConsoleTd>
-                        <ConsoleTd className="font-semibold text-green-600">₹{Number(v.price).toFixed(2)}</ConsoleTd>
-                        <ConsoleTd className="text-gray-400 line-through">
-                          {v.mrp ? `₹${Number(v.mrp).toFixed(2)}` : "—"}
-                        </ConsoleTd>
-                        <ConsoleTd>
-                          {v.discountPercent ? (
-                            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
-                              {v.discountPercent}%
-                            </span>
-                          ) : "—"}
-                        </ConsoleTd>
-                        <ConsoleTd>{v.stock}</ConsoleTd>
-                        <ConsoleTd>
-                          {v.isDefault ? (
-                            <span className="text-[10px] bg-[#FFC222] text-[#4A1D1F] px-2 py-0.5 rounded-full font-bold uppercase">Default</span>
-                          ) : "—"}
-                        </ConsoleTd>
-                        <ConsoleTd className="whitespace-nowrap text-[12px] text-[#646464]">
-                          {formatUpdatedAt(v.updatedAt)}
-                        </ConsoleTd>
-                        <ConsoleTd className="whitespace-nowrap text-[12px] text-[#646464]">
-                          {formatUpdatedAt(v.priceUpdatedAt)}
-                        </ConsoleTd>
-                      </tr>
-                    ))}
-                  </ConsoleTable>
-                </div>
-              )}
-
-              {/* 📝 DESCRIPTION */}
-              <Card title="Description">
-                {description && !isEmptyRichText(description) ? (
-                  <div
-                    className="prose prose-sm max-w-none text-sm text-gray-700 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5"
-                    dangerouslySetInnerHTML={{ __html: description }}
-                  />
-                ) : (
-                  <p className="text-sm text-gray-400 italic">No description</p>
-                )}
-              </Card>
-
-            </div>
-          )
-          :
-          //  product info for edit and add mode
-          (
+        {mode === "view" ? null : (
             <>
             <div className={`space-y-4 ${currentStep === 1 ? "" : "hidden"}`}>
               <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-5">
@@ -2968,7 +2867,7 @@ export function ProductConsolePage({
                   </div>
 
                   <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
-                    <table className="min-w-[1080px] w-full border-collapse text-left text-sm">
+                    <table className="min-w-[1140px] w-full border-collapse text-left text-sm">
                       <thead>
                         <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[10px] font-semibold uppercase tracking-wide text-[#646464]">
                           <th className="px-2 py-2.5">#</th>
@@ -3017,6 +2916,7 @@ export function ProductConsolePage({
                             </span>
                           </th>
                           <th className="px-2 py-2.5 text-center">Default</th>
+                          <th className="px-2 py-2.5 text-center">Remove</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -3190,6 +3090,32 @@ export function ProductConsolePage({
                                   title="Set as default variant"
                                 />
                               </td>
+                              <td className="px-2 py-2 align-middle text-center">
+                                <button
+                                  type="button"
+                                  disabled={variantMode === "single" || variants.length <= 1}
+                                  onClick={() => {
+                                    const label = variant.weight || `Variant ${idx + 1}`
+                                    if (!window.confirm(`Remove variant "${label}"?`)) return
+                                    setVariants((prev) => {
+                                      const next = prev.filter((_, i) => i !== idx)
+                                      if (next.length > 0 && !next.some((x) => x.isDefault)) {
+                                        next[0] = { ...next[0], isDefault: true }
+                                      }
+                                      return next
+                                    })
+                                  }}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#F0C7C7] text-[#B44444] transition hover:bg-[#FFF5F5] disabled:cursor-not-allowed disabled:border-[#E8E8E2] disabled:text-[#BDBDB5] disabled:hover:bg-transparent"
+                                  title={
+                                    variantMode === "single" || variants.length <= 1
+                                      ? "At least one variant is required"
+                                      : "Remove this variant"
+                                  }
+                                  aria-label={`Remove variant ${idx + 1}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </td>
                             </tr>
                           )
                         })}
@@ -3242,7 +3168,7 @@ export function ProductConsolePage({
             </>
           )}
         {/* Product Specifications and Details */}
-        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode === "view" || currentStep === 2 ? "" : "hidden"}`}>
+        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Product Details</p>
             {mode !== "view" ? (
@@ -3261,33 +3187,6 @@ export function ProductConsolePage({
               </button>
             ) : null}
           </div>
-          {mode === "view" ? (
-            <Accordion type="single" collapsible className="space-y-2">
-              {orderedSections.map((section, idx) => {
-                const subtitle = stripHtmlText(section.description)
-                return (
-                <AccordionItem
-                  key={`${section.id ?? "new"}-${idx}`}
-                  value={`section-${section.id ?? idx}`}
-                  className={section.isActive ? "rounded-lg border opacity-70 border-[#D9D9D1] bg-[#FFFBF3]" : "rounded-lg border border-[#D9D9D1] bg-[#FFFBF3] opacity-60"}
-                >
-                  <AccordionTrigger className="px-3 py-4">
-                    <div className="min-w-0 flex-1 pr-3 text-left">
-                      <p className="truncate font-semibold text-sm text-[#2A1810]">
-                        {idx + 1}. {section.title || "Untitled section"}
-                      </p>
-                      <p className="mt-0.5 truncate text-[11px] font-normal normal-case tracking-normal text-[#646464]">
-                        {subtitle || "No description"}
-                      </p>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className={section.isActive ? "px-3" : "px-3 opacity-60"}>
-                    <div className="rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm" dangerouslySetInnerHTML={{ __html: section.description }} />
-                  </AccordionContent>
-                </AccordionItem>
-              )})}
-            </Accordion>
-          ) : (
             <Accordion
               type="multiple"
               value={openDetailSections}
@@ -3400,7 +3299,6 @@ export function ProductConsolePage({
                 )
               })}
             </Accordion>
-          )}
           <p className="text-[11px] text-[#646464]">
             {status === "draft"
               ? `Draft products can save partial details. At least 2 sections are required to publish.`
@@ -3408,7 +3306,7 @@ export function ProductConsolePage({
           </p>
         </div>
         {/* Product Features (from shared catalog) */}
-        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode === "view" || currentStep === 2 ? "" : "hidden"}`}>
+        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
           <div className="flex items-center justify-between gap-3">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Product Features</p>
@@ -3469,65 +3367,23 @@ export function ProductConsolePage({
             </div>
           )}
         </div>
-        {/* Badge Fields */}
-        <div className={`md:col-span-3 flex flex-wrap gap-4 text-xs uppercase ${mode === "view" ? "" : "hidden"}`}>
-          {mode !== "view" ?
-            (
-              <>
-                <label className="flex items-center gap-2">
-                  <Checkbox checked={taxIncluded} onCheckedChange={(checked) => setTaxIncluded(!!checked)} /> tax included
-                </label>
-                <label className="flex items-center gap-2">
-                  <Checkbox checked={isActive} onCheckedChange={(checked) => setIsActive(!!checked)} /> active
-                </label>
-                {isActive ? null : (
-                  <p className="w-full text-xs text-yellow-700 bg-yellow-50 rounded-lg border border-yellow-200 px-3 py-2">
-                    Inactive products are not visible on the website until activated.
-                  </p>
-                )}
-                <label className="flex items-center gap-2">
-                  <Checkbox checked={allowReturn} onCheckedChange={(checked) => setAllowReturn(!!checked)} /> allow return
-                </label>
-              </>
-            ) : (
-              <div className="flex gap-2 w-full">
-                <ViewField label="Tax Included" value={taxIncluded ? "Yes" : "No"} />
-                <ViewField label="Active" value={isActive ? "Yes" : "No"} />
-              </div>
-            )}
-        </div>
-        {/* Images */}
-        {mode === "view" && (
-          <div className="bg-white md:col-span-3 rounded-2xl p-4 border border-[#E5E5DC] shadow-sm w-full justify-center flex flex-col text-start items-center">
-            <div className="w-full"> <p className="font-semibold mb-3 text-[#4A1D1F]">Product Images</p></div>
-
-            <div className="flex flex-wrap gap-4">
-              {[...thumbnailUrls, ...imageUrls].map((url, idx) => (
-                <img
-                  key={idx}
-                  src={url}
-                  className="h-40 w-auto object-cover rounded-lg border"
-                />
-              ))}
-            </div>
-          </div>
-        )}
-        {/* Step 5 — Review & Publish */}
-        {mode !== "view" && currentStep === 5 ? (
+        {/* Step 5 — Review & Publish (also used as the read-only product view) */}
+        {mode === "view" || currentStep === 5 ? (
           <div className="md:col-span-3 space-y-4">
             {reviewMissingCount > 0 ? (
               <div className="flex items-start gap-3 rounded-xl border border-[#F0C7C7] bg-[#FFF5F5] px-4 py-3">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B44444]" />
                 <div className="space-y-1 text-sm text-[#8A2E2E]">
                   <p className="font-semibold">
-                    {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing. Complete them before publishing.
+                    {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing.{" "}
+                    {mode === "view" ? "Use Edit to complete them." : "Complete them before publishing."}
                   </p>
                   {([1, 2, 3, 4] as const).map((stepId) =>
                     reviewMissing[stepId].length ? (
                       <p key={stepId} className="text-xs">
                         <button
                           type="button"
-                          onClick={() => setCurrentStep(stepId)}
+                          onClick={() => goToEditStep(stepId)}
                           className="font-semibold underline underline-offset-2"
                         >
                           Step {stepId}
@@ -3538,7 +3394,7 @@ export function ProductConsolePage({
                   )}
                 </div>
               </div>
-            ) : (
+            ) : mode === "view" ? null : (
               <div className="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
                 <Check className="h-4 w-4 shrink-0" />
                 All required details are filled. Review below and publish when ready.
@@ -3552,7 +3408,8 @@ export function ProductConsolePage({
                 title="Basic Information"
                 subtitle="Core details about your product."
                 missing={reviewMissing[1]}
-                onEdit={() => setCurrentStep(1)}
+                readOnly={mode === "view"}
+                onEdit={() => goToEditStep(1)}
               />
               <div className="grid gap-x-10 md:grid-cols-2">
                 <div>
@@ -3583,8 +3440,8 @@ export function ProductConsolePage({
                       <ReviewMissing />
                     )}
                   </ReviewRow>
-                  <ReviewRow label="Weight Options">
-                    {variantMode === "multiple" ? "Multiple Variants" : "Single Variant"}
+                  <ReviewRow label="Variant Type">
+                    {variantMode === "multiple" ? "Multi Variant" : "Single Variant"}
                   </ReviewRow>
                   <ReviewRow label="Created On">{createdAt ? formatUpdatedAt(createdAt) : "—"}</ReviewRow>
                   <ReviewRow label="Status">
@@ -3614,7 +3471,8 @@ export function ProductConsolePage({
                 title="Media & Content"
                 subtitle="Product images and description."
                 missing={reviewMissing[2]}
-                onEdit={() => setCurrentStep(2)}
+                readOnly={mode === "view"}
+                onEdit={() => goToEditStep(2)}
               />
               {(() => {
                 const mediaUrls = uniq([...thumbnailUrls, ...imageUrls].filter(Boolean))
@@ -3630,10 +3488,13 @@ export function ProductConsolePage({
                     <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
                       <div className="flex flex-wrap gap-2">
                         {preview.length ? (
-                          preview.map((url) => (
-                            <div
+                          preview.map((url, idx) => (
+                            <button
+                              type="button"
                               key={url}
-                              className="relative h-20 w-20 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF3]"
+                              onClick={() => setMediaViewerIndex(idx)}
+                              title="View media"
+                              className="relative h-20 w-20 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] transition hover:ring-2 hover:ring-[#7B3010]/40"
                             >
                               {isVideoUrl(url) ? (
                                 <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
@@ -3643,18 +3504,109 @@ export function ProductConsolePage({
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img src={url} alt="" className="h-full w-full object-cover" />
                               )}
-                            </div>
+                            </button>
                           ))
                         ) : (
                           <p className="text-sm italic text-[#B44444]">No media uploaded yet.</p>
                         )}
                         {extra > 0 ? (
-                          <div className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border border-[#E8DCC8] bg-[#F5F1E6] text-[#4A1D1F]">
+                          <button
+                            type="button"
+                            onClick={() => setMediaViewerIndex(preview.length)}
+                            title="View more media"
+                            className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border border-[#E8DCC8] bg-[#F5F1E6] text-[#4A1D1F] transition hover:bg-[#FFEFD6]"
+                          >
                             <span className="text-base font-semibold">+{extra}</span>
-                            <span className="text-[10px]">More</span>
-                          </div>
+                            <span className="text-[10px]">View more</span>
+                          </button>
+                        ) : null}
+                        {mediaUrls.length ? (
+                          <button
+                            type="button"
+                            onClick={() => setMediaViewerIndex(0)}
+                            className="inline-flex h-8 items-center gap-1.5 self-center rounded-full border border-[#7B3010] px-3 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA]"
+                          >
+                            <Eye className="h-3.5 w-3.5" />
+                            View all ({mediaUrls.length})
+                          </button>
                         ) : null}
                       </div>
+                      <Dialog
+                        open={mediaViewerIndex !== null && mediaUrls.length > 0}
+                        onOpenChange={(open) => {
+                          if (!open) setMediaViewerIndex(null)
+                        }}
+                      >
+                        <DialogContent className="max-w-4xl">
+                          {(() => {
+                            const total = mediaUrls.length
+                            const current = Math.min(Math.max(mediaViewerIndex ?? 0, 0), Math.max(total - 1, 0))
+                            const url = mediaUrls[current]
+                            if (!url) return null
+                            const isThumb = thumbnailUrls.includes(url)
+                            const step = (delta: number) => setMediaViewerIndex((current + delta + total) % total)
+                            return (
+                              <div className="space-y-3">
+                                <DialogHeader>
+                                  <DialogTitle className="text-[#4A1D1F]">Product Media</DialogTitle>
+                                  <DialogDescription>
+                                    {current + 1} of {total} · {isThumb ? "Thumbnail" : "Gallery"} {isVideoUrl(url) ? "video" : "image"}
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="relative flex h-[55vh] items-center justify-center overflow-hidden rounded-xl bg-[#FFFBF3]">
+                                  {isVideoUrl(url) ? (
+                                    <video key={url} src={url} controls className="max-h-full max-w-full" />
+                                  ) : (
+                                    // eslint-disable-next-line @next/next/no-img-element
+                                    <img src={url} alt="" className="max-h-full max-w-full object-contain" />
+                                  )}
+                                  {total > 1 ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => step(-1)}
+                                        aria-label="Previous media"
+                                        className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
+                                      >
+                                        <ChevronLeft className="h-5 w-5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => step(1)}
+                                        aria-label="Next media"
+                                        className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
+                                      >
+                                        <ChevronRight className="h-5 w-5" />
+                                      </button>
+                                    </>
+                                  ) : null}
+                                </div>
+                                <div className="flex gap-2 overflow-x-auto pb-1">
+                                  {mediaUrls.map((thumbUrl, idx) => (
+                                    <button
+                                      type="button"
+                                      key={thumbUrl}
+                                      onClick={() => setMediaViewerIndex(idx)}
+                                      className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border-2 ${
+                                        idx === current ? "border-[#7B3010]" : "border-transparent opacity-70 hover:opacity-100"
+                                      }`}
+                                    >
+                                      {isVideoUrl(thumbUrl) ? (
+                                        <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
+                                          <Play className="h-4 w-4" />
+                                        </div>
+                                      ) : (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                                      )}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })()}
+                        </DialogContent>
+                      </Dialog>
                       <div>
                         <ReviewRow label="Thumbnail Images">
                           {thumbCount ? `${thumbCount} image${thumbCount === 1 ? "" : "s"}` : <ReviewMissing />}
@@ -3728,7 +3680,8 @@ export function ProductConsolePage({
                 title="Pricing & Inventory"
                 subtitle="Variants, pricing and stock details."
                 missing={reviewMissing[3]}
-                onEdit={() => setCurrentStep(3)}
+                readOnly={mode === "view"}
+                onEdit={() => goToEditStep(3)}
               />
               <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
                 <table className="min-w-[980px] w-full border-collapse text-center text-sm">
@@ -3830,7 +3783,8 @@ export function ProductConsolePage({
                 title="SEO & Channels"
                 subtitle="Search engine optimization and external links."
                 missing={reviewMissing[4]}
-                onEdit={() => setCurrentStep(4)}
+                readOnly={mode === "view"}
+                onEdit={() => goToEditStep(4)}
               />
               <div className="grid gap-6 md:grid-cols-[1.4fr_1fr]">
                 <div>
@@ -3962,6 +3916,7 @@ export function ProductConsolePage({
           </div>
         )}
       </form>
+      )}
     </section>
   )
 }

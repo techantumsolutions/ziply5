@@ -26,6 +26,8 @@ type ApiProduct = {
   id?: string
   name?: string
   slug?: string
+  status?: string
+  isActive?: boolean
   categories?: Array<{ categoryId?: string; category?: { id?: string } }>
 }
 
@@ -75,7 +77,7 @@ export default function Header() {
       const [catsRes, productsRes] = await Promise.all([
         fetch("/api/v1/categories").then((r) => r.json()).catch(() => ({ data: [] })),
         // Dropdown only needs a small subset; reduce load.
-        fetch("/api/v1/products?page=1&limit=80").then((r) => r.json()).catch(() => ({ data: { items: [] } })),
+        fetch("/api/v1/products?page=1&limit=80&status=published").then((r) => r.json()).catch(() => ({ data: { items: [] } })),
       ])
 
       const cats = ((catsRes as { data?: ApiCategory[] })?.data ?? [])
@@ -88,6 +90,7 @@ export default function Header() {
 
       const products = ((productsRes as { data?: { items?: ApiProduct[] } })?.data?.items ?? [])
         .filter((p) => p.id && p.name && p.slug)
+        .filter((p) => (p.status ?? "published") === "published" && p.isActive !== false)
 
       let grouped = cats.map((cat) => ({
         ...cat,

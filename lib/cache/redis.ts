@@ -1,4 +1,4 @@
-import { redis } from "@/src/server/db/redis"
+import { isRedisReady, redis, withRedisTimeout } from "@/src/server/db/redis"
 import { logger } from "@/lib/logger"
 
 const memoryStore = new Map<string, { value: string; expiresAt: number }>()
@@ -10,6 +10,7 @@ const metrics = {
 }
 
 const isRedisEnabled = () => process.env.REDIS_ENABLED === "true" && Boolean(process.env.REDIS_URL)
+const canUseRedis = () => isRedisEnabled() && isRedisReady()
 
 const now = () => Date.now()
 
@@ -37,10 +38,9 @@ const writeMemory = (key: string, value: unknown, ttlMs: number) => {
 
 export const cache = {
   async get<T>(key: string): Promise<T | null> {
-    if (isRedisEnabled()) {
+    if (canUseRedis()) {
       try {
-        if (redis.status !== "ready") await redis.connect()
-        const raw = await redis.get(key)
+        const raw = await withRedisTimeout(redis.get(key))
         if (!raw) {
           metrics.misses += 1
           return null
@@ -59,10 +59,9 @@ export const cache = {
   },
   async set(key: string, value: unknown, ttlMs: number) {
     metrics.sets += 1
-    if (isRedisEnabled()) {
+    if (canUseRedis()) {
       try {
-        if (redis.status !== "ready") await redis.connect()
-        await redis.set(key, JSON.stringify(value), "PX", ttlMs)
+        await withRedisTimeout(redis.set(key, JSON.stringify(value), "PX", ttlMs))
         return
       } catch (error) {
         metrics.errors += 1
@@ -72,10 +71,9 @@ export const cache = {
     writeMemory(key, value, ttlMs)
   },
   async del(key: string) {
-    if (isRedisEnabled()) {
+    if (canUseRedis()) {
       try {
-        if (redis.status !== "ready") await redis.connect()
-        await redis.del(key)
+        await withRedisTimeout(redis.del(key))
       } catch {
         // no-op
       }
@@ -84,10 +82,9 @@ export const cache = {
   },
   async delMany(keys: string[]) {
     if (!keys.length) return
-    if (isRedisEnabled()) {
+    if (canUseRedis()) {
       try {
-        if (redis.status !== "ready") await redis.connect()
-        await redis.del(...keys)
+        await withRedisTimeout(redis.del(...keys))
       } catch {
         // no-op
       }
@@ -112,4 +109,3 @@ export const withCache = async <T>(key: string, ttlMs: number, builder: () => Pr
   await cache.set(key, fresh, ttlMs)
   return fresh
 }
-
