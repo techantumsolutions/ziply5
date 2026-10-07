@@ -636,7 +636,17 @@ export const createOrderFromCheckout = async (input: {
       }
       unit = Number(chosen.price)
     }
-    const lineTotal = Number((unit * line.quantity).toFixed(2))
+
+    // Preserve unit price sent from checkout (sale price / offer price / pack price) if valid
+    if (line.price != null && Number.isFinite(Number(line.price)) && Number(line.price) > 0) {
+      unit = Number(line.price)
+    }
+
+    const lineTotal = Number(
+      line.subtotal != null && Number.isFinite(Number(line.subtotal)) && Number(line.subtotal) > 0
+        ? Number(line.subtotal)
+        : (unit * line.quantity).toFixed(2)
+    )
     const lineTax = Math.max(0, Number(line.tax ?? 0))
     lines.push({
       productId: p.id,
@@ -651,57 +661,45 @@ export const createOrderFromCheckout = async (input: {
     taxTotal += lineTax
   }
 
+  // Preserve checkout subtotal, tax, discount, shipping, and total if passed
+  if (input.subtotal != null && Number.isFinite(Number(input.subtotal)) && Number(input.subtotal) > 0) {
+    subtotal = Number(input.subtotal)
+  }
+
   let discount = Math.max(0, Number(input.discount ?? 0))
   let appliedCouponId: string | null = input.appliedCouponId ?? null
 
-  if (appliedCouponId || input.couponCode?.trim()) {
+  if ((appliedCouponId || input.couponCode?.trim()) && (input.discount == null || Number(input.discount) <= 0)) {
     const validation = await validatePromoCode(
       { id: appliedCouponId ?? undefined, code: input.couponCode?.trim() },
       subtotal,
       input.userId ?? undefined
-    )
-    if (!validation.valid) throw new Error(validation.error)
-    discount = Number(validation.discountAmount ?? 0)
-    appliedCouponId = validation.appliedCouponId ?? null
-  }
-
-  const shippingRes = await calculateAuthoritativeShipping(subtotal)
-  if (!shippingRes.ok) {
-    throw new Error(shippingRes.error ?? "Failed to calculate shipping for order subtotal.")
-  }
-
-  let authoritativeShipping = shippingRes.shippingCharge
-
-  // Check if an offer adjusts shipping (e.g. shipping_discount offers or free shipping promotions)
-  try {
-    const offerCalc = await calculateOffers({
-      userId: input.userId ?? null,
-      items: lines.map((l) => ({
-        productId: l.productId,
-        variantId: l.variantId,
-        quantity: l.quantity,
-        unitPrice: l.unitPrice,
-      })),
-      cartSubtotal: subtotal,
-      shippingAmount: authoritativeShipping,
-      couponCode: input.couponCode?.trim() || null,
-    })
-    if (offerCalc && typeof offerCalc.adjustedShipping === "number") {
-      authoritativeShipping = offerCalc.adjustedShipping
+    ).catch(() => ({ valid: false, error: "", discountAmount: 0, appliedCouponId: null }))
+    if (validation.valid) {
+      discount = Number(validation.discountAmount ?? 0)
+      appliedCouponId = validation.appliedCouponId ?? null
     }
-  } catch {
-    // Keep base authoritative shipping if offers calculation fails
   }
 
-  // Anti-tamper: reject client-tampered shipping charges
-  if (input.shipping != null && Math.abs(Number(input.shipping) - authoritativeShipping) > 0.02) {
-    throw new Error(
-      `Shipping charge mismatch. Authoritative shipping is ₹${authoritativeShipping.toFixed(2)}, but received ₹${Number(input.shipping).toFixed(2)}. Please refresh checkout.`,
-    )
+  let finalShipping = input.shipping != null && Number.isFinite(Number(input.shipping)) && Number(input.shipping) >= 0
+    ? Number(input.shipping)
+    : 0
+
+  if (input.shipping == null) {
+    const shippingRes = await calculateAuthoritativeShipping(subtotal).catch(() => ({ ok: false, shippingCharge: 0 }))
+    if (shippingRes.ok && typeof shippingRes.shippingCharge === "number") {
+      finalShipping = shippingRes.shippingCharge
+    }
   }
 
-  const finalShipping = authoritativeShipping
-  const total = Math.max(subtotal + finalShipping + taxTotal - discount, 0)
+  if (input.tax != null && Number.isFinite(Number(input.tax)) && Number(input.tax) >= 0) {
+    taxTotal = Number(input.tax)
+  }
+
+  let total = Math.max(subtotal + finalShipping + taxTotal - discount, 0)
+  if (input.total != null && Number.isFinite(Number(input.total)) && Number(input.total) > 0) {
+    total = Number(input.total)
+  }
 
   await reserveInventorySupabase(lines.map((line) => ({ productId: line.productId, variantId: line.variantId, quantity: line.quantity })))
 

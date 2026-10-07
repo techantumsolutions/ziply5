@@ -227,7 +227,7 @@ function PaymentPageInner() {
           subtotal: snap?.subtotal ?? subTotalInner,
           discount: snap?.discount ?? 0,
           tax: snap?.tax ?? 0,
-          total: snap?.total ?? calculatedTotalInner,
+          total: payableAmount ?? snap?.total ?? calculatedTotalInner,
           savingAmount: snap?.savingAmount ?? 0,
           couponCode:
             snap?.coupon?.code ||
