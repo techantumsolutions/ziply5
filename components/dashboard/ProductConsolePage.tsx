@@ -3789,14 +3789,41 @@ export function ProductConsolePage({
                         </ReviewRow>
                         <ReviewRow label="Detail Sections">
                           {filledSections.length ? (
-                            <ul className="space-y-0.5">
-                              {filledSections.map((s, idx) => (
-                                <li key={`${s.id ?? "sec"}-${idx}`} className="text-sm">
-                                  {idx + 1}. {s.title.trim() || "Untitled section"}
-                                  {!s.isActive ? <span className="ml-1 text-[11px] text-[#8A8A82]">(hidden)</span> : null}
-                                </li>
-                              ))}
-                            </ul>
+                            <Accordion type="single" collapsible className="mt-1 space-y-2 border-0">
+                              {filledSections.map((s, idx) => {
+                                const itemVal = `sec-${idx}`
+                                const hasDesc = !isEmptyRichText(s.description)
+                                return (
+                                  <AccordionItem
+                                    key={`${s.id ?? "sec"}-${idx}`}
+                                    value={itemVal}
+                                    className="rounded-xl border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-1 text-sm shadow-2xs"
+                                  >
+                                    <AccordionTrigger className="py-1.5 text-xs font-semibold text-[#2A1810] hover:no-underline">
+                                      <div className="flex items-center gap-1.5 text-left">
+                                        <span>{idx + 1}.</span>
+                                        <span>{s.title.trim() || "Untitled section"}</span>
+                                        {!s.isActive ? (
+                                          <span className="ml-1 rounded bg-[#F0F0EC] px-1.5 py-0.5 text-[10px] font-normal text-[#8A8A82]">
+                                            hidden
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </AccordionTrigger>
+                                    <AccordionContent className="border-t border-[#EFE3D5] pb-2.5 pt-2 text-xs text-[#4A1D1F]">
+                                      {hasDesc ? (
+                                        <div
+                                          className="prose prose-xs max-w-none font-normal leading-relaxed text-[#2A1810] [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:mb-1 [&_ul]:list-disc [&_ul]:pl-4"
+                                          dangerouslySetInnerHTML={{ __html: s.description }}
+                                        />
+                                      ) : (
+                                        <span className="italic text-[#8A8A82]">No description provided</span>
+                                      )}
+                                    </AccordionContent>
+                                  </AccordionItem>
+                                )
+                              })}
+                            </Accordion>
                           ) : (
                             "—"
                           )}
