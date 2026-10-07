@@ -864,12 +864,14 @@ const updateProductFromPg = async (
             String(match.weight ?? "") !== String(incoming.weight ?? "") ||
             String(match.sku ?? "") !== incoming.sku ||
             !sameMoney(match.stock, incoming.stock ?? 0) ||
-            Boolean(match.isDefault) !== Boolean(incoming.isDefault)
+            Boolean(match.isDefault) !== Boolean(incoming.isDefault) ||
+            String(match.hsnCode ?? match.hsn_code ?? "") !== String(incoming.hsnCode ?? "") ||
+            String(match.eanCode ?? match.ean_code ?? "") !== String(incoming.eanCode ?? "")
           if (!anyChanged) continue
           if (priceChanged) stampPrice = true
           await client.query(
             `UPDATE "ProductVariant"
-             SET name = $2, weight = $3, sku = $4, price = $5, mrp = $6, "discountPercent" = $7, stock = $8, "isDefault" = $9, "updatedAt" = $10,
+             SET name = $2, weight = $3, sku = $4, price = $5, mrp = $6, "discountPercent" = $7, stock = $8, "isDefault" = $9, "hsnCode" = $12, "eanCode" = $13, "updatedAt" = $10,
                  "priceUpdatedAt" = CASE WHEN $11 THEN $10 ELSE "priceUpdatedAt" END
              WHERE id = $1`,
             [
@@ -884,14 +886,16 @@ const updateProductFromPg = async (
               Boolean(incoming.isDefault),
               now,
               priceChanged,
+              incoming.hsnCode ?? null,
+              incoming.eanCode ?? null,
             ],
           )
           continue
         }
         stampPrice = true
         await client.query(
-          `INSERT INTO "ProductVariant" (id, "productId", name, weight, sku, price, mrp, "discountPercent", stock, "isDefault", "createdAt", "updatedAt", "priceUpdatedAt")
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $11)`,
+          `INSERT INTO "ProductVariant" (id, "productId", name, weight, sku, price, mrp, "discountPercent", stock, "isDefault", "hsnCode", "eanCode", "createdAt", "updatedAt", "priceUpdatedAt")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13)`,
           [
             crypto.randomUUID(),
             id,
@@ -903,6 +907,8 @@ const updateProductFromPg = async (
             incoming.discountPercent ?? null,
             incoming.stock ?? 0,
             Boolean(incoming.isDefault),
+            incoming.hsnCode ?? null,
+            incoming.eanCode ?? null,
             now,
           ],
         )

@@ -81,9 +81,17 @@ type ProductDetail = {
   allowReturn?: boolean
   thumbnail?: string | null
   videoUrl?: string | null
-  metaTitle?: string | null
-  metaDescription?: string | null
-  categories?: Array<{ categoryId: string }>
+  categoryId?: string | null
+  category_id?: string | null
+  category?: { id?: string; name?: string; slug?: string } | null
+  categories?: Array<{
+    categoryId?: string
+    category_id?: string
+    id?: string
+    name?: string
+    slug?: string
+    category?: { id?: string; name?: string; slug?: string }
+  }>
   tags?: Array<{ tag: { name: string; id: string; slug?: string | null } }>
   variants?: Array<{
     id?: string
@@ -138,7 +146,7 @@ const MAX_SECTIONS = 10
 const MAX_PRODUCT_FEATURES = 5
 const MAX_IMAGE_BYTES = 1 * 1024 * 1024
 const MAX_VIDEO_BYTES = 10 * 1024 * 1024
-const DESCRIPTION_MAX_CHARS = 250
+const DESCRIPTION_MAX_CHARS = 350
 const LIST_PAGE_SIZE = 10
 const ADD_PENDING_ID_KEY = "ziply5:product-add-pending-id"
 const ADD_DRAFT_ID_KEY = "ziply5:product-add-draft-id"
@@ -259,9 +267,9 @@ const variantSalePrice = (
 }
 
 const ReviewRow = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <div className="grid grid-cols-[140px_12px_1fr] items-start gap-1 py-1 text-sm">
-    <span className="text-[#646464]">{label}</span>
-    <span className="text-[#8A8A82]">:</span>
+  <div className="grid grid-cols-[140px_12px_minmax(0,1fr)] items-start gap-1 py-1 text-sm">
+    <span className="shrink-0 text-[#646464]">{label}</span>
+    <span className="shrink-0 text-[#8A8A82]">:</span>
     <div className="min-w-0 break-words font-medium text-[#2A1810]">{children}</div>
   </div>
 )
@@ -543,6 +551,88 @@ const ImageUploadPicker = ({
   )
 }
 
+const resolveProductCategoryId = (p: any, availableCategories: CategoryRow[] = []): string => {
+  if (!p) return ""
+
+  let foundId = ""
+
+  // 1. Direct categoryId/category_id on product
+  if (typeof p.categoryId === "string" && p.categoryId.trim()) {
+    foundId = p.categoryId.trim()
+  } else if (typeof p.category_id === "string" && p.category_id.trim()) {
+    foundId = p.category_id.trim()
+  } else if (typeof p.category === "string" && p.category.trim()) {
+    foundId = p.category.trim()
+  } else if (p.category && typeof p.category.id === "string" && p.category.id.trim()) {
+    foundId = p.category.id.trim()
+  }
+
+  // 2. Categories array on product
+  if (!foundId) {
+    const cats = Array.isArray(p.categories)
+      ? p.categories
+      : Array.isArray(p.productCategories)
+        ? p.productCategories
+        : []
+    for (const c of cats) {
+      if (typeof c === "string" && c.trim()) {
+        foundId = c.trim()
+        break
+      }
+      if (c && typeof c === "object") {
+        if (typeof c.categoryId === "string" && c.categoryId.trim()) {
+          foundId = c.categoryId.trim()
+          break
+        }
+        if (typeof c.category_id === "string" && c.category_id.trim()) {
+          foundId = c.category_id.trim()
+          break
+        }
+        if (c.category && typeof c.category.id === "string" && c.category.id.trim()) {
+          foundId = c.category.id.trim()
+          break
+        }
+        if (typeof c.id === "string" && c.id.trim()) {
+          foundId = c.id.trim()
+          break
+        }
+      }
+    }
+  }
+
+  // If foundId matches a category ID directly in availableCategories, return it
+  if (foundId && availableCategories.some((ac) => ac.id === foundId)) {
+    return foundId
+  }
+
+  // 3. Fallback: match by slug or name if foundId is a slug/name or if product has category slug/name
+  if (availableCategories.length > 0) {
+    const slugOrNameCandidates = [
+      foundId,
+      typeof p.categorySlug === "string" ? p.categorySlug : null,
+      typeof p.category_slug === "string" ? p.category_slug : null,
+      typeof p.categoryName === "string" ? p.categoryName : null,
+      typeof p.category_name === "string" ? p.category_name : null,
+      p.category?.slug,
+      p.category?.name,
+      p.categories?.[0]?.slug,
+      p.categories?.[0]?.name,
+      p.categories?.[0]?.category?.slug,
+      p.categories?.[0]?.category?.name,
+    ].filter((val): val is string => typeof val === "string" && Boolean(val.trim()))
+
+    for (const candidate of slugOrNameCandidates) {
+      const target = candidate.trim().toLowerCase()
+      const matched = availableCategories.find(
+        (ac) => ac.id === candidate.trim() || ac.slug.toLowerCase() === target || ac.name.toLowerCase() === target,
+      )
+      if (matched) return matched.id
+    }
+  }
+
+  return foundId
+}
+
 export function ProductConsolePage({
   adminView,
   mode,
@@ -727,7 +817,7 @@ export function ProductConsolePage({
 
     // Apply category filter
     if (filterCategory !== 'all') {
-      result = result.filter(p => p.categories?.some(c => c.categoryId === filterCategory))
+      result = result.filter(p => resolveProductCategoryId(p, categories) === filterCategory)
     }
 
     // Apply preparation type filter
@@ -779,6 +869,34 @@ export function ProductConsolePage({
       return
     }
     setCurrentStep(step)
+  }
+
+  const handleNextStep = () => {
+    if (currentStep === 1 && (!name.trim() || !slug.trim())) {
+      setError("Name and slug are required before continuing")
+      return
+    }
+    if (currentStep === 2) {
+      if (isEmptyRichText(description)) {
+        setError("Description is mandatory")
+        return
+      }
+      if (stripHtmlText(description).length > DESCRIPTION_MAX_CHARS) {
+        setError(`Description must be ${DESCRIPTION_MAX_CHARS} characters or less`)
+        return
+      }
+      if (selectedFeatureDefinitionIds.length === 0) {
+        setError("At least 1 product feature is mandatory")
+        return
+      }
+      const filledSections = sections.filter((s) => s.title.trim() && !isEmptyRichText(s.description))
+      if (filledSections.length === 0) {
+        setError("At least 1 detail section with title and description is mandatory")
+        return
+      }
+    }
+    setError("")
+    setCurrentStep((prev) => Math.min(5, (prev + 1) as ProductFormStepId) as ProductFormStepId)
   }
 
   const loadList = useCallback(() => {
@@ -871,7 +989,7 @@ export function ProductConsolePage({
         }
         setSelectedFeatureDefinitionIds([...byId].slice(0, MAX_PRODUCT_FEATURES))
       }
-      setCategoryId(p.categories?.[0]?.categoryId ?? "")
+      setCategoryId(resolveProductCategoryId(p, cats))
       const productTags = (p.tags ?? []).map((x) => x.tag).filter(Boolean)
       setSelectedTagIds(
         productTags.filter((t) => !foodTypeOfTag(t)).map((t) => t.id).filter(Boolean).slice(0, 1),
@@ -891,10 +1009,10 @@ export function ProductConsolePage({
             weight: item.weight ?? item.name ?? "",
             sku: item.sku ?? "",
             price: String(Number(item.price ?? 0)),
-            mrp: item.mrp != null ? String(Number(item.mrp)) : "",
-            discountPercent: item.discountPercent != null ? String(Number(item.discountPercent)) : "",
+            mrp: item.mrp != null ? String(Number(item.mrp)) : ((item as any).mrp_code != null ? String(Number((item as any).mrp_code)) : ""),
+            discountPercent: item.discountPercent != null ? String(Number(item.discountPercent)) : ((item as any).discount_percent != null ? String(Number((item as any).discount_percent)) : ""),
             stock: String(item.stock ?? 0),
-            isDefault: Boolean(item.isDefault),
+            isDefault: Boolean(item.isDefault ?? (item as any).is_default),
             hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
             eanCode: String(item.eanCode ?? item.ean_code ?? ""),
             updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
@@ -1092,20 +1210,24 @@ export function ProductConsolePage({
   const payload = useMemo(() => {
     const sourceVariants = variantMode === "single" ? variants.slice(0, 1) : variants
     const normalizedVariants = withSingleDefault(sourceVariants
-      .map((v, idx) => ({
-        id: v.id,
-        name: (v.weight || v.name || `Variant ${idx + 1}`).trim(),
-        weight: (v.weight || v.name || "").trim(),
-        sku: v.sku.trim(),
-        price: variantSalePrice(v, discountEnabled),
-        mrp: toNumOrNull(v.mrp),
-        discountPercent: toNumOrNull(v.discountPercent),
-        stock: Math.max(0, Number(v.stock || 0)),
-        isDefault: Boolean(v.isDefault),
-        hsnCode: v.hsnCode.trim() || null,
-        eanCode: v.eanCode.trim() || null,
-      }))
-      .filter((v) => v.name && v.sku))
+      .map((v, idx) => {
+        const weight = (v.weight || v.name || `Variant ${idx + 1}`).trim()
+        const skuVal = v.sku.trim() || `${slug.trim() || "variant"}-${idx + 1}`.toUpperCase()
+        return {
+          id: v.id,
+          name: weight,
+          weight: (v.weight || v.name || "").trim(),
+          sku: skuVal,
+          price: variantSalePrice(v, discountEnabled),
+          mrp: toNumOrNull(v.mrp),
+          discountPercent: toNumOrNull(v.discountPercent),
+          stock: Math.max(0, Number(v.stock || 0)),
+          isDefault: Boolean(v.isDefault),
+          hsnCode: v.hsnCode.trim() || null,
+          eanCode: v.eanCode.trim() || null,
+        }
+      })
+      .filter((v) => v.name))
     const defaultVariant = normalizedVariants.find((v) => v.isDefault) ?? normalizedVariants[0]
     const parsedPrice =
       type === "variant"
@@ -1242,7 +1364,10 @@ export function ProductConsolePage({
     const step2: string[] = []
     if (!thumbnailUrls.some(Boolean)) step2.push("Thumbnail image")
     if (isEmptyRichText(description)) step2.push("Description")
-    if (selectedFeatureDefinitionIds.length === 0) step2.push("Product features")
+    else if (stripHtmlText(description).length > DESCRIPTION_MAX_CHARS) step2.push(`Description (exceeds ${DESCRIPTION_MAX_CHARS} chars)`)
+    if (selectedFeatureDefinitionIds.length === 0) step2.push("Product features (at least 1 feature required)")
+    const filledSections = sections.filter((s) => s.title.trim() && !isEmptyRichText(s.description))
+    if (filledSections.length === 0) step2.push("Product details (at least 1 title & description required)")
 
     const step3: string[] = []
     const reviewVariants = variantMode === "single" ? variants.slice(0, 1) : variants
@@ -1255,13 +1380,11 @@ export function ProductConsolePage({
       if (gaps.length) step3.push(`Variant ${idx + 1}: ${gaps.join(", ")}`)
     })
     const step4: string[] = []
-    if (!metaTitle.trim()) step4.push("Meta title")
-    if (!metaDescription.trim()) step4.push("Meta description")
 
     return { 1: step1, 2: step2, 3: step3, 4: step4 } as Record<1 | 2 | 3 | 4, string[]>
   }, [
     name, slug, categoryId, foodType, spiceLevel, shelfLife, thumbnailUrls, description,
-    selectedFeatureDefinitionIds, variantMode, variants, discountEnabled, metaTitle, metaDescription,
+    selectedFeatureDefinitionIds, sections, variantMode, variants, discountEnabled,
   ])
   const reviewMissingCount = Object.values(reviewMissing).reduce((n, list) => n + list.length, 0)
 
@@ -2463,14 +2586,7 @@ export function ProductConsolePage({
                 </Button>
                 <Button
                   type="button"
-                  onClick={() => {
-                    if (currentStep === 1 && (!name.trim() || !slug.trim())) {
-                      setError("Name and slug are required before continuing")
-                      return
-                    }
-                    setError("")
-                    setCurrentStep((prev) => Math.min(5, (prev + 1) as ProductFormStepId) as ProductFormStepId)
-                  }}
+                  onClick={handleNextStep}
                   className="rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white"
                 >
                   Next Step →
@@ -3163,21 +3279,31 @@ export function ProductConsolePage({
                   </div>
                 </div>
               <div className={currentStep === 2 ? "" : "hidden"}>
-              <Field label="Description" required={status !== "draft"}>
+              <Field label="Description" required info="Description is mandatory (maximum 350 characters)">
                 <RichTextEditor
                   value={description}
                   onChange={setDescription}
-                  placeholder="Enter product description"
+                  placeholder="Enter product description (mandatory, max 350 characters)"
                   maxLength={DESCRIPTION_MAX_CHARS}
                   compact
                 />
+                <p className="mt-1 text-[11px] text-[#646464]">
+                  {stripHtmlText(description).length} / {DESCRIPTION_MAX_CHARS} characters (Mandatory field)
+                </p>
               </Field></div>
             </>
           )}
         {/* Product Specifications and Details */}
         <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
           <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Product Details</p>
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
+                Product Details <span className="text-red-500">*</span>
+              </p>
+              <p className="text-[11px] text-[#646464]">
+                At least 1 detail section with title and description is mandatory.
+              </p>
+            </div>
             {mode !== "view" ? (
               <button
                 type="button"
@@ -3308,17 +3434,19 @@ export function ProductConsolePage({
             </Accordion>
           <p className="text-[11px] text-[#646464]">
             {status === "draft"
-              ? `Draft products can save partial details. At least 2 sections are required to publish.`
-              : `Up to ${MAX_SECTIONS} sections. Title and description are required.`}
+              ? `Draft products can save partial details. At least 1 section with title and description is required to publish.`
+              : `Up to ${MAX_SECTIONS} sections. At least 1 section with title and description is mandatory.`}
           </p>
         </div>
         {/* Product Features (from shared catalog) */}
         <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">Product Features</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
+                Product Features <span className="text-red-500">*</span>
+              </p>
               <p className="mt-1 text-[11px] text-[#646464]">
-                Select up to {MAX_PRODUCT_FEATURES} features from Settings → Product Features.
+                Select at least 1 feature (up to {MAX_PRODUCT_FEATURES}) from Settings → Product Features.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -3418,8 +3546,8 @@ export function ProductConsolePage({
                 readOnly={mode === "view"}
                 onEdit={() => goToEditStep(1)}
               />
-              <div className="grid gap-x-10 md:grid-cols-2">
-                <div>
+              <div className="grid gap-x-10 gap-y-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                <div className="min-w-0">
                   <ReviewRow label="Product Name">{name.trim() || <ReviewMissing />}</ReviewRow>
                   <ReviewRow label="Category">
                     {categories.find((c) => c.id === categoryId)?.name || <ReviewMissing />}
@@ -3432,7 +3560,7 @@ export function ProductConsolePage({
                     {spiceLevel ? <span className="capitalize">{spiceLevel.replace(/_/g, " ")}</span> : <ReviewMissing />}
                   </ReviewRow>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <ReviewRow label="Food Type">
                     {foodType === "veg" ? (
                       <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-800">
@@ -3793,8 +3921,8 @@ export function ProductConsolePage({
                 readOnly={mode === "view"}
                 onEdit={() => goToEditStep(4)}
               />
-              <div className="grid gap-6 md:grid-cols-[1.4fr_1fr]">
-                <div>
+              <div className="grid gap-6 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+                <div className="min-w-0 space-y-1">
                   <ReviewRow label="Meta Title">{metaTitle.trim() || <ReviewMissing />}</ReviewRow>
                   <ReviewRow label="Meta Description">
                     {metaDescription.trim() ? (
@@ -3809,24 +3937,26 @@ export function ProductConsolePage({
                     </span>
                   </ReviewRow>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <p className="mb-2 text-xs font-semibold text-[#4A1D1F]">External Marketplace Links</p>
-                  <div className="flex items-center gap-3 rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm">
+                  <div className="flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-2 text-sm">
                     <span className="w-24 shrink-0 font-medium text-[#2A1810]">Amazon Link</span>
-                    <span className="text-[#8A8A82]">:</span>
-                    {amazonLink.trim() ? (
-                      <a
-                        href={amazonLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="min-w-0 truncate text-[#7B3010] hover:underline"
-                        title={amazonLink}
-                      >
-                        {amazonLink}
-                      </a>
-                    ) : (
-                      <span className="text-[#8A8A82]">Not added</span>
-                    )}
+                    <span className="shrink-0 text-[#8A8A82]">:</span>
+                    <div className="min-w-0 flex-1 truncate">
+                      {amazonLink.trim() ? (
+                        <a
+                          href={amazonLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="block truncate text-[#7B3010] hover:underline"
+                          title={amazonLink}
+                        >
+                          {amazonLink}
+                        </a>
+                      ) : (
+                        <span className="text-[#8A8A82]">Not added</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3885,14 +4015,7 @@ export function ProductConsolePage({
               {currentStep < 5 ? (
                 <Button
                   type="button"
-                  onClick={() => {
-                    if (currentStep === 1 && (!name.trim() || !slug.trim())) {
-                      setError("Name and slug are required before continuing")
-                      return
-                    }
-                    setError("")
-                    setCurrentStep((prev) => Math.min(5, (prev + 1) as ProductFormStepId) as ProductFormStepId)
-                  }}
+                  onClick={handleNextStep}
                   className="rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white"
                 >
                   Next Step →
