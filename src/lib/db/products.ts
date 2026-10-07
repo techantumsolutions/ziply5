@@ -276,7 +276,7 @@ const syncProductVariants = async (productId: string, incoming: Array<Record<str
         priceUpdatedAt: now,
       }),
       withId({
-        ...payload,
+        ...Object.fromEntries(Object.entries(payload).map(([k, v]) => [camelToSnake(k), v])),
         product_id: productId,
         created_at: now,
         updated_at: now,
@@ -676,7 +676,7 @@ export const createProductSupabase = async (input: {
         priceUpdatedAt: now,
       }),
       withId({
-        ...v,
+        ...Object.fromEntries(Object.entries(v).map(([k, val]) => [camelToSnake(k), val])),
         product_id: productId,
         created_at: now,
         updated_at: now,

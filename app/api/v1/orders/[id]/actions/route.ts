@@ -11,6 +11,7 @@ import {
   updateOrderStatus,
 } from "@/src/server/modules/orders/orders.service"
 import {
+  cancelAdminOrderWithShiprocket,
   cancelCustomerOrderWithShiprocketGate,
   OrderCancellationError,
 } from "@/src/server/modules/orders/order-cancellation.service"
@@ -33,6 +34,7 @@ const schema = z.object({
     "reject_return",
     "trigger_refund",
     "retry_refund",
+    "admin_cancel",
   ]),
   reason: z.string().max(500).optional(),
   amount: z.number().positive().optional(),
@@ -134,6 +136,38 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
 
     if (!isAdmin) return fail("Forbidden", 403)
+
+    if (parsed.data.action === "admin_cancel") {
+      const result = await cancelAdminOrderWithShiprocket({
+        orderId: order.id,
+        actorId: auth.user.sub,
+        reasonCode: "admin_cancelled",
+        note: parsed.data.reason ?? "Admin cancelled order",
+      })
+
+      const paymentStatus = normalizePaymentStatus(order.paymentStatus)
+      const paymentMethod = String(order.paymentMethod ?? "").toLowerCase()
+
+      let refundMsg = ""
+      if (paymentStatus === "SUCCESS" && paymentMethod !== "cod") {
+        try {
+          const amount = parsed.data.amount ?? Number(order.total)
+          const refund = await createRefund(order.id, amount, "Order cancelled by admin")
+          await triggerRazorpayRefund({ refundRecordId: refund.id }).catch(() => null)
+          refundMsg = " and refund initiated"
+        } catch (rErr) {
+          console.error("[admin_cancel] refund notice:", rErr)
+          refundMsg = " (check refund details)"
+        }
+      }
+
+      let message = "Order cancelled successfully" + refundMsg
+      if (result.shiprocketError) {
+        message += `. Shiprocket notice: ${result.shiprocketError}`
+      }
+
+      return ok(result, message)
+    }
 
     if (parsed.data.action === "approve_order") {
       if (lifecycleStatus !== "admin_approval_pending") {

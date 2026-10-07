@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useLocations } from "@/hooks/useLocations";
 import { getCartItems, type CartItem, setCartItems, validateCartItems } from "@/lib/cart";
 import { useStorefrontProducts } from "@/hooks/useStorefrontProducts";
+import { toast } from "@/lib/toast";
 import {
   Select,
   SelectContent,

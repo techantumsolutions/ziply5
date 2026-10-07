@@ -11,6 +11,7 @@ import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibili
 import { updateOrderStatus } from "@/src/server/modules/orders/orders.service"
 import { env } from "@/src/server/core/config/env"
 import { logger } from "@/lib/logger"
+import { getSupabaseAdmin } from "@/src/lib/supabase/admin"
 
 const supabase = () => getSupabaseAdmin()
 const normalizeSlug = (slug: string) => slug.trim().toLowerCase().replace(/\s+/g, "-")

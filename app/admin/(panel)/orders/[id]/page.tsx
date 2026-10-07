@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { Download, Loader2 } from "lucide-react"
+import { AlertTriangle, Ban, Download, Loader2, XCircle } from "lucide-react"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
+import { toast } from "@/lib/toast"
 
 type OrderDetail = {
   id: string
@@ -60,6 +61,8 @@ export default function AdminOrderDetailPage() {
   const [shiprocketBusy, setShiprocketBusy] = useState<string | null>(null)
   const [serviceabilitySummary, setServiceabilitySummary] = useState<string>("")
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
+  const [showCancelModal, setShowCancelModal] = useState(false)
+  const [cancelReason, setCancelReason] = useState("")
   const lifecycleStatus = (order?.statusHistory?.[0]?.toStatus ?? order?.status ?? "").toLowerCase()
   const refundStatus = (order?.refunds?.[0]?.status ?? "pending").toLowerCase()
 
@@ -91,19 +94,34 @@ export default function AdminOrderDetailPage() {
   }, [params.id])
 
   const runAction = async (
-    action: "approve_order" | "reject_order" | "approve_cancel" | "reject_cancel" | "approve_return" | "reject_return" | "trigger_refund" | "retry_refund",
+    action:
+      | "approve_order"
+      | "reject_order"
+      | "approve_cancel"
+      | "reject_cancel"
+      | "approve_return"
+      | "reject_return"
+      | "trigger_refund"
+      | "retry_refund"
+      | "admin_cancel",
+    reasonArg?: string,
   ) => {
     if (!params.id) return
     setActionBusy(action)
     setError("")
     try {
-      await authedFetch(`/api/v1/orders/${params.id}/actions`, {
+      const res = await authedFetch<{ message?: string }>(`/api/v1/orders/${params.id}/actions`, {
         method: "POST",
-        body: JSON.stringify({ action }),
+        body: JSON.stringify({ action, reason: reasonArg }),
       })
+      toast.success(res?.message || "Order updated successfully")
+      setShowCancelModal(false)
+      setCancelReason("")
       await loadOrder()
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action failed")
+      const msg = e instanceof Error ? e.message : "Action failed"
+      setError(msg)
+      toast.error(msg)
     } finally {
       setActionBusy(null)
     }
@@ -183,11 +201,20 @@ export default function AdminOrderDetailPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {order?.status !== "cancelled" && (
+            <Button
+              className="bg-red-600 text-white hover:bg-red-700 font-semibold"
+              onClick={() => setShowCancelModal(true)}
+              disabled={actionBusy === "admin_cancel"}
+            >
+              <Ban className="mr-1.5 h-4 w-4" />
+              Cancel Order
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => void handleDownloadInvoice()}
             disabled={!order || downloadingInvoice}
-            
           >
             {downloadingInvoice ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -513,10 +540,80 @@ export default function AdminOrderDetailPage() {
                   </Button>
                 </>
               )}
+              {order.status !== "cancelled" && (
+                <Button
+                  className="bg-red-600 text-white hover:bg-red-700 font-semibold"
+                  disabled={actionBusy === "admin_cancel"}
+                  onClick={() => setShowCancelModal(true)}
+                >
+                  <Ban className="mr-1.5 h-4 w-4" />
+                  {actionBusy === "admin_cancel" ? "Cancelling..." : "Cancel Order (Admin)"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
       ) : null}
+
+      {/* CANCEL ORDER MODAL */}
+      {showCancelModal && order && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-[#E8DCC8] space-y-4 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5 text-red-600">
+                <AlertTriangle className="h-6 w-6" />
+                <h3 className="text-lg font-bold text-[#4A1D1F]">Cancel Order</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="h-5 w-5" />
+              </button>
+            </div>
+            <p className="text-sm text-[#646464]">
+              Are you sure you want to cancel order <span className="font-semibold text-[#2A1810]">#{order.id.slice(0, 8)}</span>?
+              This will update the order status to <span className="font-semibold text-red-600">cancelled</span> in Ziply5 and cancel the order on Shiprocket as well.
+            </p>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] mb-1">
+                Reason for Cancellation (Optional)
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Enter cancellation reason..."
+                rows={3}
+                className="w-full rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+              />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowCancelModal(false)}
+                disabled={actionBusy === "admin_cancel"}
+              >
+                Keep Order
+              </Button>
+              <Button
+                className="bg-red-600 text-white hover:bg-red-700 font-semibold"
+                disabled={actionBusy === "admin_cancel"}
+                onClick={() => void runAction("admin_cancel", cancelReason.trim() || "Cancelled by admin")}
+              >
+                {actionBusy === "admin_cancel" ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Cancelling...
+                  </>
+                ) : (
+                  "Confirm Cancel"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
