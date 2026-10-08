@@ -184,14 +184,14 @@ export default function AdminBulkProductUploadPage() {
   }, [effectiveType, progressStep])
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
+    <div className="w-full space-y-6 p-6">
       <div>
         <Link href="/admin/products" className="text-sm text-[#646464] hover:text-[#4A1D1F]">
           ← Back to products
         </Link>
         <h1 className="font-melon mt-2 text-2xl font-bold text-[#4A1D1F]">Bulk product upload</h1>
         <p className="mt-1 text-sm text-[#646464]">
-          Import simple or variant products from Excel with images in a ZIP. Existing product forms and APIs are unchanged.
+          Import Single Variant Product or Multi Variant Product from Excel with images in a ZIP. Existing product forms and APIs are unchanged.
         </p>
       </div>
 
@@ -221,7 +221,7 @@ export default function AdminBulkProductUploadPage() {
           <DialogHeader className="pr-8">
             <DialogTitle className="font-melon text-[#4A1D1F]">Select product upload type</DialogTitle>
             <DialogDescription>
-              Simple products have no variants. Variant products use two sheets (parent + variants).
+              Single Variant Product has no additional variants. Multi Variant Product uses two sheets (parent + variants).
             </DialogDescription>
           </DialogHeader>
           <RadioGroup
@@ -243,9 +243,9 @@ export default function AdminBulkProductUploadPage() {
               />
               <div>
                 <Label htmlFor="ut-simple" className="cursor-pointer font-medium text-[#4A1D1F]">
-                  Simple products
+                  Single Variant Product
                 </Label>
-                <p className="text-xs text-[#646464]">Single SKU per row, no variants.</p>
+                <p className="text-xs text-[#646464]">Single SKU per row, no additional variants.</p>
               </div>
             </label>
             <label
@@ -262,7 +262,7 @@ export default function AdminBulkProductUploadPage() {
               />
               <div>
                 <Label htmlFor="ut-variant" className="cursor-pointer font-medium text-[#4A1D1F]">
-                  Variant products
+                  Multi Variant Product
                 </Label>
                 <p className="text-xs text-[#646464]">Parent row plus Variants sheet (size, weight, pack, etc.).</p>
               </div>
@@ -307,7 +307,7 @@ export default function AdminBulkProductUploadPage() {
                 }
               >
                 <Download className="mr-2 h-4 w-4" />
-                Simple template
+                Single Variant Product Template
               </Button>
               <Button
                 type="button"
@@ -320,7 +320,7 @@ export default function AdminBulkProductUploadPage() {
                 }
               >
                 <Download className="mr-2 h-4 w-4" />
-                Variant template
+                Multi Variant Product Template
               </Button>
             </CardContent>
           </Card>
@@ -329,8 +329,8 @@ export default function AdminBulkProductUploadPage() {
             <CardHeader>
               <CardTitle className="font-melon text-lg text-[#4A1D1F]">Files</CardTitle>
               <CardDescription>
-                Upload type: <span className="font-medium text-[#4A1D1F]">{uploadType}</span>. Use{" "}
-                <code className="rounded bg-[#FFF4F4] px-1">.xlsx</code> (variant requires two sheets). Images can be
+                Upload type: <span className="font-medium text-[#4A1D1F]">{uploadType === "simple" ? "Single Variant Product" : "Multi Variant Product"}</span>. Use{" "}
+                <code className="rounded bg-[#FFF4F4] px-1">.xlsx</code> (Multi Variant Product requires two sheets). Images can be
                 URLs in the sheet or filenames inside the ZIP.
               </CardDescription>
             </CardHeader>

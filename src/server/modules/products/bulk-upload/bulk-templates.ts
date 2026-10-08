@@ -6,7 +6,7 @@ import {
 } from "@/src/server/modules/products/bulk-upload/bulk-upload.constants"
 
 const instructionsSimple = [
-  ["Bulk import — Simple products"],
+  ["Bulk import — Single Variant Product"],
   [""],
   ["Required columns: sku, name, slug, type (= simple), price, thumbnail."],
   ["Thumbnail / gallery: use filenames that appear in your images ZIP, or rely on {sku}-thumb.jpg and {sku}-1.jpg style names."],
@@ -19,7 +19,7 @@ const instructionsSimple = [
 ]
 
 const instructionsVariant = [
-  ["Bulk import — Variant products"],
+  ["Bulk import — Multi Variant Product"],
   [""],
   ["Sheet", VARIANT_PARENT_SHEET, "defines one row per parent product."],
   ["Sheet", VARIANT_CHILD_SHEET, "defines variants; parentSku must match a row in", VARIANT_PARENT_SHEET],

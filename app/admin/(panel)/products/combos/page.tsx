@@ -129,7 +129,7 @@ export default function AdminCombosPage() {
   }, [rows])
 
   return (
-    <section className="mx-auto max-w-400 px-2 sm:px-0">
+    <section className="w-full px-2 sm:px-0">
       {/* Top Split Container: Panel spans entire height from top */}
       <div className="flex flex-col xl:flex-row gap-4 items-start w-full">
         {/* Left Side: Header, Stats, Filters, Table, Pagination */}

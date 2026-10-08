@@ -467,6 +467,8 @@ export default function OrderDetailPage() {
             order={order}
             paymentStatus={paymentStatus}
             onDownloadInvoice={() => void downloadInvoice()}
+            onSyncOrder={() => refreshTrackingMutation.mutate()}
+            syncingOrder={refreshTrackingMutation.isPending}
             extraActions={
               <>
                 {canShowCustomerCancel && (

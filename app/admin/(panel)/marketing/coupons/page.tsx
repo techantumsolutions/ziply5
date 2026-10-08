@@ -289,7 +289,7 @@ const validateForm = () => {
 
   return (
 
-    <section className="mx-auto max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
 
       <div>
 

@@ -5,8 +5,8 @@ import { useParams, useRouter } from "next/navigation"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { AlertTriangle, Ban, Download, Loader2, XCircle } from "lucide-react"
-import { generateAdminInvoicePDF } from "@/lib/invoice"
+import { AlertTriangle, Ban, Download, Loader2, RefreshCw, XCircle } from "lucide-react"
+import { formatInvoiceNumber, generateAdminInvoicePDF } from "@/lib/invoice"
 import { toast } from "@/lib/toast"
 
 type OrderDetail = {
@@ -61,6 +61,7 @@ export default function AdminOrderDetailPage() {
   const [shiprocketBusy, setShiprocketBusy] = useState<string | null>(null)
   const [serviceabilitySummary, setServiceabilitySummary] = useState<string>("")
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
+  const [syncingOrder, setSyncingOrder] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [cancelReason, setCancelReason] = useState("")
   const lifecycleStatus = (order?.statusHistory?.[0]?.toStatus ?? order?.status ?? "").toLowerCase()
@@ -76,6 +77,23 @@ export default function AdminOrderDetailPage() {
       console.error("Failed to generate invoice PDF:", err)
     } finally {
       setDownloadingInvoice(false)
+    }
+  }
+
+  const handleSyncOrder = async () => {
+    if (!order) return
+    setSyncingOrder(true)
+    try {
+      await authedPost(`/api/v1/orders/${order.id}/shiprocket`, {
+        action: "resync_order",
+        forceResync: true,
+      })
+      toast.success("Success", "Order and shipment synced successfully")
+      await loadOrder()
+    } catch (err) {
+      toast.error("Sync Error", err instanceof Error ? err.message : "Failed to sync order")
+    } finally {
+      setSyncingOrder(false)
     }
   }
 
@@ -191,14 +209,92 @@ export default function AdminOrderDetailPage() {
     })),
   ].sort((a, b) => +new Date(b.at) - +new Date(a.at))
 
+  const getOrderStatusBadge = (status: string) => {
+    const s = status.toLowerCase().trim();
+
+    if (s === "cancelled" || s === "rejected" || s === "failed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+          {s.replaceAll("_", " ")}
+        </span>
+      );
+    }
+
+    if (s === "delivered" || s === "completed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          {s.replaceAll("_", " ")}
+        </span>
+      );
+    }
+
+    if (s === "shipped") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+          Shipped
+        </span>
+      );
+    }
+
+    if (s === "in_transit" || s === "out_for_delivery" || s === "dispatched") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+          {s.replaceAll("_", " ")}
+        </span>
+      );
+    }
+
+    if (s === "confirmed" || s === "packed" || s === "processing") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
+          {s.replaceAll("_", " ")}
+        </span>
+      );
+    }
+
+    if (s === "admin_approval_pending" || s === "approval_pending") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          Pending
+        </span>
+      );
+    }
+
+    if (s === "new" || s === "pending" || s === "pending_payment" || s === "payment_success") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+          {s === "new" ? "New Order" : s.replaceAll("_", " ")}
+        </span>
+      );
+    }
+
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 capitalize">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+        {s.replaceAll("_", " ")}
+      </span>
+    );
+  };
+
   return (
-    <section className="mx-auto max-w-7xl space-y-5 py-6">
+    <section className="w-full space-y-5 py-6">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Order details</h1>
-          <p className="text-sm text-[#646464]">
-            #{order?.id?.slice(0, 8) ?? "----"} • {order ? new Date(order.createdAt).toLocaleString() : "Loading"}
-          </p>
+          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#646464]">
+            <span>Order ID: <code className="font-mono font-bold text-[#7B3010]">{order?.id ?? "----"}</code></span>
+            <span>•</span>
+            <span>Invoice No: <code className="font-mono font-bold text-[#2A1810]">{order ? formatInvoiceNumber(order.id, order.createdAt) : "----"}</code></span>
+            <span>•</span>
+            <span>{order ? new Date(order.createdAt).toLocaleString() : "Loading"}</span>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {order?.status !== "cancelled" && (
@@ -213,13 +309,26 @@ export default function AdminOrderDetailPage() {
           )}
           <Button
             variant="outline"
+            onClick={() => void handleSyncOrder()}
+            disabled={!order || syncingOrder}
+            className="border-[#7B3010] text-[#7B3010] hover:bg-[#FFF7EA]"
+          >
+            {syncingOrder ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-1.5 h-4 w-4" />
+            )}
+            Sync Order
+          </Button>
+          <Button
+            variant="outline"
             onClick={() => void handleDownloadInvoice()}
             disabled={!order || downloadingInvoice}
           >
             {downloadingInvoice ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
             ) : (
-              <Download className="h-4 w-4" />
+              <Download className="mr-1.5 h-4 w-4" />
             )}
             Download invoice
           </Button>
@@ -239,24 +348,32 @@ export default function AdminOrderDetailPage() {
       ) : order ? (
         <div className="grid gap-5 lg:grid-cols-3">
           <div className="space-y-5 lg:col-span-2">
-            <div className="grid gap-4 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm md:grid-cols-4">
+            <div className="grid gap-4 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
+              <div>
+                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Order ID</p>
+                <code className="mt-1 block font-mono text-xs font-bold text-[#7B3010] truncate" title={order.id}>{order.id}</code>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Invoice No</p>
+                <code className="mt-1 block font-mono text-xs font-bold text-[#2A1810]">{formatInvoiceNumber(order.id, order.createdAt)}</code>
+              </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Status</p>
-                <p className="font-semibold capitalize text-[#2A1810]">{order.status.replace(/_/g, " ")}</p>
+                <div className="mt-1">{getOrderStatusBadge(order.status)}</div>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Payment</p>
-                <p className="font-semibold uppercase text-[#2A1810]">{order.paymentStatus ?? "PENDING"}</p>
+                <p className="mt-1 font-semibold uppercase text-[#2A1810]">{order.paymentStatus ?? "PENDING"}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Total</p>
-                <p className="font-semibold text-[#2A1810]">
+                <p className="mt-1 font-semibold text-[#2A1810]">
                   {order.currency} {Number(order.total).toFixed(2)}
                 </p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Payment Ref</p>
-                <p className="font-mono text-xs text-[#2A1810]">{order.paymentId ?? "—"}</p>
+                <p className="mt-1 font-mono text-xs text-[#2A1810] truncate" title={order.paymentId ?? "—"}>{order.paymentId ?? "—"}</p>
               </div>
             </div>
 

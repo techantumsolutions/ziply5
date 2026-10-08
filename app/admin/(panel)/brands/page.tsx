@@ -45,7 +45,7 @@ export default function AdminBrandsPage() {
   };
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
       <div>
         <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Brands</h1>
         <p className="text-sm text-[#646464]">Catalog brands (linked from products).</p>

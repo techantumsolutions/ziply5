@@ -284,7 +284,7 @@ export default function CmsDashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6 lg:p-6">
+    <div className="w-full space-y-6 lg:p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">CMS Dashboard</h1>

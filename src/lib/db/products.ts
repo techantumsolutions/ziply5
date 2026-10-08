@@ -631,6 +631,28 @@ export const deleteProductSupabaseBasic = async (id: string) => {
   return false
 }
 
+export const getNextProductSequenceId = async (): Promise<string> => {
+  const client = getSupabaseAdmin()
+  for (const table of PRODUCT_TABLES) {
+    const { data, error } = await client.from(table).select("id")
+    if (!error && data && data.length > 0) {
+      let maxSeq = 0
+      for (const row of data) {
+        const idStr = safeString(row.id)
+        const match = idStr.match(/^PRD-(\d+)$/i)
+        if (match) {
+          const num = parseInt(match[1], 10)
+          if (!isNaN(num) && num > maxSeq) {
+            maxSeq = num
+          }
+        }
+      }
+      return `PRD-${String(maxSeq + 1).padStart(6, "0")}`
+    }
+  }
+  return "PRD-000001"
+}
+
 export const createProductSupabase = async (input: {
   base: Record<string, unknown>
   categoryId?: string | null
@@ -642,8 +664,14 @@ export const createProductSupabase = async (input: {
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }>
 }) => {
-  const base = await normalizeActorFks(withId(withTimestampsForInsert(input.base)))
- const created = await insertFirst(PRODUCT_TABLES, [base])
+  let baseInput = { ...input.base }
+  const existingId = safeString(baseInput.id)
+  if (!existingId || !/^PRD-\d{6}$/i.test(existingId)) {
+    const seqId = await getNextProductSequenceId()
+    baseInput.id = seqId
+  }
+  const base = await normalizeActorFks(withId(withTimestampsForInsert(baseInput)))
+  const created = await insertFirst(PRODUCT_TABLES, [base])
   const productId = safeString(created.row?.id)
   if (!productId) {
     logger.error("Supabase insert failed for table 'Product' with payload", {

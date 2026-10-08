@@ -152,7 +152,7 @@ export default function AdminDashboardPage() {
   const recentRows = useMemo(() => summary?.recentOrders ?? [], [summary])
 
   return (
-    <section className="mx-auto max-w-7xl">
+    <section className="w-full">
       <div className="rounded-3xl bg-transparent p-0 md:p-0">
         {error ? (
           <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
