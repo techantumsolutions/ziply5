@@ -82,7 +82,7 @@ function ProductDiscountsReadOnly() {
   }, [rows])
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
       <div>
         <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Product Discounts</h1>
         <p className="text-sm text-[#646464]">Read-only view of products that currently have a discount. Discounts are managed in the Product edit screen.</p>

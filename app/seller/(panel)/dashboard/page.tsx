@@ -35,7 +35,7 @@ export default function SellerDashboardPage() {
   }, []);
 
   return (
-    <section className="mx-auto max-w-7xl">
+    <section className="w-full">
       <h1 className="font-melon text-2xl font-bold tracking-wide text-[#4A1D1F] md:text-3xl">Seller Dashboard</h1>
       <p className="mt-2 text-sm text-[#646464]">Your catalog and orders that include your products.</p>
 

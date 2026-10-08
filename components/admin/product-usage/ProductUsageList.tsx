@@ -191,43 +191,43 @@ export default function ProductUsageList() {
 
           <div>
             <Select value={publishStatus} onValueChange={setPublishStatus}>
-              <SelectTrigger className="text-xs">
+              <SelectTrigger className="text-xs capitalize">
                 <SelectValue placeholder="Publish Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                <SelectItem value="draft">Draft</SelectItem>
-                <SelectItem value="published">Published</SelectItem>
-                <SelectItem value="archived">Archived</SelectItem>
+                <SelectItem value="all" className="capitalize">All Statuses</SelectItem>
+                <SelectItem value="draft" className="capitalize">Draft</SelectItem>
+                <SelectItem value="published" className="capitalize">Published</SelectItem>
+                <SelectItem value="archived" className="capitalize">Archived</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div>
             <Select value={videoType} onValueChange={setVideoType}>
-              <SelectTrigger className="text-xs">
+              <SelectTrigger className="text-xs capitalize">
                 <SelectValue placeholder="Video Type" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Video Types</SelectItem>
-                <SelectItem value="upload">Uploaded Video</SelectItem>
-                <SelectItem value="youtube">YouTube</SelectItem>
-                <SelectItem value="vimeo">Vimeo</SelectItem>
-                <SelectItem value="cdn">CDN / URL</SelectItem>
+                <SelectItem value="all" className="capitalize">All Video Types</SelectItem>
+                <SelectItem value="upload" className="capitalize">Uploaded Video</SelectItem>
+                <SelectItem value="youtube" className="capitalize">YouTube</SelectItem>
+                <SelectItem value="vimeo" className="capitalize">Vimeo</SelectItem>
+                <SelectItem value="cdn" className="capitalize">CDN / URL</SelectItem>
               </SelectContent>
             </Select>
           </div>
 
           <div>
             <Select value={sort} onValueChange={setSort}>
-              <SelectTrigger className="text-xs">
+              <SelectTrigger className="text-xs capitalize">
                 <SelectValue placeholder="Sort Order" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="order_asc">Display Order (Asc)</SelectItem>
-                <SelectItem value="newest">Newest First</SelectItem>
-                <SelectItem value="oldest">Oldest First</SelectItem>
-                <SelectItem value="title_asc">Title A-Z</SelectItem>
+                <SelectItem value="order_asc" className="capitalize">Display Order (Asc)</SelectItem>
+                <SelectItem value="newest" className="capitalize">Newest First</SelectItem>
+                <SelectItem value="oldest" className="capitalize">Oldest First</SelectItem>
+                <SelectItem value="title_asc" className="capitalize">Title A-Z</SelectItem>
               </SelectContent>
             </Select>
           </div>

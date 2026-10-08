@@ -205,7 +205,7 @@ export default function MasterDataPage() {
   }
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
       {roleLoaded && role !== "super_admin" ? (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">
           Only super admin can manage master data.

@@ -672,14 +672,14 @@ export default function ProductUsageForm({ initialData, isEdit = false }: Produc
                     <div>
                       <Label className="text-xs font-bold text-[#4A1D1F]">Robots Directives</Label>
                       <Select value={robots} onValueChange={setRobots}>
-                        <SelectTrigger className="mt-1 text-xs">
+                        <SelectTrigger className="mt-1 text-xs capitalize">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="index,follow">index, follow (Default)</SelectItem>
-                          <SelectItem value="noindex,follow">noindex, follow</SelectItem>
-                          <SelectItem value="index,nofollow">index, nofollow</SelectItem>
-                          <SelectItem value="noindex,nofollow">noindex, nofollow</SelectItem>
+                          <SelectItem value="index,follow" className="capitalize">Index, Follow (Default)</SelectItem>
+                          <SelectItem value="noindex,follow" className="capitalize">Noindex, Follow</SelectItem>
+                          <SelectItem value="index,nofollow" className="capitalize">Index, Nofollow</SelectItem>
+                          <SelectItem value="noindex,nofollow" className="capitalize">Noindex, Nofollow</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

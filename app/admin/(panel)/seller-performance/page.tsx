@@ -31,7 +31,7 @@ export default function AdminSellerPerformancePage() {
   }, [load]);
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Platform performance</h1>

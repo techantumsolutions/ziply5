@@ -38,6 +38,47 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "@/lib/toast"
+
+export function VegLeafIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M20.5 3.5C13.5 3.5 7.5 7.5 5.5 13C4 16.75 5 19.5 8 21C13.5 21 20.5 14 20.5 3.5Z"
+        fill="#059669"
+      />
+      <path
+        d="M6.5 13.5C8.5 16 12 18.5 17.5 18"
+        stroke="#FFFFFF"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+      />
+      <path
+        d="M4 21C5.5 19.5 7 17.5 8 15.5"
+        stroke="#047857"
+        strokeWidth="2.2"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+export function NonVegDrumstickIcon({ className = "h-5 w-5" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path
+        d="M19.5 4.5C17.2 2.2 13 3 10.5 5.5C8 8 7.5 11.5 9 14.5L5 18.5C4.2 17.7 3 17.7 2.2 18.5C1.4 19.3 1.4 20.5 2.2 21.3C3 22.1 4.2 22.1 5 21.3C5.8 20.5 5.8 19.3 5 18.5L9 14.5C12 16 15.5 15.5 18 13C20.5 10.5 21.3 6.8 19.5 4.5Z"
+        fill="#EA580C"
+      />
+      <path
+        d="M17 6.5C15.5 5 13.5 5.2 12 6.7C10.5 8.2 10.2 10 11.5 11.5"
+        stroke="#FFEDD5"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
 import { useMasterValues } from "@/hooks/useMasterData"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isVideoUrl } from "@/lib/media-utils"
@@ -667,6 +708,20 @@ export function ProductConsolePage({
   const [reviewConfirmed, setReviewConfirmed] = useState(false)
   const [mediaViewerIndex, setMediaViewerIndex] = useState<number | null>(null)
   const [pendingProductId] = useState(() => resolveOrCreatePendingProductId())
+  const [nextSequenceId, setNextSequenceId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (mode === "add") {
+      authedFetch<{ data?: { nextId?: string } }>("/api/v1/products/next-id")
+        .then((res) => {
+          if (res?.data?.nextId) {
+            setNextSequenceId(res.data.nextId)
+          }
+        })
+        .catch(() => null)
+    }
+  }, [mode])
+
   const [editHydrated, setEditHydrated] = useState(mode !== "edit")
   const currentStepRef = useRef<ProductFormStepId>(currentStep)
   const draftProductIdRef = useRef<string | null>(mode === "edit" && productId ? productId : null)
@@ -681,7 +736,7 @@ export function ProductConsolePage({
   const [sku, setSku] = useState("")
   const [description, setDescription] = useState("")
   const [status, setStatus] = useState<(typeof statuses)[number]>("published")
-  const [type, setType] = useState<"simple" | "variant">("variant")
+  const [type, setType] = useState<"simple" | "variant">("simple")
   const [price, setPrice] = useState("")
   const [basePrice, setBasePrice] = useState("")
   const [salePrice, setSalePrice] = useState("")
@@ -810,8 +865,17 @@ export function ProductConsolePage({
     // Apply type filter
     if (filterType !== 'all') {
       result = result.filter((p) => {
-        const isMulti = (p.variants?.length ?? 0) > 1
-        return filterType === "multiple" ? isMulti : !isMulti
+        // DB type 'simple' = Single Variant Product; DB type 'variant' / 'multiple' = Multi Variant Product
+        const isMulti = p.type === "variant" || p.type === "multiple" || (!p.type && Array.isArray(p.variants) && p.variants.length > 1)
+        const isSingle = p.type === "simple" || p.type === "single" || (!p.type && (!p.variants || p.variants.length <= 1))
+
+        if (filterType === "single") {
+          return isSingle || (!isMulti && p.type !== "variant" && p.type !== "multiple")
+        }
+        if (filterType === "multiple") {
+          return isMulti && p.type !== "simple" && p.type !== "single"
+        }
+        return true
       })
     }
 
@@ -827,7 +891,14 @@ export function ProductConsolePage({
 
     // Apply stock status filter
     if (filterStockStatus !== 'all') {
-      result = result.filter(p => p.stockStatus === filterStockStatus)
+      result = result.filter((p) => {
+        const totalStock =
+          p.type === "variant" || (Array.isArray(p.variants) && p.variants.length > 0)
+            ? (p.variants ?? []).reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+            : Number(p.totalStock ?? p.stock ?? 0)
+
+        return filterStockStatus === 'in_stock' ? totalStock > 0 : totalStock <= 0
+      })
     }
 
     // Apply food type filter
@@ -950,7 +1021,7 @@ export function ProductConsolePage({
       setSku(p.sku)
       setDescription(p.description ?? "")
       setStatus(p.status)
-      setType(mode === "view" ? (p.type ?? "variant") : "variant")
+      setType(p.type === "simple" || p.type === "single" ? "simple" : "variant")
       setPrice(String(Number(v?.price ?? p.price ?? 0)))
       setBasePrice(p.basePrice != null ? String(Number(p.basePrice)) : "")
       setSalePrice(p.salePrice != null ? String(Number(p.salePrice)) : "")
@@ -1031,11 +1102,15 @@ export function ProductConsolePage({
             eanCode: "",
           }],
       )
-      // Reflect original weight option on edit: multi when 2+ variants, otherwise single.
+      // Reflect original weight option on view/edit: simple -> single variant, variant/multiple -> multi variant.
       setVariantMode(
-        (p.type === "variant" || loadedVariants.length > 0) && loadedVariants.length > 1
-          ? "multiple"
-          : "single",
+        p.type === "simple" || p.type === "single"
+          ? "single"
+          : p.type === "variant" || p.type === "multiple"
+            ? "multiple"
+            : loadedVariants.length > 1
+              ? "multiple"
+              : "single",
       )
       const nextSections =
         (p.sections?.length
@@ -1238,19 +1313,19 @@ export function ProductConsolePage({
       ? normalizedVariants.reduce((sum, v) => sum + v.stock, 0)
       : (totalStock.trim() ? Number(totalStock) : 0)
     return {
-      ...(mode === "add" ? { id: pendingProductId } : {}),
+      ...(mode === "add" ? { id: nextSequenceId ?? pendingProductId } : {}),
       name: name.trim(),
       slug: slug.trim(),
       sku: derivedSku,
       description: isEmptyRichText(description) ? undefined : description.trim(),
       status: status,
-      type: type,
+      type: variantMode === "single" ? "simple" : "variant",
       price: parsedPrice,
-      variants: type === "variant" ? normalizedVariants : [],
+      variants: variantMode === "single" ? [] : normalizedVariants,
       basePrice: toNumOrNull(basePrice),
       salePrice: toNumOrNull(salePrice),
       discountPercent: toNumOrNull(discountPercent),
-      weight: type === "simple" ? (parseWeight(simpleProductWeight).value ? simpleProductWeight.trim() : null) : null, // Include new weight field
+      weight: variantMode === "single" ? (parseWeight(simpleProductWeight).value ? simpleProductWeight.trim() : null) : null, // Include new weight field
       stockStatus,
       totalStock: derivedStock,
       shelfLife: shelfLife.trim() || null,
@@ -1332,7 +1407,7 @@ export function ProductConsolePage({
   const variantModeRef = useRef(variantMode)
   const discountEnabledRef = useRef(discountEnabled)
   discountEnabledRef.current = discountEnabled
-  const displayProductId = mode === "edit" && productId ? productId : autosavedDraftId ?? pendingProductId
+  const displayProductId = mode === "edit" && productId ? productId : autosavedDraftId ?? nextSequenceId ?? pendingProductId
 
   const foodTagCreateAttemptedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -2092,7 +2167,7 @@ export function ProductConsolePage({
       const q = searchQuery.trim().toLowerCase()
       const filteredCombos = q ? comboRows.filter((b) => `${b.name} ${b.slug}`.toLowerCase().includes(q)) : comboRows
       return (
-        <section className="mx-auto max-w-7xl space-y-4">
+        <section className="w-full space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Products</h1>
@@ -2267,7 +2342,7 @@ export function ProductConsolePage({
     }
 
     return (
-      <section className="mx-auto max-w-7xl space-y-4">
+      <section className="w-full space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{adminView ? "Products" : "My products"}</h1>
@@ -2309,93 +2384,64 @@ export function ProductConsolePage({
           </div>
           <div className="flex flex-wrap lg:flex-nowrap gap-2 w-full">
             <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as "all" | "draft" | "published" | "archived")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Filter by Status" />
+              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="Filter By Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="all" className="capitalize">All Statuses</SelectItem>
                 {statuses.map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
+                  <SelectItem key={s} value={s} className="capitalize">
+                    {s.charAt(0).toUpperCase() + s.slice(1)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
             <Select value={filterType} onValueChange={(value) => setFilterType(value as "all" | "single" | "multiple")}>
-              <SelectTrigger className="w-44 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
+              <SelectTrigger className="w-44 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
                 <SelectValue placeholder="All Variant Types" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Variant Types</SelectItem>
-                <SelectItem value="single">Single Variant</SelectItem>
-                <SelectItem value="multiple">Multi Variant</SelectItem>
+                <SelectItem value="all" className="capitalize">All Variant Types</SelectItem>
+                <SelectItem value="single" className="capitalize">Single Variant</SelectItem>
+                <SelectItem value="multiple" className="capitalize">Multi Variant</SelectItem>
               </SelectContent>
             </Select>
 
             <Select value={filterCategory} onValueChange={(value) => setFilterCategory(value)}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Filter by Category" />
+              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="Filter By Category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
+                <SelectItem value="all" className="capitalize">All Categories</SelectItem>
                 {categories.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
+                  <SelectItem key={c.id} value={c.id} className="capitalize">
                     {c.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
 
-            {/* Prep Type filter hidden: all catalog products are Ready To Cook */}
-            {/* <Select value={filterPreparationType} onValueChange={(value) => setFilterPreparationType(value as "all" | "ready_to_eat" | "ready_to_cook")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Filter by Prep Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Prep Types</SelectItem>
-                {preparationTypes.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {t.replace(/_/g, " ")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select> */}
-
             <Select value={filterStockStatus} onValueChange={(value) => setFilterStockStatus(value as "all" | "in_stock" | "out_of_stock")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Filter by Stock Status" />
+              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="Filter By Stock Status" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All Stock</SelectItem>
-                <SelectItem value="in_stock">In Stock</SelectItem>
-                <SelectItem value="out_of_stock">Out of Stock</SelectItem>
+                <SelectItem value="all" className="capitalize">All Stock Statuses</SelectItem>
+                <SelectItem value="in_stock" className="capitalize">In Stock</SelectItem>
+                <SelectItem value="out_of_stock" className="capitalize">Out Of Stock</SelectItem>
               </SelectContent>
             </Select>
 
             <Select value={sortPrice || undefined} onValueChange={(value) => setSortPrice(value as "low_to_high" | "high_to_low")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-                <SelectValue placeholder="Price" />
+              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="Price Sort" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="low_to_high">Low to High</SelectItem>
-                <SelectItem value="high_to_low">High to Low</SelectItem>
+                <SelectItem value="low_to_high" className="capitalize">Price: Low To High</SelectItem>
+                <SelectItem value="high_to_low" className="capitalize">Price: High To Low</SelectItem>
               </SelectContent>
             </Select>
-
-            {/* <Select value={filterFoodType} onValueChange={(value) => setFilterFoodType(value as "all" | "veg" | "non-veg")}>
-            <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm">
-              <SelectValue placeholder="Filter by Food Type" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Food Types</SelectItem>
-              {foodTypes.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select> */}
           </div>
         </div>
         <div className="flex justify-end">
@@ -2404,17 +2450,17 @@ export function ProductConsolePage({
             onClick={resetFilters}
             className="text-[11px] font-bold uppercase tracking-wide text-[#7B3010] hover:underline"
           >
-            Reset all filters
+            Reset All Filters
           </button>
         </div>
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
         {loading && <p className="text-sm text-[#646464]">Loading...</p>}
         {!loading && (
           <>
-          <ConsoleTable headers={["S.No", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}>
+          <ConsoleTable headers={["S.No", "Product ID", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}>
             {filteredRows.length === 0 ? (
               <tr>
-                <ConsoleTd colSpan={8} className="py-8 text-center text-[#646464]">
+                <ConsoleTd colSpan={9} className="py-8 text-center text-[#646464]">
                   No products yet.
                 </ConsoleTd>
               </tr>
@@ -2423,6 +2469,9 @@ export function ProductConsolePage({
                 <tr key={p.id} className="hover:bg-[#FFFBF3]/80">
                   <ConsoleTd className="align-middle w-14 text-[#646464]">
                     {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
+                  </ConsoleTd>
+                  <ConsoleTd className="align-middle">
+                    <code className="text-[11px] font-bold text-[#7B3010] font-mono">{p.id}</code>
                   </ConsoleTd>
                   <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
                     {formatCreatedAt(p.createdAt)}
@@ -2527,7 +2576,7 @@ export function ProductConsolePage({
   }
 
   return (
-    <section className="mx-auto max-w-7xl space-y-4 pb-2">
+    <section className="w-full space-y-4 pb-2">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <Link href={basePath} className="text-xs font-semibold uppercase text-[#7B3010] underline">
@@ -2750,36 +2799,41 @@ export function ProductConsolePage({
                   </Field>
 
                   <Field label="Food Type" required={status !== "draft"}>
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
                       {([
-                        { value: "veg" as const, label: "Vegetarian" },
-                        { value: "non-veg" as const, label: "Non-Veg" },
-                      ]).map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setFoodType(option.value)}
-                          className={`rounded-xl border px-2 py-2.5 text-center text-xs font-semibold transition sm:text-sm ${
-                            foodType === option.value
-                              ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30"
-                              : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
+                        { value: "veg" as const, label: "Vegetarian", Icon: VegLeafIcon },
+                        { value: "non-veg" as const, label: "Non-Vegetarian", Icon: NonVegDrumstickIcon },
+                      ]).map((option) => {
+                        const isSelected = foodType === option.value
+                        const Icon = option.Icon
+                        return (
+                          <button
+                            key={option.value}
+                            type="button"
+                            onClick={() => setFoodType(option.value)}
+                            className={`flex items-center justify-center gap-2.5 rounded-xl border px-3 py-2.5 text-center text-xs font-semibold transition sm:text-sm ${
+                              isSelected
+                                ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30 shadow-sm"
+                                : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
+                            }`}
+                          >
+                            <Icon className="h-5 w-5 shrink-0" />
+                            <span>{option.label}</span>
+                          </button>
+                        )
+                      })}
                     </div>
                   </Field>
 
                   <Field label="Spice Level" required={status !== "draft"}>
                     <Select value={spiceLevel} onValueChange={(value) => setSpiceLevel(value as "" | "mild" | "medium" | "hot" | "extra_hot")}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm">
-                        <SelectValue placeholder="Select spice level" />
+                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm capitalize">
+                        <SelectValue placeholder="Select Spice Level" />
                       </SelectTrigger>
                       <SelectContent>
                         {spiceLevels.map((item) => (
-                          <SelectItem key={item} value={item}>
-                            {item.replace(/_/g, " ")}
+                          <SelectItem key={item} value={item} className="capitalize">
+                            {item === "mild" ? "Mild" : item === "medium" ? "Medium" : item === "hot" ? "Hot" : "Extra Hot"}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -2823,7 +2877,7 @@ export function ProductConsolePage({
                               type="button"
                               aria-pressed={selected}
                               onClick={() => {
-                                setType("variant")
+                                setType(option.value === "single" ? "simple" : "variant")
                                 setVariantMode(option.value)
                                 if (option.value === "single") {
                                   setVariants((prev) => {
@@ -3563,12 +3617,13 @@ export function ProductConsolePage({
                 <div className="min-w-0">
                   <ReviewRow label="Food Type">
                     {foodType === "veg" ? (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-xs font-semibold text-green-800">
-                        <Leaf className="h-3 w-3" />
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800">
+                        <VegLeafIcon className="h-4 w-4 shrink-0" />
                         Vegetarian
                       </span>
                     ) : foodType === "non-veg" ? (
-                      <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-semibold text-red-800">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-800">
+                        <NonVegDrumstickIcon className="h-4 w-4 shrink-0" />
                         Non-Vegetarian
                       </span>
                     ) : (

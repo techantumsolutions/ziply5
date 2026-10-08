@@ -31,7 +31,7 @@ export default function SellerFinancePage() {
   }, [load]);
 
   return (
-    <section className="mx-auto max-w-7xl space-y-6">
+    <section className="w-full space-y-6">
       <div>
         <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Finance</h1>
         <p className="text-sm text-[#646464]">Single-vendor financial overview and refunds.</p>

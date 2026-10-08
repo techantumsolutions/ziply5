@@ -1,7 +1,7 @@
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 
-  export type OrderForInvoice = {
+export type OrderForInvoice = {
   id: string
   status: string
   currency: string
@@ -27,11 +27,13 @@ import autoTable from "jspdf-autotable"
     lineTotal?: string | number
     price?: string | number
     subtotal?: string | number
-    product?: { name?: string | null } | null
+    sku?: string | null
+    product?: { name?: string | null; sku?: string | null } | null
+    variant?: { sku?: string | null; name?: string | null; weight?: string | null } | null
   }>
 }
 
-// --- Helper: Get Logo ---
+// --- Helper: Get Logo Base64 ---
 const getBase64ImageFromURL = (url: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     const img = new Image()
@@ -48,6 +50,23 @@ const getBase64ImageFromURL = (url: string): Promise<string> => {
     img.onerror = (error) => reject(error)
     img.src = url
   })
+}
+
+// Format invoice number: ziply5/26-27/001
+export const formatInvoiceNumber = (orderId: string, createdAt?: string | Date): string => {
+  const date = createdAt ? new Date(createdAt) : new Date()
+  const year = date.getFullYear()
+  const month = date.getMonth() // 0-indexed (3 = April)
+  let startYear = year
+  if (month < 3) {
+    startYear = year - 1
+  }
+  const endYear = startYear + 1
+  const fy = `${String(startYear).slice(-2)}-${String(endYear).slice(-2)}`
+  
+  const cleanId = orderId.replace(/[^0-9]/g, "")
+  const seq = cleanId ? cleanId.slice(-3).padStart(3, "0") : "001"
+  return `ziply5/${fy}/${seq}`
 }
 
 // Converts numbers into English words (supports Indian Rupee & standard currency nomenclature)
@@ -112,19 +131,18 @@ export const convertNumberToWords = (amount: number, currency: string = "INR"): 
   return `${result} Only`
 }
 
-// Formats a date in Indian Standard Time (IST)
-export const formatISTDate = (dateInput: string | Date | number): string => {
+// Formats a date in YYYY-MM-DD format
+export const formatInvoiceDate = (dateInput: string | Date | number): string => {
   const d = new Date(dateInput)
   if (isNaN(d.getTime())) return "—"
-  return d.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    timeZone: "Asia/Kolkata",
-  })
+  const yyyy = d.getFullYear()
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const dd = String(d.getDate()).padStart(2, "0")
+  return `${yyyy}-${mm}-${dd}`
 }
 
-// Formats a date and time in Indian Standard Time (IST)
+export const formatISTDate = formatInvoiceDate
+
 export const formatISTDateTime = (dateInput: string | Date | number): string => {
   const d = new Date(dateInput)
   if (isNaN(d.getTime())) return "—"
@@ -139,126 +157,358 @@ export const formatISTDateTime = (dateInput: string | Date | number): string => 
   }) + " IST"
 }
 
-// User-facing invoice PDF generator (exact original format)
-export const generateUserInvoicePDF = async (order: OrderForInvoice) => {
-  const doc = new jsPDF()
-  const pageWidth = doc.internal.pageSize.getWidth()
+// Core Tax Invoice PDF Generator following reference layout
+const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string = "invoice"): Promise<boolean> => {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
+  const pageWidth = doc.internal.pageSize.getWidth() // 210mm
+  const margin = 12
+  const contentWidth = pageWidth - margin * 2 // 186mm
 
   try {
-    // --- Add Logo ---
+    // 1. Header: Logo & Company Information
+    let topY = 12
+
+    // Try loading Ziply5 logo
     try {
       const logoData = await getBase64ImageFromURL("/primaryLogo.png")
-      doc.addImage(logoData, "PNG", 15, 10, 40, 15)
-    } catch (err) {
-      console.warn("Could not load logo", err)
+      doc.addImage(logoData, "PNG", margin, topY, 42, 16)
+    } catch {
+      doc.setFont("helvetica", "bold")
       doc.setFontSize(22)
-      doc.setTextColor(74, 29, 31) // #4A1D1F
-      doc.text("ZIPLY5", 15, 20)
+      doc.setTextColor(123, 48, 16) // #7B3010
+      doc.text("ZIPLY5", margin, topY + 12)
     }
 
-    // --- Header Info ---
-    doc.setFontSize(24)
-    doc.setTextColor(74, 29, 31)
-    doc.text("INVOICE", pageWidth - 15, 20, { align: "right" })
+    // Company Information (Top Right / Header)
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(11)
+    doc.setTextColor(30, 30, 30)
+    doc.text("Sai Venkata Rama Agro Farms Pvt. Ltd.", pageWidth - margin, topY + 4, { align: "right" })
 
-    doc.setFontSize(10)
-    doc.setTextColor(100, 100, 100)
-    const createdOn = formatISTDate(order.createdAt)
-    doc.text(`Order ID: ${order.id}`, pageWidth - 15, 28, { align: "right" })
-    doc.text(`Date: ${createdOn}`, pageWidth - 15, 33, { align: "right" })
-    doc.text(`Status: ${order.status.toUpperCase()}`, pageWidth - 15, 38, { align: "right" })
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8.5)
+    doc.setTextColor(70, 70, 70)
+    doc.text("Sy. 87/1, Thumaloor Road, Maheshwaram, Hyderabad, India - 501389", pageWidth - margin, topY + 9, { align: "right" })
+    doc.text("GSTIN: 36ABGCS4924H1Z6   PAN: ABGCS4924H", pageWidth - margin, topY + 13.5, { align: "right" })
+    doc.text("CIN: U01120TG2021PTC153389   FSSAI: 13626999000101", pageWidth - margin, topY + 18, { align: "right" })
+    doc.text("Ph: +91-9063844105", pageWidth - margin, topY + 22.5, { align: "right" })
 
-    // --- Divider ---
-    doc.setDrawColor(232, 220, 200) // #E8DCC8
-    doc.line(15, 45, pageWidth - 15, 45)
+    topY += 28
 
-    // --- Customer Details ---
-    doc.setFontSize(12)
-    doc.setTextColor(74, 29, 31)
-    doc.text("BILL TO:", 15, 55)
+    // 2. Banner Header: "TAX INVOICE"
+    doc.setFillColor(243, 244, 246) // Light grey background box
+    doc.rect(margin, topY, contentWidth, 8, "F")
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(11)
+    doc.setTextColor(17, 24, 39)
+    doc.text("TAX INVOICE", pageWidth / 2, topY + 5.5, { align: "center" })
 
-    doc.setFontSize(10)
-    doc.setTextColor(42, 24, 16) // #2A1810
-    doc.text(order.customerName ?? "-", 15, 62)
-    doc.text(order.customerPhone ?? "-", 15, 67)
-    doc.text(order.customerEmail ?? order.user?.email ?? "-", 15, 72)
+    topY += 12
 
-    const addressLines = doc.splitTextToSize(order.customerAddress ?? "-", 80)
-    doc.text(addressLines, 15, 77)
+    // 3. Address & Invoice Details Grid Box
+    const gridBoxHeight = 36
+    doc.setDrawColor(209, 213, 219)
+    doc.setLineWidth(0.3)
+    doc.rect(margin, topY, contentWidth, gridBoxHeight)
 
-    // --- Items Table ---
-    // Dynamically calculate table start based on address height
-    const addressHeight = addressLines.length * 5
-    const tableStartY = Math.max(95, 77 + addressHeight + 10)
+    // Vertical Divider lines
+    const col1Width = 62
+    const col2Width = 62
+    const col1Right = margin + col1Width
+    const col2Right = col1Right + col2Width
 
-    const tableData = (order.items ?? []).map((item) => [
-      item.product?.name ?? "Product",
-      item.quantity.toString(),
-      `${order.currency} ${Number(item.unitPrice ?? item.price ?? 0).toFixed(2)}`,
-      `${order.currency} ${Number(item.lineTotal ?? item.subtotal ?? Number(item.unitPrice ?? item.price ?? 0) * Number(item.quantity ?? 0)).toFixed(2)}`
-    ])
+    doc.line(col1Right, topY, col1Right, topY + gridBoxHeight)
+    doc.line(col2Right, topY, col2Right, topY + gridBoxHeight)
 
-    autoTable(doc, {
-      startY: tableStartY,
-      head: [["Product Details", "Qty", "Unit Price", "Subtotal"]],
-      body: tableData,
-      headStyles: {
-        fillColor: [123, 48, 16],
-        textColor: [255, 255, 255],
-        fontSize: 10,
-        fontStyle: "bold",
-      },
-      styles: { fontSize: 9, cellPadding: 4 },
-      columnStyles: {
-        0: { cellWidth: "auto" },
-        1: { halign: "left", cellWidth: 25 },
-        2: { halign: "left", cellWidth: 35 },
-        3: { halign: "left", cellWidth: 35 },
-      },
-      alternateRowStyles: { fillColor: [253, 240, 230] }, // #FDF0E6
-      margin: { left: 15, right: 15 },
+    // Column 1: Buyer
+    let col1Y = topY + 5
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    doc.setTextColor(17, 24, 39)
+    doc.text("Buyer:", margin + 4, col1Y)
+    col1Y += 4.5
+
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8.5)
+    doc.setTextColor(55, 65, 81)
+    const buyerName = order.customerName || "Customer"
+    doc.text(buyerName, margin + 4, col1Y)
+    col1Y += 4
+
+    const buyerAddressLines = doc.splitTextToSize(order.customerAddress || "—", col1Width - 8)
+    doc.text(buyerAddressLines.slice(0, 3), margin + 4, col1Y)
+
+    if (order.customerPhone) {
+      doc.text(`Ph: ${order.customerPhone}`, margin + 4, topY + gridBoxHeight - 4)
+    }
+
+    // Column 2: Delivery Address
+    let col2Y = topY + 5
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    doc.setTextColor(17, 24, 39)
+    doc.text("Delivery Address:", col1Right + 4, col2Y)
+    col2Y += 4.5
+
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8.5)
+    doc.setTextColor(55, 65, 81)
+    doc.text(buyerName, col1Right + 4, col2Y)
+    col2Y += 4
+
+    const deliveryAddressLines = doc.splitTextToSize(order.customerAddress || "—", col2Width - 8)
+    doc.text(deliveryAddressLines.slice(0, 3), col1Right + 4, col2Y)
+
+    if (order.customerPhone) {
+      doc.text(`Ph: ${order.customerPhone}`, col1Right + 4, topY + gridBoxHeight - 4)
+    }
+
+    // Column 3: Invoice Info Box
+    const col3Y = topY + 5
+    const invoiceNo = formatInvoiceNumber(order.id, order.createdAt)
+    const invoiceDateStr = formatInvoiceDate(order.createdAt)
+    const isCod = (order.paymentMethod || "").toLowerCase().includes("cod") || (order.paymentMethod || "").toLowerCase().includes("cash")
+    const paymentMode = isCod ? "COD" : (order.paymentMethod || "Immediate").toUpperCase()
+    const paymentTerms = isCod ? "COD" : "NEFT/RTGS/IMPS"
+
+    const labelX = col2Right + 4
+    const valueX = pageWidth - margin - 4
+
+    const renderKeyValue = (label: string, value: string, yPos: number) => {
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8.5)
+      doc.setTextColor(17, 24, 39)
+      doc.text(label, labelX, yPos)
+
+      doc.setFont("helvetica", "normal")
+      doc.setTextColor(55, 65, 81)
+      doc.text(value, valueX, yPos, { align: "right" })
+    }
+
+    renderKeyValue("Invoice No.", invoiceNo, col3Y)
+    renderKeyValue("Date", invoiceDateStr, col3Y + 6.5)
+    renderKeyValue("Payment Mode", paymentMode, col3Y + 13)
+    renderKeyValue("Payment Terms", paymentTerms, col3Y + 19.5)
+
+    topY += gridBoxHeight + 6
+
+    // 4. Products Table (SKU in place of HSN)
+    const tableData = (order.items && order.items.length > 0 ? order.items : []).map((item, index) => {
+      const sno = (index + 1).toString()
+      const descName = item.product?.name || "Product"
+      const variantInfo = item.variant?.weight || item.variant?.name
+      const description = variantInfo ? `${descName} (${variantInfo})` : descName
+      const sku = item.sku || item.product?.sku || item.variant?.sku || "21069099"
+      const qty = (item.quantity || 1).toString()
+      const rateNum = Number(item.unitPrice ?? item.price ?? 0)
+      const lineNum = Number(item.lineTotal ?? item.subtotal ?? rateNum * Number(qty))
+
+      return [sno, description, sku, qty, rateNum.toFixed(2), lineNum.toFixed(2)]
     })
 
-    // --- Summary ---
-    const finalY = (doc as any).lastAutoTable.finalY + 10
-    const summaryX = pageWidth - 65 // Adjusted for better label alignment
-    const valueX = pageWidth - 15 - 4 // Match table's internal padding (cellPadding: 4)
+    autoTable(doc, {
+      startY: topY,
+      head: [["S.No", "DESCRIPTION", "SKU", "QTY", "RATE", "AMOUNT"]],
+      body: tableData,
+      headStyles: {
+        fillColor: [249, 250, 251],
+        textColor: [17, 24, 39],
+        fontSize: 8.5,
+        fontStyle: "bold",
+        lineColor: [209, 213, 219],
+        lineWidth: 0.2,
+      },
+      styles: {
+        fontSize: 8.5,
+        cellPadding: 3,
+        textColor: [55, 65, 81],
+        lineColor: [209, 213, 219],
+        lineWidth: 0.2,
+      },
+      columnStyles: {
+        0: { halign: "center", cellWidth: 14 },
+        1: { halign: "left", cellWidth: "auto" },
+        2: { halign: "center", cellWidth: 32 },
+        3: { halign: "center", cellWidth: 16 },
+        4: { halign: "right", cellWidth: 28 },
+        5: { halign: "right", cellWidth: 28 },
+      },
+      alternateRowStyles: { fillColor: [255, 255, 255] },
+      margin: { left: margin, right: margin },
+    })
 
-    doc.setFontSize(10)
-    doc.setTextColor(100, 100, 100)
-    doc.text("Subtotal:", summaryX, finalY)
-    doc.text("Tax:", summaryX, finalY + 7)
-    doc.text("Discount:", summaryX, finalY + 14)
-    doc.text("Shipping:", summaryX, finalY + 21)
+    // 5. Calculations & Summary
+    const tableFinalY = (doc as any).lastAutoTable.finalY + 4
 
-    // --- Line above Total ---
-    doc.setDrawColor(232, 220, 200) // #E8DCC8
-    doc.setLineWidth(0.5)
-    doc.line(summaryX, finalY + 25, pageWidth - 15, finalY + 25)
+    const subtotalVal = Number(order.subtotal ?? order.total ?? 0)
+    const shippingVal = Number(order.shipping ?? 0)
+    const totalVal = Number(order.total ?? subtotalVal + shippingVal)
 
-    doc.setFontSize(11)
-    doc.setTextColor(74, 29, 31)
-    doc.text("Total:", summaryX, finalY + 31)
+    // Calculate tax breakdown (SGST 2.5% + CGST 2.5% = 5% GST inclusive standard)
+    let taxVal = Number(order.tax ?? 0)
+    if (taxVal <= 0 && subtotalVal > 0) {
+      taxVal = Number((subtotalVal - subtotalVal / 1.05).toFixed(2))
+    }
+    const taxableVal = Math.max(0, Number((subtotalVal - taxVal).toFixed(2)))
+    const sgstVal = Number((taxVal / 2).toFixed(2))
+    const cgstVal = Number((taxVal / 2).toFixed(2))
 
-    doc.setFontSize(10)
-    doc.setTextColor(42, 24, 16)
-    doc.text(`${order.currency} ${Number(order.subtotal ?? 0).toFixed(2)}`, valueX, finalY, { align: "right" })
-    doc.text(`${order.currency} ${Number(order.tax ?? 0).toFixed(2)}`, valueX, finalY + 7, { align: "right" })
-    doc.text(`- ${order.currency} ${Number(order.discount ?? 0).toFixed(2)}`, valueX, finalY + 14, { align: "right" })
-    doc.text(`${order.currency} ${Number(order.shipping ?? 0).toFixed(2)}`, valueX, finalY + 21, { align: "right" })
+    const summaryLabelX = pageWidth - margin - 80
+    const summaryValueX = pageWidth - margin - 2
 
-    doc.setFontSize(11)
-    doc.setTextColor(123, 48, 16)
+    let currentSummaryY = tableFinalY
+
+    const renderSummaryLine = (label: string, valueStr: string, isBold: boolean = false) => {
+      doc.setFont("helvetica", isBold ? "bold" : "normal")
+      doc.setFontSize(isBold ? 9.5 : 8.5)
+      doc.setTextColor(isBold ? 17 : 55, isBold ? 24 : 65, isBold ? 39 : 81)
+      doc.text(label, summaryLabelX, currentSummaryY)
+      doc.text(valueStr, summaryValueX, currentSummaryY, { align: "right" })
+      currentSummaryY += 5
+    }
+
+    renderSummaryLine("Sub Total (incl. GST)", `₹ ${subtotalVal.toFixed(2)}`)
+    renderSummaryLine("Taxable Value", `₹ ${taxableVal.toFixed(2)}`)
+    renderSummaryLine("SGST @ 2.5%", `₹ ${sgstVal.toFixed(2)}`)
+    renderSummaryLine("CGST @ 2.5%", `₹ ${cgstVal.toFixed(2)}`)
+    renderSummaryLine("Shipping / Courier", `₹ ${shippingVal.toFixed(2)}`)
+
+    // Line above Total
+    doc.setDrawColor(209, 213, 219)
+    doc.setLineWidth(0.3)
+    doc.line(summaryLabelX, currentSummaryY - 1, pageWidth - margin, currentSummaryY - 1)
+    currentSummaryY += 2
+
+    // Total Invoice Value Box
+    doc.setFillColor(249, 250, 251)
+    doc.rect(summaryLabelX - 2, currentSummaryY - 4, 84, 7, "F")
+    renderSummaryLine("Total Invoice Value", `₹ ${totalVal.toFixed(2)}`, true)
+
+    // Amount Chargeable in words
+    const amountInWords = convertNumberToWords(totalVal, order.currency)
     doc.setFont("helvetica", "bold")
-    doc.text(`${order.currency} ${Number(order.total).toFixed(2)}`, valueX, finalY + 31, { align: "right" })
+    doc.setFontSize(8.5)
+    doc.setTextColor(17, 24, 39)
+    doc.text("Amount Chargeable (in words):", margin, tableFinalY)
 
-    // --- Footer ---
-    doc.setFontSize(8)
     doc.setFont("helvetica", "normal")
-    doc.setTextColor(150, 150, 150)
-    doc.text("Thank you for shopping with Ziply5!", pageWidth / 2, doc.internal.pageSize.getHeight() - 10, { align: "center" })
+    doc.setTextColor(55, 65, 81)
+    doc.text(amountInWords, margin + 48, tableFinalY)
 
-    doc.save(`invoice-${order.id}.pdf`)
+    topY = Math.max(currentSummaryY + 6, tableFinalY + 32)
+
+    // 6. Bank Details & Payment Section Box
+    const bankBoxHeight = 36
+    doc.setDrawColor(209, 213, 219)
+    doc.setLineWidth(0.3)
+    doc.rect(margin, topY, contentWidth, bankBoxHeight)
+
+    const bankColWidth = 110
+    const bankColRight = margin + bankColWidth
+    doc.line(bankColRight, topY, bankColRight, topY + bankBoxHeight)
+
+    // Bank Details (Left)
+    let bY = topY + 5
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(9)
+    doc.setTextColor(17, 24, 39)
+    doc.text("Bank Details", margin + 4, bY)
+    bY += 4.5
+
+    const renderBankRow = (lbl: string, val: string) => {
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
+      doc.setTextColor(70, 70, 70)
+      doc.text(lbl, margin + 4, bY)
+      doc.setTextColor(30, 30, 30)
+      doc.text(val, margin + 28, bY)
+      bY += 4
+    }
+
+    renderBankRow("A/c Name:", "Sai Venkata Rama Agro Farms Pvt. Ltd.")
+    renderBankRow("Bank:", "HDFC Bank")
+    renderBankRow("Branch:", "Hyderguda")
+    renderBankRow("A/c No.:", "50200060220792")
+    renderBankRow("IFSC:", "HDFC0001996")
+
+    // Payment Info / UPI QR Code Box (Right)
+    const pX = bankColRight + 4
+    let pY = topY + 6
+
+    if (isCod) {
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
+      doc.setTextColor(180, 83, 9) // Amber
+      doc.text("Payment Mode: Cash on Delivery (COD)", pX, pY)
+      pY += 5.5
+
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8.5)
+      doc.setTextColor(220, 38, 38) // Red
+      doc.text("Status: Payment Pending", pX, pY)
+      pY += 5.5
+
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
+      doc.setTextColor(17, 24, 39)
+      doc.text(`Payable Amount: ₹ ${totalVal.toFixed(2)}`, pX, pY)
+      pY += 5.5
+
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(7.5)
+      doc.setTextColor(100, 100, 100)
+      doc.text("Please pay exact order total to courier agent upon delivery.", pX, pY)
+    } else {
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8.5)
+      doc.setTextColor(17, 24, 39)
+      doc.text("Scan to Pay (UPI)", pX, pY)
+      pY += 4.5
+
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
+      doc.setTextColor(70, 70, 70)
+      doc.text("UPI ID: 9908888296@hdfc", pX, pY)
+      pY += 4.5
+
+      doc.text(`Payment Mode: ${paymentMode}`, pX, pY)
+      pY += 4.5
+
+      if (order.paymentId || order.transactions?.[0]?.id) {
+        const txId = order.paymentId || order.transactions?.[0]?.id || ""
+        doc.text(`Txn ID: ${txId.slice(0, 24)}`, pX, pY)
+      }
+    }
+
+    topY += bankBoxHeight + 8
+
+    // 7. Declaration & Authorised Signatory
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(7.5)
+    doc.setTextColor(70, 70, 70)
+    const declText = "We Declare that this Invoice shows the actual price of goods described and that all particulars are true & correct."
+    const declLines = doc.splitTextToSize(declText, 105)
+    doc.text(declLines, margin, topY)
+
+    // Authorised Signatory (Right)
+    const sigX = pageWidth - margin
+    doc.setFont("helvetica", "bold")
+    doc.setFontSize(8.5)
+    doc.setTextColor(17, 24, 39)
+    doc.text("For Sai Venkata Rama Agro Farms Pvt. Ltd.", sigX, topY, { align: "right" })
+
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(8.5)
+    doc.text("Authorised Signatory", sigX, topY + 16, { align: "right" })
+
+    // 8. Bottom Center Footer
+    const pageHeight = doc.internal.pageSize.getHeight()
+    doc.setFont("helvetica", "normal")
+    doc.setFontSize(7.5)
+    doc.setTextColor(120, 120, 120)
+    doc.text("This is a computer-generated invoice.", pageWidth / 2, pageHeight - 8, { align: "center" })
+
+    doc.save(`${filenamePrefix}-${invoiceNo.replace(/\//g, "-")}.pdf`)
     return true
   } catch (error) {
     console.error("PDF generation error", error)
@@ -266,277 +516,12 @@ export const generateUserInvoicePDF = async (order: OrderForInvoice) => {
   }
 }
 
-// Generates admin invoice in simple black and white format matching the operational wireframe.
-export const generateAdminInvoicePDF = async (order: OrderForInvoice) => {
-  const doc = new jsPDF()
-  const pageWidth = doc.internal.pageSize.getWidth()
-
-  const getBase64ImageFromURL = (url: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const img = new Image()
-      img.setAttribute("crossOrigin", "anonymous")
-      img.onload = () => {
-        const canvas = document.createElement("canvas")
-        canvas.width = img.width
-        canvas.height = img.height
-        const ctx = canvas.getContext("2d")
-        ctx?.drawImage(img, 0, 0)
-        resolve(canvas.toDataURL("image/png"))
-      }
-      img.onerror = (error) => reject(error)
-      img.src = url
-    })
-  }
-
-  try {
-    // Top Left: Brand Logo in original colors
-    try {
-      const logoData = await getBase64ImageFromURL("/primaryLogo.png")
-      doc.addImage(logoData, "PNG", 15, 12, 38, 14)
-    } catch {
-      doc.setFontSize(20)
-      doc.setTextColor(74, 29, 31)
-      doc.text("ZIPLY5", 15, 22)
-    }
-
-    // Top Right: INVOICE and Invoice date
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(20)
-    doc.setTextColor(0, 0, 0)
-    doc.text("INVOICE", pageWidth - 15, 20, { align: "right" })
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(9.5)
-    doc.setTextColor(60, 60, 60)
-    const invoiceDate = formatISTDate(new Date())
-    doc.text(`Invoice date: ${invoiceDate}`, pageWidth - 15, 27, { align: "right" })
-
-    // Divider under header
-    doc.setDrawColor(200, 200, 200)
-    doc.setLineWidth(0.3)
-    doc.line(15, 33, pageWidth - 15, 33)
-
-    // Row 1: Customer Details (Left) vs Billing Address (Right)
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(10)
-    doc.setTextColor(0, 0, 0)
-    doc.text("Customer Details", 15, 41)
-    doc.text("Billing Address", pageWidth - 15, 41, { align: "right" })
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(9)
-    doc.setTextColor(40, 40, 40)
-    doc.text(`Name: ${order.customerName ?? "-"}`, 15, 47)
-    doc.text(`Contact: ${order.customerPhone ?? "-"}`, 15, 52)
-    doc.text(`Email: ${order.customerEmail ?? order.user?.email ?? "-"}`, 15, 57)
-
-    const billingLines = doc.splitTextToSize(order.customerAddress ?? "-", 85)
-    doc.text(billingLines, pageWidth - 15, 47, { align: "right" })
-
-    // Row 2: Order Information (Left) vs Shipping Address (Right)
-    const row2Y = Math.max(65, 47 + billingLines.length * 4.5 + 4)
-
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(10)
-    doc.setTextColor(0, 0, 0)
-    doc.text("Order Information", 15, row2Y)
-    doc.text("Shipping Address", pageWidth - 15, row2Y, { align: "right" })
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(9)
-    doc.setTextColor(40, 40, 40)
-    const orderDate = formatISTDateTime(order.createdAt)
-    doc.text(`Order ID: ${order.id}`, 15, row2Y + 6)
-    doc.text(`Order Date: ${orderDate}`, 15, row2Y + 11)
-    doc.text(`Order Status: ${order.status.toUpperCase()}`, 15, row2Y + 16)
-
-    const shippingLines = doc.splitTextToSize(order.customerAddress ?? "-", 85)
-    doc.text(shippingLines, pageWidth - 15, row2Y + 6, { align: "right" })
-
-    // Middle Section: Product details heading and black & white table
-    const tableStartY = Math.max(row2Y + 26, row2Y + 6 + shippingLines.length * 4.5 + 8)
-
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(10.5)
-    doc.setTextColor(0, 0, 0)
-    doc.text("Product details", 15, tableStartY - 3)
-
-    const tableData = (order.items ?? []).map((item) => {
-      const unit = Number(item.unitPrice ?? item.price ?? 0)
-      const qty = Number(item.quantity ?? 1)
-      const line = Number(item.lineTotal ?? item.subtotal ?? unit * qty)
-      return [
-        item.product?.name ?? "Product",
-        qty.toString(),
-        `${order.currency || "INR"} ${unit.toFixed(2)}`,
-        `${order.currency || "INR"} ${line.toFixed(2)}`,
-      ]
-    })
-
-    autoTable(doc, {
-      startY: tableStartY,
-      head: [["Product Details", "Qty", "Unit Price", "Subtotal"]],
-      body: tableData,
-      headStyles: {
-        fillColor: [245, 245, 245],
-        textColor: [0, 0, 0],
-        fontSize: 9,
-        fontStyle: "bold",
-        lineColor: [0, 0, 0],
-        lineWidth: 0.2 ,
-      },
-      styles: {
-        fontSize: 8.5,
-        cellPadding: 3.5,
-        textColor: [0, 0, 0],
-        lineColor: [0, 0, 0],
-        lineWidth: 0.2,
-      },
-      columnStyles: {
-        0: { cellWidth: "auto" },
-        1: { halign: "left", cellWidth: 25 },
-        2: { halign: "left", cellWidth: 35 },
-        3: { halign: "left", cellWidth: 35 },
-      },
-      alternateRowStyles: { fillColor: [255, 255, 255] },
-      margin: { left: 15, right: 15 },
-    })
-
-    // Financial summary under the table (pure black & white)
-    const finalY = (doc as any).lastAutoTable.finalY + 8
-    const summaryX = pageWidth - 65
-    const valueX = pageWidth - 15 - 4
-
-    // Amount in Words (left side)
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(8.5)
-    doc.setTextColor(0, 0, 0)
-    doc.text("Amount in Words:", 15, finalY)
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(8.5)
-    doc.setTextColor(40, 40, 40)
-    const amountInWords = convertNumberToWords(Number(order.total), order.currency)
-    const wordsLines = doc.splitTextToSize(amountInWords, summaryX - 25)
-    doc.text(wordsLines, 15, finalY + 5)
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(9)
-    doc.setTextColor(80, 80, 80)
-    doc.text("Subtotal:", summaryX, finalY)
-    doc.text("Tax:", summaryX, finalY + 5.5)
-    doc.text("Discount:", summaryX, finalY + 11)
-    doc.text("Shipping:", summaryX, finalY + 16.5)
-
-    doc.setDrawColor(0, 0, 0)
-    doc.setLineWidth(0.3)
-    doc.line(summaryX, finalY + 20.5, pageWidth - 15, finalY + 20.5)
-
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(10)
-    doc.setTextColor(0, 0, 0)
-    doc.text("Total:", summaryX, finalY + 26)
-
-    doc.setFont("helvetica", "normal")
-    doc.setFontSize(9)
-    doc.setTextColor(0, 0, 0)
-    doc.text(`${order.currency || "INR"} ${Number(order.subtotal ?? 0).toFixed(2)}`, valueX, finalY, { align: "right" })
-    doc.text(`${order.currency || "INR"} ${Number(order.tax ?? 0).toFixed(2)}`, valueX, finalY + 5.5, { align: "right" })
-    doc.text(`- ${order.currency || "INR"} ${Number(order.discount ?? 0).toFixed(2)}`, valueX, finalY + 11, { align: "right" })
-    doc.text(`${order.currency || "INR"} ${Number(order.shipping ?? 0).toFixed(2)}`, valueX, finalY + 16.5, { align: "right" })
-
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(10)
-    doc.text(`${order.currency || "INR"} ${Number(order.total).toFixed(2)}`, valueX, finalY + 26, { align: "right" })
-
-    // Payment Table below Total Amount
-    const primaryTx = order.transactions?.[0]
-    const paymentIdText = order.paymentId || primaryTx?.id || "—"
-    const paymentDateText = primaryTx?.createdAt
-      ? formatISTDateTime(primaryTx.createdAt)
-      : formatISTDateTime(order.createdAt)
-    const paymentModeText = (order.paymentMethod || primaryTx?.gateway || "—").toUpperCase()
-    const paymentStatusText = (order.paymentStatus || primaryTx?.status || "PENDING").toUpperCase()
-
-    const paymentTableStartY = finalY + 34
-
-    autoTable(doc, {
-      startY: paymentTableStartY,
-      head: [["Payment ID", "Date and Time", "Mode of Payment", "Payment Status"]],
-      body: [[paymentIdText, paymentDateText, paymentModeText, paymentStatusText]],
-      headStyles: {
-        fillColor: [245, 245, 245],
-        textColor: [0, 0, 0],
-        fontSize: 8.5,
-        fontStyle: "bold",
-        lineColor: [0, 0, 0],
-        lineWidth: 0.2,
-      },
-      styles: {
-        fontSize: 8,
-        cellPadding: 3,
-        textColor: [0, 0, 0],
-        lineColor: [0, 0, 0],
-        lineWidth: 0.2,
-      },
-      columnStyles: {
-        0: { cellWidth: 55 },
-        1: { cellWidth: 45 },
-        2: { cellWidth: 40 },
-        3: { cellWidth: 40 },
-      },
-      alternateRowStyles: { fillColor: [255, 255, 255] },
-      margin: { left: 15, right: 15 },
-    })
-
-    // Footer: Copyright text & Terms and Conditions hyperlink
-    const pageHeight = doc.internal.pageSize.getHeight()
-    const totalPages = (doc.internal as any).getNumberOfPages ? (doc.internal as any).getNumberOfPages() : 1
-
-    for (let i = 1; i <= totalPages; i++) {
-      doc.setPage(i)
-
-      // Footer subtle divider line
-      doc.setDrawColor(220, 220, 220)
-      doc.setLineWidth(0.2)
-      doc.line(15, pageHeight - 15, pageWidth - 15, pageHeight - 15)
-
-      // Copyright notice (Left aligned)
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(8)
-      doc.setTextColor(110, 110, 110)
-      doc.text(
-        `© ${new Date().getFullYear()} Sai Venkata Rama Agro Farms Pvt Ltd All Rights Reserved.`,
-        15,
-        pageHeight - 10,
-      );
-
-      // Terms & Conditions Hyperlink (Right aligned)
-      const termsText = "Terms & Conditions"
-      const termsUrl = typeof window !== "undefined" && window.location?.origin
-        ? `${window.location.origin}/terms`
-        : "https://ziply5.com/terms"
-
-      doc.setFontSize(8)
-      doc.setTextColor(30, 30, 30)
-      const termsWidth = doc.getTextWidth(termsText)
-      const termsX = pageWidth - 15 - termsWidth
-      doc.textWithLink(termsText, termsX, pageHeight - 10, { url: termsUrl })
-      doc.setDrawColor(100, 100, 100)
-      doc.setLineWidth(0.2)
-      doc.line(termsX, pageHeight - 9.3, termsX + termsWidth, pageHeight - 9.3)
-      if (typeof doc.link === "function") {
-        doc.link(termsX, pageHeight - 13, termsWidth, 5, { url: termsUrl })
-      }
-    }
-
-    doc.save(`admin-invoice-${order.id}.pdf`)
-    return true
-  } catch (error) {
-    console.error("Admin PDF generation error", error)
-    return false
-  }
+export const generateUserInvoicePDF = async (order: OrderForInvoice) => {
+  return generateTaxInvoice(order, "invoice")
 }
 
-// Backward compatibility alias for customer invoice
+export const generateAdminInvoicePDF = async (order: OrderForInvoice) => {
+  return generateTaxInvoice(order, "admin-invoice")
+}
+
 export const generateInvoicePDF = generateUserInvoicePDF

@@ -7,7 +7,7 @@ import { ComboForm } from "@/components/dashboard/ComboForm"
 export default function AdminEditComboPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   return (
-    <section className="mx-auto w-full max-w-7xl space-y-4">
+    <section className="w-full space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Edit Combo</h1>
