@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   if (forbidden) return forbidden
 
   const page = Number(request.nextUrl.searchParams.get("page") ?? "1")
-  const limit = Number(request.nextUrl.searchParams.get("limit") ?? "20")
+  const limit = Number(request.nextUrl.searchParams.get("limit") ?? "1000")
 
   try {
     const data = await listOrders(page, limit, auth.user.role, auth.user.sub)

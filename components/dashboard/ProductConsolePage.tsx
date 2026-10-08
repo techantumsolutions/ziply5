@@ -187,7 +187,7 @@ const MAX_SECTIONS = 10
 const MAX_PRODUCT_FEATURES = 5
 const MAX_IMAGE_BYTES = 1 * 1024 * 1024
 const MAX_VIDEO_BYTES = 10 * 1024 * 1024
-const DESCRIPTION_MAX_CHARS = 350
+const DESCRIPTION_MAX_CHARS = 500
 const LIST_PAGE_SIZE = 10
 const ADD_PENDING_ID_KEY = "ziply5:product-add-pending-id"
 const ADD_DRAFT_ID_KEY = "ziply5:product-add-draft-id"
@@ -595,26 +595,31 @@ const ImageUploadPicker = ({
 const resolveProductCategoryId = (p: any, availableCategories: CategoryRow[] = []): string => {
   if (!p) return ""
 
+  // Flatten p if nested inside p.product
+  const item = p.product && typeof p.product === "object" ? { ...p.product, ...p } : p
+
   let foundId = ""
 
   // 1. Direct categoryId/category_id on product
-  if (typeof p.categoryId === "string" && p.categoryId.trim()) {
-    foundId = p.categoryId.trim()
-  } else if (typeof p.category_id === "string" && p.category_id.trim()) {
-    foundId = p.category_id.trim()
-  } else if (typeof p.category === "string" && p.category.trim()) {
-    foundId = p.category.trim()
-  } else if (p.category && typeof p.category.id === "string" && p.category.id.trim()) {
-    foundId = p.category.id.trim()
+  if (typeof item.categoryId === "string" && item.categoryId.trim()) {
+    foundId = item.categoryId.trim()
+  } else if (typeof item.category_id === "string" && item.category_id.trim()) {
+    foundId = item.category_id.trim()
+  } else if (typeof item.category === "string" && item.category.trim()) {
+    foundId = item.category.trim()
+  } else if (item.category && typeof item.category.id === "string" && item.category.id.trim()) {
+    foundId = item.category.id.trim()
   }
 
   // 2. Categories array on product
   if (!foundId) {
-    const cats = Array.isArray(p.categories)
-      ? p.categories
-      : Array.isArray(p.productCategories)
-        ? p.productCategories
-        : []
+    const cats = Array.isArray(item.categories)
+      ? item.categories
+      : Array.isArray(item.productCategories)
+        ? item.productCategories
+        : Array.isArray(p.categories)
+          ? p.categories
+          : []
     for (const c of cats) {
       if (typeof c === "string" && c.trim()) {
         foundId = c.trim()
@@ -641,31 +646,33 @@ const resolveProductCategoryId = (p: any, availableCategories: CategoryRow[] = [
     }
   }
 
-  // If foundId matches a category ID directly in availableCategories, return it
-  if (foundId && availableCategories.some((ac) => ac.id === foundId)) {
-    return foundId
+  // If foundId matches a category ID directly in availableCategories (type-insensitive)
+  if (foundId && availableCategories.some((ac) => String(ac.id) === String(foundId))) {
+    return availableCategories.find((ac) => String(ac.id) === String(foundId))?.id || foundId
   }
 
   // 3. Fallback: match by slug or name if foundId is a slug/name or if product has category slug/name
   if (availableCategories.length > 0) {
     const slugOrNameCandidates = [
       foundId,
-      typeof p.categorySlug === "string" ? p.categorySlug : null,
-      typeof p.category_slug === "string" ? p.category_slug : null,
-      typeof p.categoryName === "string" ? p.categoryName : null,
-      typeof p.category_name === "string" ? p.category_name : null,
-      p.category?.slug,
-      p.category?.name,
-      p.categories?.[0]?.slug,
-      p.categories?.[0]?.name,
-      p.categories?.[0]?.category?.slug,
-      p.categories?.[0]?.category?.name,
+      typeof item.categorySlug === "string" ? item.categorySlug : null,
+      typeof item.category_slug === "string" ? item.category_slug : null,
+      typeof item.categoryName === "string" ? item.categoryName : null,
+      typeof item.category_name === "string" ? item.category_name : null,
+      item.category?.slug,
+      item.category?.name,
+      item.categories?.[0]?.slug,
+      item.categories?.[0]?.name,
+      item.categories?.[0]?.category?.slug,
+      item.categories?.[0]?.category?.name,
+      p.categorySlug,
+      p.categoryName,
     ].filter((val): val is string => typeof val === "string" && Boolean(val.trim()))
 
     for (const candidate of slugOrNameCandidates) {
-      const target = candidate.trim().toLowerCase()
+      const targetStr = candidate.trim().toLowerCase()
       const matched = availableCategories.find(
-        (ac) => ac.id === candidate.trim() || ac.slug.toLowerCase() === target || ac.name.toLowerCase() === target,
+        (ac) => String(ac.id) === candidate.trim() || ac.slug?.toLowerCase() === targetStr || ac.name?.toLowerCase() === targetStr,
       )
       if (matched) return matched.id
     }
@@ -943,9 +950,15 @@ export function ProductConsolePage({
   }
 
   const handleNextStep = () => {
-    if (currentStep === 1 && (!name.trim() || !slug.trim())) {
-      setError("Name and slug are required before continuing")
-      return
+    if (currentStep === 1) {
+      if (!name.trim() || !slug.trim()) {
+        setError("Name and slug are required before continuing")
+        return
+      }
+      if (!categoryId) {
+        setError("Category is mandatory before continuing")
+        return
+      }
     }
     if (currentStep === 2) {
       if (isEmptyRichText(description)) {
@@ -964,6 +977,40 @@ export function ProductConsolePage({
       if (filledSections.length === 0) {
         setError("At least 1 detail section with title and description is mandatory")
         return
+      }
+    }
+    if (currentStep === 3) {
+      const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+      if (targetVariants.length === 0) {
+        setError("At least 1 variant detail must be provided")
+        return
+      }
+      for (let i = 0; i < targetVariants.length; i++) {
+        const v = targetVariants[i]
+        const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
+        const vWeight = (v.weight || "").trim()
+        const vSku = (v.sku || "").trim()
+        const vStock = (v.stock || "").trim()
+        const vSalePrice = variantSalePrice(v, discountEnabled)
+        const vMrp = Number(v.mrp || 0)
+        const vPrice = Number(v.price || 0)
+
+        if (!parseWeight(vWeight).value) {
+          setError(`${label}: Weight is mandatory`)
+          return
+        }
+        if (!(vSalePrice > 0) && !(vMrp > 0) && !(vPrice > 0)) {
+          setError(`${label}: Price / MRP is mandatory and must be greater than 0`)
+          return
+        }
+        if (!vSku) {
+          setError(`${label}: SKU is mandatory`)
+          return
+        }
+        if (vStock === "" || isNaN(Number(vStock)) || Number(vStock) < 0) {
+          setError(`${label}: Stock is mandatory`)
+          return
+        }
       }
     }
     setError("")
@@ -1028,7 +1075,7 @@ export function ProductConsolePage({
       setCostPrice("")
       setAmazonLink(p.amazonLink ?? "")
       setDiscountPercent(p.discountPercent != null ? String(Number(p.discountPercent)) : "")
-      setSimpleProductWeight(p.weight ?? ""); // Populate new weight field
+      setSimpleProductWeight(p.weight ?? v?.weight ?? ""); // Populate weight field
       setStockStatus(p.stockStatus ?? "in_stock")
       setTotalStock(String(p.totalStock ?? 0))
       setShelfLife(p.shelfLife ?? "")

@@ -549,7 +549,7 @@ export const listOrderIdsSupabase = async (input: {
 }) => {
   const client = getSupabaseAdmin()
   const page = Math.max(1, input.page)
-  const limit = Math.min(200, Math.max(1, input.limit))
+  const limit = Math.min(10000, Math.max(1, input.limit))
   const offset = (page - 1) * limit
   const errors: string[] = []
 

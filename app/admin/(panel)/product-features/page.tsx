@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { authedFetch, authedPost, authedPut } from "@/lib/dashboard-fetch"
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable"
+import { UploadCloud, X, Loader2 } from "lucide-react"
 
 type FeatureRow = {
   id: string
@@ -58,6 +59,10 @@ export default function AdminProductFeaturesPage() {
   const uploadIcon = async (files: FileList | null) => {
     const selected = files?.[0]
     if (!selected) return
+    if (selected.size > 2 * 1024 * 1024) {
+      setError("File size exceeds 2 MB limit. Please select a smaller square icon.")
+      return
+    }
     setUploading(true)
     setError("")
     try {
@@ -146,71 +151,111 @@ export default function AdminProductFeaturesPage() {
         <button
           type="button"
           onClick={openAdd}
-          className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white"
+          className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#5C230B]"
         >
           Add Feature
         </button>
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl">
-            <h2 className="mb-4 text-xl font-bold text-[#4A1D1F]">
-              {editing ? "Edit Feature" : "Add Feature"}
-            </h2>
-            <form onSubmit={handleSave} className="space-y-4">
-              <label className="block text-xs font-semibold uppercase text-[#646464]">
-                Title
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E8DCC8]">
+              <h2 className="text-xl font-bold text-[#4A1D1F]">
+                {editing ? "Edit Feature" : "Add Feature"}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsModalOpen(false)}
+                className="rounded-lg p-1 text-[#646464] hover:bg-[#FFF7EA] hover:text-[#4A1D1F]"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={handleSave} className="mt-4 space-y-4">
+              {error && <p className="rounded-lg bg-red-50 p-2.5 text-xs text-red-800 border border-red-200">{error}</p>}
+              
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[#646464]">
+                Title <span className="text-red-500">*</span>
                 <input
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm normal-case"
+                  className="mt-1 block w-full rounded-xl border border-[#D9D9D1] px-3.5 py-2.5 text-sm normal-case focus:border-[#7B3010] focus:outline-none"
                   required
                   placeholder="e.g. 100% Natural"
                 />
               </label>
-              <label className="block text-xs font-semibold uppercase text-[#646464]">
-                Icon
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => void uploadIcon(e.target.files)}
-                  className="mt-1 block w-full rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm normal-case"
-                />
-              </label>
+
+              {/* Highlighted Upload Dropzone */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-[#646464]">
+                  Feature Icon
+                </label>
+                <div className="relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#7B3010]/40 bg-[#FFFDF9] p-4 text-center transition-colors hover:border-[#7B3010] hover:bg-[#FFF7EA]">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => void uploadIcon(e.target.files)}
+                    disabled={uploading}
+                    className="absolute inset-0 z-10 cursor-pointer opacity-0 disabled:cursor-not-allowed"
+                  />
+                  <div className="flex flex-col items-center gap-1.5">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#FFF0E6] text-[#7B3010]">
+                      {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <UploadCloud className="h-5 w-5" />}
+                    </div>
+                    <p className="text-xs font-semibold text-[#4A1D1F]">
+                      {uploading ? "Uploading icon…" : "Click or drag to upload feature icon"}
+                    </p>
+                    <div className="mt-1 space-y-0.5 text-[11px] text-[#7A7A7A]">
+                      <p>• Resolution: <strong className="font-semibold text-[#2A1810]">Square (1:1 aspect ratio)</strong></p>
+                      <p>• Suggested Dimensions: <strong className="font-semibold text-[#2A1810]">64×64 px to 128×128 px</strong></p>
+                      <p>• Size Limit: <strong className="font-semibold text-[#2A1810]">Max 2 MB</strong> (PNG, SVG, WEBP, JPG)</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {icon ? (
-                <div className="flex items-center gap-3">
-                  <img src={icon} alt="" className="h-10 w-10 rounded object-cover border border-[#E8DCC8]" />
+                <div className="flex items-center justify-between rounded-xl border border-[#E8DCC8] bg-[#FFFBF3] p-3">
+                  <div className="flex items-center gap-3">
+                    <img src={icon} alt="Feature Icon Preview" className="h-10 w-10 rounded-lg border border-[#E8DCC8] bg-white object-contain p-1" />
+                    <div>
+                      <p className="text-xs font-semibold text-[#4A1D1F]">Icon Uploaded</p>
+                      <p className="text-[10px] text-[#7A7A7A]">Square format ready</p>
+                    </div>
+                  </div>
                   <button
                     type="button"
                     onClick={() => setIcon("")}
-                    className="text-xs font-semibold uppercase text-red-600"
+                    className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 hover:bg-red-100"
                   >
-                    Remove icon
+                    Remove
                   </button>
                 </div>
               ) : null}
-              <label className="block text-xs font-semibold uppercase text-[#646464]">
-                Display order
+
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[#646464]">
+                Display Order
                 <input
                   type="number"
                   value={sortOrder}
                   onChange={(e) => setSortOrder(e.target.value)}
-                  className="mt-1 block w-full rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm normal-case"
+                  className="mt-1 block w-full rounded-xl border border-[#D9D9D1] px-3.5 py-2.5 text-sm normal-case focus:border-[#7B3010] focus:outline-none"
                 />
               </label>
+
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="rounded-full px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-[#646464] hover:bg-gray-50"
+                  className="rounded-full px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-[#646464] hover:bg-gray-100"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={saving || uploading}
-                  className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white disabled:opacity-50"
+                  className="rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#5C230B] disabled:opacity-50"
                 >
                   {saving ? "Saving…" : editing ? "Update" : "Add feature"}
                 </button>
