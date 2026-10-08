@@ -61,6 +61,18 @@ export default function AdminOrdersPage() {
   const [rowActionError, setRowActionError] = useState<Record<string, string>>({});
   const [copiedTxId, setCopiedTxId] = useState<string | null>(null);
 
+  const resetFilters = useCallback(() => {
+    setSearchTerm("");
+    setStatusTab("all");
+    setPaymentFilter("all");
+    setOrderFilter("all");
+    setShipmentFilter("all");
+    setDateFrom("");
+    setDateTo("");
+    setSortBy("latest");
+    setPage(1);
+  }, []);
+
   const copyToClipboard = (text: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
@@ -324,7 +336,7 @@ export default function AdminOrdersPage() {
     }
     setLoading(true);
     setError("");
-    authedFetch<{ items: OrderRow[] }>("/api/v1/orders?page=1&limit=20")
+    authedFetch<{ items: OrderRow[] }>("/api/v1/orders?page=1&limit=1000")
       .then((d) => setRows(d.items))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -674,6 +686,16 @@ export default function AdminOrdersPage() {
               </Select>
             </div>
           </div>
+        </div>
+
+        <div className="mt-2.5 flex justify-end">
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="text-[11px] font-bold uppercase tracking-wide text-[#7B3010] hover:underline"
+          >
+            Reset All Filters
+          </button>
         </div>
 
         {/* Bottom Actions Row */}

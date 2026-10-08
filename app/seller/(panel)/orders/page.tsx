@@ -20,7 +20,7 @@ export default function SellerOrdersPage() {
   const load = useCallback(() => {
     setLoading(true);
     setError("");
-    authedFetch<{ items: OrderRow[] }>("/api/v1/orders?page=1&limit=50")
+    authedFetch<{ items: OrderRow[] }>("/api/v1/orders?page=1&limit=1000")
       .then((d) => setRows(d.items))
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));

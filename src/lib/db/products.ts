@@ -20,6 +20,8 @@ const PRODUCT_BASE_COLUMNS = [
   "id",
   "sellerId",
   "brandId",
+  "categoryId",
+  "category_id",
   "name",
   "slug",
   "description",
@@ -523,10 +525,10 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
     .map((row) => safeString((row as any).categoryId ?? (row as any).category_id))
     .filter(Boolean)
   const categoryRows = categoryIds.length ? await readByIds(CATEGORY_TABLES, [...new Set(categoryIds)]) : []
-  const categorySlugById = new Map(
+  const categorySlugById = new Map<string, string>(
     categoryRows
-      .map((c) => [safeString((c as any).id), safeString((c as any).slug)])
-      .filter(([cid, slug]) => cid && slug),
+      .map((c) => [safeString((c as any).id), safeString((c as any).slug)] as [string, string])
+      .filter(([cid, slug]) => Boolean(cid && slug)),
   )
 
   // Optionally hydrate tags (best-effort; keep empty if table mismatch).
@@ -566,10 +568,10 @@ export const hydrateProductsForListSupabase = async <T extends Record<string, un
     .map((row) => safeString((row as any).categoryId ?? (row as any).category_id))
     .filter(Boolean)
   const categoryRowsFull = categoryIds.length ? await readByIds(CATEGORY_TABLES, [...new Set(categoryIds)]) : []
-  const categorySlugById = new Map(
+  const categorySlugById = new Map<string, string>(
     categoryRowsFull
-      .map((c) => [safeString((c as any).id), safeString((c as any).slug)])
-      .filter(([cid, slug]) => cid && slug),
+      .map((c) => [safeString((c as any).id), safeString((c as any).slug)] as [string, string])
+      .filter(([cid, slug]) => Boolean(cid && slug)),
   )
 
   const tagIds = productTagRows
@@ -664,11 +666,14 @@ export const createProductSupabase = async (input: {
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }>
 }) => {
-  let baseInput = { ...input.base }
-  const existingId = safeString(baseInput.id)
+  let baseInput: Record<string, unknown> = {
+    ...input.base,
+    ...(input.categoryId ? { categoryId: input.categoryId, category_id: input.categoryId } : {}),
+  }
+  const existingId = safeString((baseInput as any).id)
   if (!existingId || !/^PRD-\d{6}$/i.test(existingId)) {
     const seqId = await getNextProductSequenceId()
-    baseInput.id = seqId
+    ;(baseInput as any).id = seqId
   }
   const base = await normalizeActorFks(withId(withTimestampsForInsert(baseInput)))
   const created = await insertFirst(PRODUCT_TABLES, [base])
@@ -803,6 +808,7 @@ export const updateProductSupabase = async (input: {
   const baseUpdate = await normalizeActorFks(
     withTimestampForUpdate({
       ...input.baseUpdate,
+      ...(input.categoryId !== undefined ? { categoryId: input.categoryId, category_id: input.categoryId } : {}),
       ...(stampProductPrice ? { priceUpdatedAt: new Date().toISOString() } : {}),
     }),
   )
