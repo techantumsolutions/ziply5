@@ -48,7 +48,7 @@ const sectionSchema = z.object({
 })
 
 export const createProductSchema = z.object({
-  id: z.string().uuid().optional(),
+  id: z.string().optional(),
   name: z.string().min(2),
   slug: z.string().min(2),
   sku: z.string().min(2),
@@ -114,7 +114,6 @@ export const updateProductSchema = z.object({
   taxIncluded: z.boolean().optional(),
   stockStatus: z.enum(["in_stock", "out_of_stock"]).optional(),
   totalStock: z.number().int().min(0).optional(),
-  shelfLife: z.string().nullable().optional(),
   preparationType: z.enum(["ready_to_eat", "ready_to_cook"]).optional().nullable(),
   spiceLevel: z.enum(["mild", "medium", "hot", "extra_hot"]).optional().nullable(),
   isActive: z.boolean().optional(),

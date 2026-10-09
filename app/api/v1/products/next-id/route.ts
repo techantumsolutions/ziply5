@@ -8,6 +8,6 @@ export async function GET() {
     const nextId = await getNextProductSequenceId()
     return NextResponse.json({ data: { nextId } })
   } catch {
-    return NextResponse.json({ data: { nextId: "PRD-000029" } })
+    return NextResponse.json({ data: { nextId: "PRD-00024" } })
   }
 }

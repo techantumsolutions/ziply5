@@ -70,6 +70,7 @@ const adminNav: DashboardNavItem[] = [
       { href: "/admin/categories", label: "Categories", icon: FolderTree },
       { href: "/admin/tags", label: "Tags", icon: Hash },
       { href: "/admin/product-features", label: "Product Features", icon: Sparkles },
+      { href: "/admin/hsn-barcode", label: "HSN & Barcodes", icon: FileText },
     ],
   },
   { href: "/admin/master", label: "Master data", icon: Database },

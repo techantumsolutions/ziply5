@@ -71,7 +71,6 @@ const normalizeActorFks = async (base: Record<string, unknown>) => {
   const createdOk = createdById ? await existsById(USER_TABLES, createdById) : true
   const managedOk = managedById ? await existsById(USER_TABLES, managedById) : true
   if (createdOk && managedOk) return base
-  // Keep writes unblocked even when auth subject doesn't map to a User row yet.
   return {
     ...base,
     ...(createdOk ? {} : { createdById: null }),
@@ -106,7 +105,7 @@ export const listProductsSupabaseBasic = async (input: {
         errors.push(`${table}: ${error.message}`)
         continue
       }
-      return { items: (data ?? []) as ProductRow[], total: count ?? 0, page, limit }
+      return { items: (data ?? []) as unknown as ProductRow[], total: count ?? 0, page, limit }
     }
   }
   throw new Error(`Unable to list products via Supabase${errors.length ? ` (${errors.slice(0, 3).join(" | ")})` : ""}`)
@@ -121,7 +120,7 @@ export const getProductBySlugSupabaseBasic = async (slug: string) => {
       .eq("slug", slug)
       .maybeSingle()
     if (error) continue
-    if (data) return data as ProductRow
+    if (data) return data as unknown as ProductRow
   }
   return null
 }
@@ -310,16 +309,26 @@ const insertFirst = async (
   const errors: string[] = []
   for (const table of tables) {
     for (const payload of payloads) {
-      const { data, error } = await client.from(table).insert(payload).select("id").maybeSingle()
-      if (!error && data) return { row: data as Record<string, unknown>, errors }
-      if (error) {
-        errors.push(`${table}: ${error.message}`)
-        if (shouldRetryWithTimestamps(error.message)) {
-          const now = new Date().toISOString()
-          const camelPayload = { ...payload, createdAt: (payload as any).createdAt ?? now, updatedAt: (payload as any).updatedAt ?? now }
-          const retryCamel = await client.from(table).insert(camelPayload).select("id").maybeSingle()
-          if (!retryCamel.error && retryCamel.data) return { row: retryCamel.data as Record<string, unknown>, errors }
-          if (retryCamel.error) errors.push(`${table} (retry timestamps): ${retryCamel.error.message}`)
+      let currentPayload = { ...payload }
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { data, error } = await client.from(table).insert(currentPayload).select("id").maybeSingle()
+        if (!error && data) return { row: data as Record<string, unknown>, errors: [] }
+        if (error) {
+          const match = error.message.match(/Could not find the '([^']+)' column/i)
+          if (match && match[1] && match[1] in currentPayload) {
+            delete currentPayload[match[1]]
+            continue
+          }
+          if (shouldRetryWithTimestamps(error.message)) {
+            const now = new Date().toISOString()
+            const camelPayload = { ...currentPayload, createdAt: (currentPayload as any).createdAt ?? now, updatedAt: (currentPayload as any).updatedAt ?? now }
+            const retryCamel = await client.from(table).insert(camelPayload).select("id").maybeSingle()
+            if (!retryCamel.error && retryCamel.data) return { row: retryCamel.data as Record<string, unknown>, errors: [] }
+            if (retryCamel.error) errors.push(`${table} (retry timestamps): ${retryCamel.error.message}`)
+          } else {
+            errors.push(`${table}: ${error.message}`)
+          }
+          break
         }
       }
     }
@@ -335,9 +344,18 @@ const insertFirstNoId = async (
   const errors: string[] = []
   for (const table of tables) {
     for (const payload of payloads) {
-      const { error } = await client.from(table).insert(payload)
-      if (!error) return { ok: true, errors }
-      errors.push(`${table}: ${error.message}`)
+      let currentPayload = { ...payload }
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { error } = await client.from(table).insert(currentPayload)
+        if (!error) return { ok: true, errors: [] }
+        const match = error.message.match(/Could not find the '([^']+)' column/i)
+        if (match && match[1] && match[1] in currentPayload) {
+          delete currentPayload[match[1]]
+          continue
+        }
+        errors.push(`${table}: ${error.message}`)
+        break
+      }
     }
   }
   return { ok: false, errors }
@@ -352,9 +370,20 @@ const updateFirst = async (
   const errors: string[] = []
   for (const table of tables) {
     for (const payload of payloads) {
-      const { data, error } = await client.from(table).update(payload).eq("id", id).select("id").maybeSingle()
-      if (!error && data) return { ok: true, errors }
-      if (error) errors.push(`${table}: ${error.message}`)
+      let currentPayload = { ...payload }
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const { data, error } = await client.from(table).update(currentPayload).eq("id", id).select("id").maybeSingle()
+        if (!error && data) return { ok: true, errors: [] }
+        if (error) {
+          const match = error.message.match(/Could not find the '([^']+)' column/i)
+          if (match && match[1] && match[1] in currentPayload) {
+            delete currentPayload[match[1]]
+            continue
+          }
+          errors.push(`${table}: ${error.message}`)
+          break
+        }
+      }
     }
   }
   return { ok: false, errors }
@@ -393,20 +422,16 @@ export const getProductIdBySlugSupabase = async (slug: string) => {
 
 export const getProductByIdSupabaseBasic = async (id: string) => {
   const client = getSupabaseAdmin()
+  const cleanId = safeString(id)
+  if (!cleanId) return null
   const errors: string[] = []
   for (const table of PRODUCT_TABLES) {
-    const attempts = [
-      () => client.from(table).select(PRODUCT_BASE_COLUMNS).eq("id", id).maybeSingle(),
-      () => client.from(table).select(PRODUCT_BASE_COLUMNS).eq("id", id).maybeSingle(),
-    ]
-    for (const run of attempts) {
-      const { data, error } = await run()
-      if (!error) return (data as ProductRow | null) ?? null
-      if (error) errors.push(`${table}: ${error.message}`)
-    }
+    const { data, error } = await client.from(table).select(PRODUCT_BASE_COLUMNS).eq("id", cleanId).maybeSingle()
+    if (!error) return (data as ProductRow | null) ?? null
+    errors.push(`${table}: ${error.message}`)
   }
   if (errors.length) {
-    throw new Error(`Unable to get product via Supabase (${errors.slice(0, 3).join(" | ")})`)
+    logger.warn(`Unable to get product via Supabase for ID ${cleanId}: ${errors.join(" | ")}`)
   }
   return null
 }
@@ -422,18 +447,18 @@ const readByProductId = async <T extends Record<string, unknown>>(
       () =>
         opts?.orderBy
           ? client
-              .from(table)
-              .select("*")
-              .eq("productId", productId)
-              .order(opts.orderBy.camel, { ascending: opts.orderBy.ascending ?? true })
+            .from(table)
+            .select("*")
+            .eq("productId", productId)
+            .order(opts.orderBy.camel, { ascending: opts.orderBy.ascending ?? true })
           : client.from(table).select("*").eq("productId", productId),
       () =>
         opts?.orderBy
           ? client
-              .from(table)
-              .select("*")
-              .eq("product_id", productId)
-              .order(opts.orderBy.snake, { ascending: opts.orderBy.ascending ?? true })
+            .from(table)
+            .select("*")
+            .eq("product_id", productId)
+            .order(opts.orderBy.snake, { ascending: opts.orderBy.ascending ?? true })
           : client.from(table).select("*").eq("product_id", productId),
     ]
     for (const run of attempts) {
@@ -647,10 +672,10 @@ export const getNextProductSequenceId = async (): Promise<string> => {
           }
         }
       }
-      return `PRD-${String(maxSeq + 1).padStart(6, "0")}`
+      return `PRD-${String(maxSeq + 1).padStart(5, "0")}`
     }
   }
-  return "PRD-000001"
+  return "PRD-00001"
 }
 
 export const createProductSupabase = async (input: {
@@ -669,18 +694,46 @@ export const createProductSupabase = async (input: {
   }
   delete (baseInput as any).categoryId
   delete (baseInput as any).category_id
-  delete (baseInput as any).categories
-  delete (baseInput as any).tags
-  delete (baseInput as any).variants
-  delete (baseInput as any).images
-  delete (baseInput as any).features
-  delete (baseInput as any).labels
-  delete (baseInput as any).details
-  delete (baseInput as any).sections
+
+  const targetId = safeString((baseInput as any).id)
+  const targetSku = safeString((baseInput as any).sku)
+
+  let existingProduct: ProductRow | null = null
+  if (targetId) {
+    existingProduct = await getProductByIdSupabaseBasic(targetId)
+  }
+  if (!existingProduct && targetSku) {
+    const client = getSupabaseAdmin()
+    for (const table of PRODUCT_TABLES) {
+      const { data } = await client.from(table).select("id").eq("sku", targetSku).maybeSingle()
+      if (data?.id) {
+        existingProduct = data as ProductRow
+        break
+      }
+    }
+  }
+
+  if (existingProduct && existingProduct.id) {
+    const exId = String(existingProduct.id)
+    await updateProductSupabase({
+      productId: exId,
+      baseUpdate: baseInput,
+      categoryId: input.categoryId,
+      tagIds: input.tagIds,
+      variants: input.variants,
+      images: input.images,
+      features: input.features,
+      labels: input.labels,
+      details: input.details,
+      sections: input.sections,
+    })
+    return { id: exId }
+  }
+
   const existingId = safeString((baseInput as any).id)
-  if (!existingId || !/^PRD-\d{6}$/i.test(existingId)) {
+  if (!existingId || !/^PRD-\d+$/i.test(existingId)) {
     const seqId = await getNextProductSequenceId()
-    ;(baseInput as any).id = seqId
+      ; (baseInput as any).id = seqId
   }
   const base = await normalizeActorFks(withId(withTimestampsForInsert(baseInput)))
   const created = await insertFirst(PRODUCT_TABLES, [base])
@@ -812,21 +865,13 @@ export const updateProductSupabase = async (input: {
     if (synced.catalogPriceChanged) stampProductPrice = true
   }
 
-  const baseUpdatePayload = { ...input.baseUpdate }
-  delete (baseUpdatePayload as any).categoryId
-  delete (baseUpdatePayload as any).category_id
-  delete (baseUpdatePayload as any).categories
-  delete (baseUpdatePayload as any).tags
-  delete (baseUpdatePayload as any).variants
-  delete (baseUpdatePayload as any).images
-  delete (baseUpdatePayload as any).features
-  delete (baseUpdatePayload as any).labels
-  delete (baseUpdatePayload as any).details
-  delete (baseUpdatePayload as any).sections
+  const rawUpdate = { ...input.baseUpdate }
+  delete (rawUpdate as any).categoryId
+  delete (rawUpdate as any).category_id
 
   const baseUpdate = await normalizeActorFks(
     withTimestampForUpdate({
-      ...baseUpdatePayload,
+      ...rawUpdate,
       ...(stampProductPrice ? { priceUpdatedAt: new Date().toISOString() } : {}),
     }),
   )

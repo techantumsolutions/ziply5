@@ -28,7 +28,7 @@ export function ProductFormStepper({
         {STEPS.map((step, index) => {
           const active = currentStep === step.id
           const completed = currentStep > step.id
-          const clickable = Boolean(onStepClick) && (completed || active)
+          const clickable = Boolean(onStepClick)
           return (
             <li key={step.id} className="flex flex-1 items-center gap-1">
               <button
