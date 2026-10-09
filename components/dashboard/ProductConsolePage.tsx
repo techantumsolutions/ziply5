@@ -1532,7 +1532,7 @@ export function ProductConsolePage({
   }, [basePrice, discountPercent, type, price])
 
   const displayProductId =
-    mode === "edit" && productId
+    (mode === "edit" || mode === "view") && productId
       ? productId
       : (autosavedDraftId && /^PRD-\d+$/i.test(autosavedDraftId) ? autosavedDraftId : null) ??
         nextSequenceId ??
@@ -4116,7 +4116,7 @@ export function ProductConsolePage({
                     {categories.find((c) => c.id === categoryId)?.name || <ReviewMissing />}
                   </ReviewRow>
                   <ReviewRow label="Product ID">
-                    <span className="font-mono text-xs">{displayProductId || "Generated on first save"}</span>
+                    <span className="font-mono text-sm font-bold text-[#4A1D1F]">{displayProductId || "Generated on first save"}</span>
                   </ReviewRow>
                   <ReviewRow label="Product Slug">{slug.trim() || <ReviewMissing />}</ReviewRow>
                   <ReviewRow label="Spice Level">

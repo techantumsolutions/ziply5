@@ -1061,12 +1061,22 @@ function ProfilePageContent() {
                             </p>
                           </div>
                           <div className="flex flex-col items-end gap-1">
-                            <span className="rounded-full bg-[#FDF0E6] px-2.5 py-1 text-[10px] font-semibold uppercase text-[#7B3010]">
-                              Order Status: {order.status}
-                            </span>
-                            {/* <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-indigo-700">
-                              {shippingStatus.replaceAll("_", " ")}
-                            </span> */}
+                            {latestLifecycle === "rejected" ? (
+                              <>
+                                <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-red-700 ring-1 ring-red-200">
+                                  Order Status: rejected
+                                </span>
+                                {(() => {
+                                  const rej = order.statusHistory?.find((h) => String((h as any).reasonCode ?? "").toLowerCase() === "admin_rejected" || String(h.toStatus).toLowerCase() === "rejected")
+                                  const noteText = (rej as any)?.notes || (order.statusHistory?.[0] as any)?.notes
+                                  return noteText ? <p className="text-[11px] font-medium text-red-600">Reason: {noteText}</p> : null
+                                })()}
+                              </>
+                            ) : (
+                              <span className="rounded-full bg-[#FDF0E6] px-2.5 py-1 text-[10px] font-semibold uppercase text-[#7B3010]">
+                                Order Status: {order.status}
+                              </span>
+                            )}
                           </div>
                         </div>
 

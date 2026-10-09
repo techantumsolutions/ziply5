@@ -64,7 +64,11 @@ export default function AdminOrderDetailPage() {
   const [syncingOrder, setSyncingOrder] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
   const [cancelReason, setCancelReason] = useState("")
-  const lifecycleStatus = (order?.statusHistory?.[0]?.toStatus ?? order?.status ?? "").toLowerCase()
+  const rawLifecycle = (order?.statusHistory?.[0]?.toStatus ?? order?.status ?? "").toLowerCase()
+  const hasAdminRejected =
+    rawLifecycle === "rejected" ||
+    order?.statusHistory?.some((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected")
+  const lifecycleStatus = hasAdminRejected ? "rejected" : rawLifecycle
   const refundStatus = (order?.refunds?.[0]?.status ?? "pending").toLowerCase()
 
   // Generates and downloads the PDF invoice matching the admin commercial/dispatch template.
@@ -359,7 +363,7 @@ export default function AdminOrderDetailPage() {
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Status</p>
-                <div className="mt-1">{getOrderStatusBadge(order.status)}</div>
+                <div className="mt-1">{getOrderStatusBadge(lifecycleStatus)}</div>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Payment</p>
@@ -376,6 +380,21 @@ export default function AdminOrderDetailPage() {
                 <p className="mt-1 font-mono text-xs text-[#2A1810] truncate" title={order.paymentId ?? "—"}>{order.paymentId ?? "—"}</p>
               </div>
             </div>
+
+            {lifecycleStatus === "rejected" && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
+                <p className="text-sm font-bold uppercase tracking-wider text-red-800">Order Rejected</p>
+                {(() => {
+                  const entry = order.statusHistory?.find((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected")
+                  const reasonNote = entry?.notes || order.statusHistory?.[0]?.notes
+                  return reasonNote ? (
+                    <p className="mt-1 text-xs font-semibold text-red-700">Rejection Reason: {reasonNote}</p>
+                  ) : (
+                    <p className="mt-1 text-xs text-red-600">This order was rejected by an administrator.</p>
+                  )
+                })()}
+              </div>
+            )}
 
             <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Order items</h2>

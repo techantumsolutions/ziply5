@@ -54,9 +54,18 @@ export const CUSTOMER_CANCEL_ALLOWED_LIFECYCLES = new Set([
 ])
 
 export const deriveLatestLifecycleToStatus = (
-  statusHistory: Array<{ toStatus: string }> | undefined | null,
+  statusHistory: Array<{ toStatus: string; reasonCode?: string | null }> | undefined | null,
   fallbackOrderStatus: string,
-) => String(statusHistory?.[0]?.toStatus ?? fallbackOrderStatus).toLowerCase()
+) => {
+  const rawStatus = String(statusHistory?.[0]?.toStatus ?? fallbackOrderStatus).toLowerCase()
+  const reasonCode = String(statusHistory?.[0]?.reasonCode ?? "").toLowerCase()
+  const isRejected =
+    rawStatus === "rejected" ||
+    reasonCode === "admin_rejected" ||
+    Boolean(statusHistory?.some((h) => String(h.reasonCode ?? "").toLowerCase() === "admin_rejected" || String(h.toStatus ?? "").toLowerCase() === "rejected"))
+  if (isRejected) return "rejected"
+  return rawStatus
+}
 
 export const orderHistoryHasCancelRequested = (statusHistory: Array<{ toStatus: string }> | undefined | null) =>
   Boolean(statusHistory?.some((e) => String(e.toStatus).toLowerCase() === "cancel_requested"))
