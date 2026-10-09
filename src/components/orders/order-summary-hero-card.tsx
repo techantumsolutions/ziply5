@@ -36,9 +36,17 @@ export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, 
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <span className="rounded-full bg-[#F3F4F6] px-3 py-1 text-[11px] font-semibold uppercase text-[#374151] ring-1 ring-[#E5E7EB]">
-            {order.status}
-          </span>
+          {(() => {
+            const isRejected =
+              order.status.toLowerCase() === "rejected" ||
+              order.statusHistory?.some((h: any) => h.reasonCode === "admin_rejected" || h.toStatus?.toLowerCase() === "rejected")
+            const displayStatus = isRejected ? "REJECTED" : order.status
+            return (
+              <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase ring-1 ${isRejected ? "bg-red-50 text-red-700 ring-red-200" : "bg-[#F3F4F6] text-[#374151] ring-[#E5E7EB]"}`}>
+                {displayStatus}
+              </span>
+            )
+          })()}
           {onSyncOrder ? (
             <button
               type="button"

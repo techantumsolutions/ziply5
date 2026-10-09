@@ -28,7 +28,9 @@ export type OrderForInvoice = {
     price?: string | number
     subtotal?: string | number
     sku?: string | null
-    product?: { name?: string | null; sku?: string | null } | null
+    hsnCode?: string | null
+    hsn?: string | null
+    product?: { name?: string | null; sku?: string | null; hsnCode?: string | null; hsn?: string | null } | null
     variant?: { sku?: string | null; name?: string | null; weight?: string | null } | null
   }>
 }
@@ -36,20 +38,53 @@ export type OrderForInvoice = {
 // --- Helper: Get Logo Base64 ---
 const getBase64ImageFromURL = (url: string): Promise<string> => {
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Logo load timeout")), 1500)
     const img = new Image()
-    img.setAttribute("crossOrigin", "anonymous")
     img.onload = () => {
-      const canvas = document.createElement("canvas")
-      canvas.width = img.width
-      canvas.height = img.height
-      const ctx = canvas.getContext("2d")
-      ctx?.drawImage(img, 0, 0)
-      const dataURL = canvas.toDataURL("image/png")
-      resolve(dataURL)
+      clearTimeout(timer)
+      try {
+        const canvas = document.createElement("canvas")
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext("2d")
+        ctx?.drawImage(img, 0, 0)
+        const dataURL = canvas.toDataURL("image/png")
+        resolve(dataURL)
+      } catch (err) {
+        reject(err)
+      }
     }
-    img.onerror = (error) => reject(error)
+    img.onerror = (err) => {
+      clearTimeout(timer)
+      reject(err)
+    }
     img.src = url
   })
+}
+
+const rupeeImageCache: Record<string, string> = {}
+
+const getRupeeSymbolDataUrl = (color: string = "#111827", isBold: boolean = false): string => {
+  try {
+    const cacheKey = `${color}_${isBold ? "b" : "n"}`
+    if (rupeeImageCache[cacheKey]) return rupeeImageCache[cacheKey]
+    if (typeof document === "undefined") return ""
+    const canvas = document.createElement("canvas")
+    canvas.width = 64
+    canvas.height = 64
+    const ctx = canvas.getContext("2d")
+    if (!ctx) return ""
+    ctx.fillStyle = color
+    ctx.font = `${isBold ? "bold" : "bold"} 54px "Segoe UI", Roboto, Arial, sans-serif`
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.fillText("₹", 32, 32)
+    const dataUrl = canvas.toDataURL("image/png")
+    rupeeImageCache[cacheKey] = dataUrl
+    return dataUrl
+  } catch {
+    return ""
+  }
 }
 
 // Format invoice number: ziply5/26-27/001
@@ -292,23 +327,23 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
 
     topY += gridBoxHeight + 6
 
-    // 4. Products Table (SKU in place of HSN)
+    // 4. Products Table (HSN Code)
     const tableData = (order.items && order.items.length > 0 ? order.items : []).map((item, index) => {
       const sno = (index + 1).toString()
       const descName = item.product?.name || "Product"
       const variantInfo = item.variant?.weight || item.variant?.name
       const description = variantInfo ? `${descName} (${variantInfo})` : descName
-      const sku = item.sku || item.product?.sku || item.variant?.sku || "21069099"
+      const hsn = item.hsnCode || item.hsn || item.product?.hsnCode || item.product?.hsn || "21069099"
       const qty = (item.quantity || 1).toString()
       const rateNum = Number(item.unitPrice ?? item.price ?? 0)
       const lineNum = Number(item.lineTotal ?? item.subtotal ?? rateNum * Number(qty))
 
-      return [sno, description, sku, qty, rateNum.toFixed(2), lineNum.toFixed(2)]
+      return [sno, description, hsn, qty, rateNum.toFixed(2), lineNum.toFixed(2)]
     })
 
     autoTable(doc, {
       startY: topY,
-      head: [["S.No", "DESCRIPTION", "SKU", "QTY", "RATE", "AMOUNT"]],
+      head: [["S.No", "DESCRIPTION", "HSN", "QTY", "RATE", "AMOUNT"]],
       body: tableData,
       headStyles: {
         fillColor: [249, 250, 251],
@@ -358,20 +393,35 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
 
     let currentSummaryY = tableFinalY
 
-    const renderSummaryLine = (label: string, valueStr: string, isBold: boolean = false) => {
+    const renderSummaryLine = (label: string, amount: number, isBold: boolean = false) => {
       doc.setFont("helvetica", isBold ? "bold" : "normal")
       doc.setFontSize(isBold ? 9.5 : 8.5)
       doc.setTextColor(isBold ? 17 : 55, isBold ? 24 : 65, isBold ? 39 : 81)
       doc.text(label, summaryLabelX, currentSummaryY)
-      doc.text(valueStr, summaryValueX, currentSummaryY, { align: "right" })
+
+      const numStr = amount.toFixed(2)
+      doc.text(numStr, summaryValueX, currentSummaryY, { align: "right" })
+
+      const numWidth = doc.getTextWidth(numStr)
+      const rupeeImg = getRupeeSymbolDataUrl(isBold ? "#111827" : "#374151", isBold)
+      if (rupeeImg && rupeeImg.startsWith("data:image")) {
+        const iconSize = isBold ? 3.8 : 3.3
+        const rupeeX = summaryValueX - numWidth - iconSize - 0.8
+        const rupeeY = currentSummaryY - (isBold ? 3.0 : 2.7)
+        try {
+          doc.addImage(rupeeImg, "PNG", rupeeX, rupeeY, iconSize, iconSize)
+        } catch {
+          // ignore addImage fallback
+        }
+      }
       currentSummaryY += 5
     }
 
-    renderSummaryLine("Sub Total (incl. GST)", `₹ ${subtotalVal.toFixed(2)}`)
-    renderSummaryLine("Taxable Value", `₹ ${taxableVal.toFixed(2)}`)
-    renderSummaryLine("SGST @ 2.5%", `₹ ${sgstVal.toFixed(2)}`)
-    renderSummaryLine("CGST @ 2.5%", `₹ ${cgstVal.toFixed(2)}`)
-    renderSummaryLine("Shipping / Courier", `₹ ${shippingVal.toFixed(2)}`)
+    renderSummaryLine("Sub Total (incl. GST)", subtotalVal)
+    renderSummaryLine("Taxable Value", taxableVal)
+    renderSummaryLine("SGST @ 2.5%", sgstVal)
+    renderSummaryLine("CGST @ 2.5%", cgstVal)
+    renderSummaryLine("Shipping / Courier", shippingVal)
 
     // Line above Total
     doc.setDrawColor(209, 213, 219)
@@ -382,7 +432,7 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     // Total Invoice Value Box
     doc.setFillColor(249, 250, 251)
     doc.rect(summaryLabelX - 2, currentSummaryY - 4, 84, 7, "F")
-    renderSummaryLine("Total Invoice Value", `₹ ${totalVal.toFixed(2)}`, true)
+    renderSummaryLine("Total Invoice Value", totalVal, true)
 
     // Amount Chargeable in words
     const amountInWords = convertNumberToWords(totalVal, order.currency)
@@ -393,9 +443,11 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
 
     doc.setFont("helvetica", "normal")
     doc.setTextColor(55, 65, 81)
-    doc.text(amountInWords, margin + 48, tableFinalY)
+    const maxWordsWidth = Math.max(40, summaryLabelX - (margin + 48) - 4)
+    const wordsLines = doc.splitTextToSize(amountInWords, maxWordsWidth)
+    doc.text(wordsLines, margin + 48, tableFinalY)
 
-    topY = Math.max(currentSummaryY + 6, tableFinalY + 32)
+    topY = Math.max(currentSummaryY + 6, tableFinalY + wordsLines.length * 4.5 + 4)
 
     // 6. Bank Details & Payment Section Box
     const bankBoxHeight = 36
@@ -451,7 +503,19 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
       doc.setFont("helvetica", "bold")
       doc.setFontSize(9)
       doc.setTextColor(17, 24, 39)
-      doc.text(`Payable Amount: ₹ ${totalVal.toFixed(2)}`, pX, pY)
+      doc.text("Payable Amount:", pX, pY)
+      const lblW = doc.getTextWidth("Payable Amount:")
+      const rImg = getRupeeSymbolDataUrl("#111827", true)
+      let valX = pX + lblW + 1.5
+      if (rImg && rImg.startsWith("data:image")) {
+        try {
+          doc.addImage(rImg, "PNG", valX, pY - 3.1, 3.8, 3.8)
+          valX += 4.5
+        } catch {
+          // ignore
+        }
+      }
+      doc.text(totalVal.toFixed(2), valX, pY)
       pY += 5.5
 
       doc.setFont("helvetica", "normal")

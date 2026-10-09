@@ -253,6 +253,7 @@ export default function AdminCombosPage() {
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-[#FFFBF3] text-xs font-semibold uppercase tracking-wide text-[#7A7A7A] border-b border-[#E8DCC8]">
                     <tr>
+                      <th className="px-4 py-3 text-center w-16">S.No</th>
                       <th className="px-4 py-3">Combo</th>
                       <th className="px-4 py-3">Included Items</th>
                       <th className="px-4 py-3">Price</th>
@@ -263,13 +264,18 @@ export default function AdminCombosPage() {
                   <tbody>
                     {rows.length === 0 ? (
                       <tr>
-                        <td className="px-4 py-8 text-center text-[#646464]" colSpan={5}>
+                        <td className="px-4 py-8 text-center text-[#646464]" colSpan={6}>
                           No combo offers found.
                         </td>
                       </tr>
                     ) : (
-                      rows.map((r) => (
+                      rows.map((r, index) => (
                         <tr key={r.id} className="border-t border-[#E8DCC8]/60 hover:bg-[#FFFBF3]/40 transition-colors">
+                          {/* S.No */}
+                          <td className="px-4 py-3 text-center text-xs font-semibold text-[#7A7A7A]">
+                            {(page - 1) * limit + index + 1}
+                          </td>
+
                           {/* Combo Info */}
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">

@@ -34,7 +34,7 @@ type OrderRow = {
   trackingUrl?: string | null;
   shipmentStatus?: string | null;
   fulfillment?: { fulfillmentStatus: string; deliveredAt?: string | null; shippedAt?: string | null } | null;
-  statusHistory?: Array<{ toStatus: string; changedAt: string }>;
+  statusHistory?: Array<{ toStatus: string; reasonCode?: string | null; notes?: string | null; changedAt: string }>;
   user?: { id: string; name: string; email: string };
 };
 
@@ -45,7 +45,7 @@ export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [canFetch, setCanFetch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "shipped" | "in_transit" | "delivered">("all");
+  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "shipped" | "in_transit" | "delivered" | "rejected">("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [orderFilter, setOrderFilter] = useState("all");
   const [shipmentFilter, setShipmentFilter] = useState("all");
@@ -60,6 +60,8 @@ export default function AdminOrdersPage() {
   const [rowActionBusy, setRowActionBusy] = useState<Record<string, string>>({});
   const [rowActionError, setRowActionError] = useState<Record<string, string>>({});
   const [copiedTxId, setCopiedTxId] = useState<string | null>(null);
+  const [rejectModalOrderId, setRejectModalOrderId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
 
   const resetFilters = useCallback(() => {
     setSearchTerm("");
@@ -233,7 +235,16 @@ export default function AdminOrdersPage() {
     if ((o.paymentStatus ?? "").toUpperCase() === "INITIATED") return "initiated";
     return "pending";
   }, []);
-  const lifecycleStatus = useCallback((o: OrderRow) => (o.statusHistory?.[0]?.toStatus ?? o.status ?? "pending").toLowerCase(), []);
+  const lifecycleStatus = useCallback((o: OrderRow) => {
+    const rawStatus = (o.statusHistory?.[0]?.toStatus ?? o.status ?? "pending").toLowerCase();
+    const reasonCode = (o.statusHistory?.[0]?.reasonCode ?? "").toLowerCase();
+    const isRejected =
+      rawStatus === "rejected" ||
+      reasonCode === "admin_rejected" ||
+      o.statusHistory?.some((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected");
+    if (isRejected) return "rejected";
+    return rawStatus;
+  }, []);
   const latestShipmentStatus = useCallback((o: OrderRow) => (o.shipmentStatus ?? o.shipments?.[0]?.shipmentStatus ?? "not_shipped").toLowerCase(), []);
   const itemsCount = useCallback((o: OrderRow) => o.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0), []);
   const deliveryEta = useCallback((o: OrderRow) => {
@@ -253,6 +264,7 @@ export default function AdminOrdersPage() {
       shipped: 0,
       in_transit: 0,
       delivered: 0,
+      rejected: 0,
     };
     rows.forEach((o) => {
       const lc = lifecycleStatus(o);
@@ -271,6 +283,9 @@ export default function AdminOrdersPage() {
       }
       if (lc === "delivered" || sh === "delivered" || Boolean(o.fulfillment?.deliveredAt)) {
         counts.delivered++;
+      }
+      if (lc === "rejected") {
+        counts.rejected++;
       }
     });
     return counts;
@@ -291,6 +306,7 @@ export default function AdminOrdersPage() {
         if (statusTab === "shipped" && lifecycle !== "shipped" && ship !== "shipped") return false;
         if (statusTab === "in_transit" && lifecycle !== "in_transit" && !["in_transit", "out_for_delivery"].includes(ship)) return false;
         if (statusTab === "delivered" && lifecycle !== "delivered" && ship !== "delivered" && !o.fulfillment?.deliveredAt) return false;
+        if (statusTab === "rejected" && lifecycle !== "rejected") return false;
       }
 
       if (paymentFilter !== "all" && payment !== paymentFilter) return false;
@@ -325,7 +341,7 @@ export default function AdminOrdersPage() {
   const pendingApprovalsCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "admin_approval_pending").length, [rows, lifecycleStatus]);
   const pendingOrdersCount = useMemo(() => rows.filter((o) => ["pending", "pending_payment", "payment_success", "admin_approval_pending", "confirmed", "packed"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
   const completedOrdersCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "delivered").length, [rows, lifecycleStatus]);
-  const cancelledOrdersCount = useMemo(() => rows.filter((o) => ["cancelled", "returned"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
+  const cancelledOrdersCount = useMemo(() => rows.filter((o) => ["cancelled", "returned", "rejected"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
 
   const load = useCallback(() => {
     if (!canFetch) {
@@ -404,20 +420,20 @@ export default function AdminOrdersPage() {
     }
   };
 
-  const handleApprovalAction = async (orderId: string, action: "approve_order" | "reject_order") => {
+  const handleApprovalAction = async (orderId: string, action: "approve_order" | "reject_order", reason?: string) => {
     if (rowActionBusy[orderId]) return;
     setRowActionBusy((prev) => ({ ...prev, [orderId]: action }));
     setRowActionError((prev) => ({ ...prev, [orderId]: "" }));
     try {
-      await authedPost(`/api/v1/orders/${orderId}/actions`, { action });
-      const nextStatus = action === "approve_order" ? "confirmed" : "cancelled";
+      await authedPost(`/api/v1/orders/${orderId}/actions`, { action, reason });
+      const nextStatus = action === "approve_order" ? "confirmed" : "rejected";
       setRows((prev) =>
         prev.map((row) =>
           row.id === orderId
             ? {
                 ...row,
                 status: nextStatus,
-                statusHistory: [{ toStatus: nextStatus, changedAt: new Date().toISOString() }, ...(row.statusHistory ?? [])],
+                statusHistory: [{ toStatus: nextStatus, reasonCode: action === "reject_order" ? "admin_rejected" : undefined, notes: reason || undefined, changedAt: new Date().toISOString() }, ...(row.statusHistory ?? [])],
               }
             : row
         )
@@ -433,6 +449,15 @@ export default function AdminOrdersPage() {
         return next;
       });
     }
+  };
+
+  const confirmRejectOrder = async () => {
+    if (!rejectModalOrderId) return;
+    const targetId = rejectModalOrderId;
+    const reason = rejectReason.trim();
+    setRejectModalOrderId(null);
+    setRejectReason("");
+    await handleApprovalAction(targetId, "reject_order", reason);
   };
 
   const exportCsv = () => {
@@ -527,7 +552,7 @@ export default function AdminOrdersPage() {
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-[#E8DCC8] pb-3">
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[#E8DCC8] bg-[#FFFBF3] p-2.5 shadow-xs">
           {[
             { id: "all" as const, label: "All Orders", count: statusTabCounts.all },
             { id: "new" as const, label: "New Orders", count: statusTabCounts.new },
@@ -535,6 +560,7 @@ export default function AdminOrdersPage() {
             { id: "shipped" as const, label: "Shipped", count: statusTabCounts.shipped },
             { id: "in_transit" as const, label: "In Transit", count: statusTabCounts.in_transit },
             { id: "delivered" as const, label: "Delivered", count: statusTabCounts.delivered },
+            { id: "rejected" as const, label: "Rejected", count: statusTabCounts.rejected },
           ].map((tab) => {
             const active = statusTab === tab.id;
             return (
@@ -547,8 +573,8 @@ export default function AdminOrdersPage() {
                 }}
                 className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition ${
                   active
-                    ? "bg-[#7B3010] text-white shadow-sm"
-                    : "border border-[#E8DCC8] bg-white text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                    ? "bg-[#7B3010] text-white shadow-md ring-1 ring-[#7B3010]"
+                    : "border border-[#E8DCC8] bg-white text-[#4A1D1F] hover:bg-[#F9F5EC] hover:border-[#7B3010]/40 shadow-2xs"
                 }`}
               >
                 <span>{tab.label}</span>
@@ -556,7 +582,7 @@ export default function AdminOrdersPage() {
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
                     active
                       ? "bg-white/20 text-white"
-                      : "bg-[#FFF7EA] text-[#7B3010]"
+                      : "bg-[#7B3010] text-white"
                   }`}
                 >
                   {tab.count}
@@ -833,6 +859,14 @@ export default function AdminOrdersPage() {
                     <td className="px-2 py-2 text-center font-medium">{itemsCount(o)}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/admin/orders/${o.id}`)}
+                          title="View Order Details"
+                          className="inline-flex items-center justify-center rounded-full border border-[#7B3010] bg-[#FFF7EA] p-1.5 text-[#7B3010] shadow-sm hover:bg-[#7B3010] hover:text-white transition cursor-pointer"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
                         {lifecycleStatus(o) === "admin_approval_pending" && (
                           <>
                             <button
@@ -851,7 +885,10 @@ export default function AdminOrdersPage() {
                             <button
                               type="button"
                               disabled={Boolean(rowActionBusy[o.id])}
-                              onClick={() => void handleApprovalAction(o.id, "reject_order")}
+                              onClick={() => {
+                                setRejectModalOrderId(o.id);
+                                setRejectReason("");
+                              }}
                               title="Reject Order"
                               className="inline-flex items-center justify-center rounded-full bg-[#A32A2A] p-1.5 text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
                             >
@@ -863,14 +900,6 @@ export default function AdminOrdersPage() {
                             </button>
                           </>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/admin/orders/${o.id}`)}
-                          title="View Order Details"
-                          className="inline-flex items-center justify-center rounded-full border border-[#7B3010] bg-[#FFF7EA] p-1.5 text-[#7B3010] shadow-sm hover:bg-[#7B3010] hover:text-white transition cursor-pointer"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </button>
                       </div>
                       {rowActionError[o.id] && (
                         <p className="mt-1 text-[10px] text-red-600">{rowActionError[o.id]}</p>
@@ -889,6 +918,52 @@ export default function AdminOrdersPage() {
         <p className="text-xs text-[#646464]">Page {page} / {pageCount}</p>
         <button type="button" onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))} disabled={page >= pageCount} className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40">Next</button>
       </div>
+
+      {/* Reject Order Modal Popup */}
+      {rejectModalOrderId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E8DCC8] pb-3">
+              <h2 className="font-melon text-lg font-bold text-[#4A1D1F]">Reject Order</h2>
+              <button
+                type="button"
+                onClick={() => setRejectModalOrderId(null)}
+                className="rounded-full p-1 text-[#646464] hover:bg-[#FFF7EA] hover:text-[#4A1D1F] transition"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div>
+              <p className="text-xs text-[#646464] mb-2">
+                Please enter the reason for rejecting order <span className="font-mono font-bold text-[#7B3010]">#{rejectModalOrderId.slice(0, 10).toUpperCase()}</span>:
+              </p>
+              <textarea
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Enter reason for rejection..."
+                rows={3}
+                className="w-full rounded-xl border border-[#E3E3DA] bg-white p-3 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E8DCC8]">
+              <button
+                type="button"
+                onClick={() => setRejectModalOrderId(null)}
+                className="rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#646464] hover:bg-[#FFFBF3] transition cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmRejectOrder()}
+                className="rounded-full bg-[#A32A2A] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-red-700 transition cursor-pointer"
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

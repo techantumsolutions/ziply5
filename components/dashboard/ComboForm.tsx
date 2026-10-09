@@ -21,6 +21,7 @@ type ProductLite = {
   sku?: string | null
   thumbnail?: string | null
   price: number
+  basePrice?: number | null
   categoryId?: string | null
   categoryName?: string | null
   categorySlug?: string | null
@@ -146,6 +147,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
               sku: p.sku ? String(p.sku) : null,
               thumbnail: p.thumbnail ? String(p.thumbnail) : null,
               price: Number(p.price ?? 0),
+              basePrice: p.basePrice != null ? Number(p.basePrice) : Number(p.price ?? 0),
               categoryId: cat?.id ? String(cat.id) : (p.categoryId ? String(p.categoryId) : null),
               categoryName: cat?.name ? String(cat.name) : null,
               categorySlug: cat?.slug ? String(cat.slug) : null,
@@ -171,6 +173,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
               name: String(bp.name),
               slug: String(bp.slug || ""),
               price: Number(bp.price ?? 0),
+              basePrice: bp.basePrice != null ? Number(bp.basePrice) : Number(bp.price ?? 0),
               thumbnail: bp.thumbnail ?? null,
             }))
             const existingIds = new Set(lite.map((x) => x.id))
@@ -232,12 +235,17 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     return filteredProducts.slice(start, start + MODAL_PAGE_SIZE)
   }, [filteredProducts, modalPage])
 
+  const [itemComboPrices, setItemComboPrices] = useState<Record<string, string>>({})
+
   const sumOfSelectedPrices = useMemo(() => {
     return selectedProductIds.reduce((sum, id) => {
       const prod = products.find((p) => p.id === id)
-      return sum + (prod?.price ?? 0)
+      const maxPrice = prod?.basePrice != null && prod.basePrice > 0 ? prod.basePrice : (prod?.price ?? 0)
+      const customPriceStr = itemComboPrices[id]
+      const customPrice = customPriceStr !== undefined && customPriceStr.trim() !== "" ? Number(customPriceStr) : maxPrice
+      return sum + (Number.isFinite(customPrice) ? customPrice : 0)
     }, 0)
-  }, [selectedProductIds, products])
+  }, [selectedProductIds, products, itemComboPrices])
 
   const isPriceTooHigh = useMemo(() => {
     if (pricingMode !== "fixed" || selectedProductIds.length === 0 || !comboPrice) return false
@@ -250,13 +258,23 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     if (!slug || !/^[a-z0-9_-]+$/.test(slug)) return "Please enter a valid URL slug (lowercase letters, numbers, and hyphens)."
     if (selectedProductIds.length < 1) return "Please select at least 1 product."
     if (selectedProductIds.length > 3) return "You can select a maximum of 3 products."
-    if (pricingMode === "fixed") {
-      const n = Number(comboPrice)
-      if (!Number.isFinite(n) || n <= 0) return "Please enter a valid combo price greater than ₹0."
-      if (sumOfSelectedPrices > 0 && n >= sumOfSelectedPrices) {
-        return `Combo price (₹${n.toFixed(2)}) must be less than the total price of all products (₹${sumOfSelectedPrices.toFixed(2)}).`
+
+    for (const id of selectedProductIds) {
+      const p = products.find((x) => x.id === id)
+      if (!p) continue
+      const maxPrice = p.basePrice != null && p.basePrice > 0 ? p.basePrice : p.price
+      const customPriceStr = itemComboPrices[id]
+      if (customPriceStr !== undefined && customPriceStr.trim() !== "") {
+        const val = Number(customPriceStr)
+        if (!Number.isFinite(val) || val < 0) {
+          return `Please enter a valid combo price for "${p.name}".`
+        }
+        if (val > maxPrice) {
+          return `Combo price for "${p.name}" (₹${val.toFixed(2)}) cannot be greater than its base price (₹${maxPrice.toFixed(2)}).`
+        }
       }
     }
+
     return null
   }
 
@@ -335,73 +353,11 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
         </div>
       </div>
 
-      {/* 2. Pricing & Status */}
+      {/* 2. Image & Description */}
       <div className="space-y-3">
         <div className="flex items-center gap-2">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#7B3010] text-xs font-bold text-white">
             2
-          </span>
-          <h3 className="text-sm font-semibold text-[#4A1D1F]">Pricing & Status</h3>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block text-sm">
-            <span className="text-xs font-semibold text-[#7A7A7A]">Pricing Mode</span>
-            <select
-              className="mt-1 w-full rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 text-sm text-[#4A1D1F] focus:border-[#7B3010] focus:outline-none"
-              value={pricingMode}
-              onChange={(e) => setPricingMode(e.target.value as "fixed" | "dynamic")}
-            >
-              <option value="fixed">Fixed</option>
-              <option value="dynamic">Dynamic</option>
-            </select>
-          </label>
-          <div className="space-y-1">
-            <label className="block text-sm">
-              <span className="text-xs font-semibold text-[#7A7A7A]">
-                Combo Price {pricingMode === "fixed" ? <span className="text-red-500">*</span> : null}
-              </span>
-              <div className="relative mt-1">
-                <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-sm text-[#7A7A7A]">₹</span>
-                <input
-                  className="w-full rounded-lg border border-[#E8DCC8] bg-white pl-7 pr-3 py-2 text-sm text-[#4A1D1F] focus:border-[#7B3010] focus:outline-none disabled:bg-gray-100"
-                  type="number"
-                  min={1}
-                  step="0.01"
-                  placeholder="0.00"
-                  value={comboPrice}
-                  disabled={pricingMode !== "fixed"}
-                  onChange={(e) => setComboPrice(e.target.value)}
-                />
-              </div>
-            </label>
-            {pricingMode === "fixed" && selectedProductIds.length > 0 && (
-              <p className="text-[11px] text-[#646464]">
-                Total price of selected products: <span className="font-semibold text-[#4A1D1F]">₹{sumOfSelectedPrices.toFixed(2)}</span>
-              </p>
-            )}
-            {isPriceTooHigh && (
-              <p className="text-xs font-medium text-red-600">
-                The price of the combo should be less than the total price of all products in that combo
-              </p>
-            )}
-          </div>
-        </div>
-        <label className="flex items-center gap-2 pt-1 text-sm font-medium text-[#4A1D1F] cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isActive}
-            onChange={(e) => setIsActive(e.target.checked)}
-            className="h-4 w-4 rounded border-[#E8DCC8] text-[#7B3010] accent-[#7B3010]"
-          />
-          Active
-        </label>
-      </div>
-
-      {/* 3. Image & Description */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#7B3010] text-xs font-bold text-white">
-            3
           </span>
           <h3 className="text-sm font-semibold text-[#4A1D1F]">Image & Description</h3>
         </div>
@@ -464,12 +420,12 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
         </div>
       </div>
 
-      {/* 4. Select Products (Max 3) */}
+      {/* 3. Select Products (Max 3) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#7B3010] text-xs font-bold text-white">
-              4
+              3
             </span>
             <h3 className="text-sm font-semibold text-[#4A1D1F]">Select Products (Max 3)</h3>
           </div>
@@ -500,35 +456,87 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
             {selectedProductIds.map((id) => {
               const p = products.find((x) => x.id === id)
               if (!p) return null
+              const maxPrice = p.basePrice != null && p.basePrice > 0 ? p.basePrice : p.price
+              const itemVal = itemComboPrices[id] ?? ""
+              const numericVal = itemVal.trim() !== "" ? Number(itemVal) : null
+              const isItemPriceExceeded = numericVal !== null && Number.isFinite(numericVal) && numericVal > maxPrice
               return (
                 <div
                   key={id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-[#E8DCC8] bg-[#FFFBF3]/40 p-2.5"
+                  className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border p-2.5 transition-colors ${
+                    isItemPriceExceeded ? "border-red-300 bg-red-50/50" : "border-[#E8DCC8] bg-[#FFFBF3]/40"
+                  }`}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     {p.thumbnail ? (
                       <img src={p.thumbnail} alt={p.name} className="h-9 w-9 shrink-0 rounded-lg object-cover border border-[#E8DCC8]" />
                     ) : (
                       <div className="h-9 w-9 shrink-0 rounded-lg bg-[#E8DCC8]/40 border border-[#E8DCC8]" />
                     )}
-                    <div className="truncate">
+                    <div className="truncate min-w-0">
                       <p className="truncate font-semibold text-xs text-[#4A1D1F]">{p.name}</p>
-                      <p className="text-[11px] font-mono text-[#7A7A7A]">₹{p.price.toFixed(2)}</p>
+                      <p className="text-[11px] font-mono text-[#7A7A7A]">Base Price: ₹{maxPrice.toFixed(2)}</p>
+                      {isItemPriceExceeded && (
+                        <p className="text-[10px] font-medium text-red-600">Cannot exceed ₹{maxPrice.toFixed(2)}</p>
+                      )}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => toggleProduct(id)}
-                    className="rounded-lg p-1 text-[#7A7A7A] hover:bg-red-50 hover:text-red-700 transition-colors"
-                    title="Remove item"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative w-28">
+                      <span className="absolute inset-y-0 left-0 flex items-center pl-2 text-xs text-[#7A7A7A]">₹</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max={maxPrice}
+                        step="0.01"
+                        placeholder={maxPrice.toFixed(0)}
+                        value={itemVal}
+                        onChange={(e) => {
+                          const val = e.target.value
+                          setItemComboPrices((prev) => ({ ...prev, [id]: val }))
+                        }}
+                        className={`w-full rounded-lg border pl-5 pr-2 py-1 text-xs font-semibold text-[#4A1D1F] focus:outline-none ${
+                          isItemPriceExceeded
+                            ? "border-red-500 bg-red-50 focus:border-red-600"
+                            : "border-[#E8DCC8] bg-white focus:border-[#7B3010]"
+                        }`}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleProduct(id)}
+                      className="rounded-lg p-1 text-[#7A7A7A] hover:bg-red-50 hover:text-red-700 transition-colors"
+                      title="Remove item"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               )
             })}
           </div>
         )}
+
+        {/* Total Price & Active Toggle section at the bottom of products */}
+        <div className="mt-4 pt-4 border-t border-[#E8DCC8]/60 space-y-3">
+          {selectedProductIds.length > 0 && (
+            <div className="rounded-xl border border-[#E8DCC8] bg-[#FFFBF3] p-3 flex items-center justify-between">
+              <span className="text-xs font-semibold text-[#7A7A7A]">Total Combo Price</span>
+              <span className="text-sm font-bold text-[#4A1D1F]">₹{sumOfSelectedPrices.toFixed(2)}</span>
+            </div>
+          )}
+
+          <label className="flex items-center gap-2 pt-1 text-sm font-medium text-[#4A1D1F] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+              className="h-4 w-4 rounded border-[#E8DCC8] text-[#7B3010] accent-[#7B3010]"
+            />
+            Active
+          </label>
+        </div>
       </div>
 
       {error ? (

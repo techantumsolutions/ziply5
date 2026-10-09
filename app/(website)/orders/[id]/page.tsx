@@ -500,12 +500,29 @@ export default function OrderDetailPage() {
             }
           />
 
-          {order.status.toLowerCase() === "cancelled" && (
-            <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
-              <p className="text-sm font-bold uppercase tracking-wide text-red-600">This order has been cancelled</p>
-              <p className="mt-1 text-xs text-red-500">Tracking information may no longer update.</p>
-            </div>
-          )}
+          {(() => {
+            const rejectedEntry = order.statusHistory?.find((h: any) => h.reasonCode === "admin_rejected" || h.toStatus?.toLowerCase() === "rejected")
+            const isRejected = latestLifecycle === "rejected" || Boolean(rejectedEntry)
+            if (isRejected) {
+              const reasonText = (rejectedEntry as any)?.notes || ((order.statusHistory?.[0] as any)?.notes ?? "")
+              return (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
+                  <p className="text-sm font-bold uppercase tracking-wide text-red-600">This order was rejected</p>
+                  {reasonText ? <p className="mt-1 text-xs font-semibold text-red-700">Reason: {reasonText}</p> : null}
+                  <p className="mt-1 text-xs text-red-500">Tracking information may no longer update.</p>
+                </div>
+              )
+            }
+            if (order.status.toLowerCase() === "cancelled" || latestLifecycle === "cancelled") {
+              return (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-center">
+                  <p className="text-sm font-bold uppercase tracking-wide text-red-600">This order has been cancelled</p>
+                  <p className="mt-1 text-xs text-red-500">Tracking information may no longer update.</p>
+                </div>
+              )
+            }
+            return null
+          })()}
 
           {/* <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold text-[#111827]">Order lifecycle</h2>
