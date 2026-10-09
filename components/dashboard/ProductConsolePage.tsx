@@ -1,6 +1,8 @@
 "use client"
 
 import Link from "next/link"
+import { createPortal } from "react-dom"
+import { useMasterValues } from "@/hooks/useMasterData"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { authedFetch, authedPatch, authedPost } from "@/lib/dashboard-fetch"
@@ -17,6 +19,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import {
   AlertTriangle,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ExternalLink,
@@ -79,7 +82,6 @@ export function NonVegDrumstickIcon({ className = "h-5 w-5" }: { className?: str
   )
 }
 
-import { useMasterValues } from "@/hooks/useMasterData"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { isVideoUrl } from "@/lib/media-utils"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -200,22 +202,11 @@ const readStepFromLocation = (): ProductFormStepId => {
   if (fromUrl >= 1 && fromUrl <= 5) return fromUrl as ProductFormStepId
   return 1
 }
-const createFallbackId = () => `pending-${Date.now().toString(36)}-${Math.random().toString(16).slice(2)}`
-
 const resolveOrCreatePendingProductId = () => {
-  if (typeof window === "undefined") {
-    return typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : createFallbackId()
-  }
+  if (typeof window === "undefined") return ""
   const existing = window.sessionStorage.getItem(ADD_PENDING_ID_KEY)?.trim()
-  if (existing) return existing
-  const created =
-    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-      ? crypto.randomUUID()
-      : createFallbackId()
-  window.sessionStorage.setItem(ADD_PENDING_ID_KEY, created)
-  return created
+  if (existing && /^PRD-\d+$/i.test(existing)) return existing
+  return ""
 }
 const formatCreatedAt = (value?: string | Date | null) => {
   if (!value) return "—"
@@ -279,14 +270,167 @@ const blockNumberFieldKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
   }
 }
 
+function SearchableMasterSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  className = "",
+}: {
+  value: string
+  onChange: (val: string) => void
+  options: Array<{ value: string; label: string }>
+  placeholder: string
+  className?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState("")
+  const [portalPos, setPortalPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  const updatePosition = useCallback(() => {
+    if (!containerRef.current) return
+    const rect = containerRef.current.getBoundingClientRect()
+    const popoverWidth = Math.max(rect.width, 220)
+    let left = rect.left
+    if (typeof window !== "undefined" && left + popoverWidth > window.innerWidth - 16) {
+      left = Math.max(16, window.innerWidth - popoverWidth - 16)
+    }
+    setPortalPos({
+      top: rect.bottom + 4,
+      left,
+      width: popoverWidth,
+    })
+  }, [])
+
+  useEffect(() => {
+    if (open) {
+      updatePosition()
+      const handleScroll = () => updatePosition()
+      const handleResize = () => updatePosition()
+      window.addEventListener("scroll", handleScroll, true)
+      window.addEventListener("resize", handleResize)
+      return () => {
+        window.removeEventListener("scroll", handleScroll, true)
+        window.removeEventListener("resize", handleResize)
+      }
+    }
+  }, [open, updatePosition])
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return options
+    const q = search.toLowerCase()
+    return options.filter(
+      (opt) => opt.value.toLowerCase().includes(q) || opt.label.toLowerCase().includes(q),
+    )
+  }, [options, search])
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (
+        containerRef.current &&
+        !containerRef.current.contains(target) &&
+        dropdownRef.current &&
+        !dropdownRef.current.contains(target)
+      ) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  return (
+    <div ref={containerRef} className="relative w-full">
+      <div
+        className="relative flex items-center cursor-pointer"
+        onClick={() => {
+          setOpen((prev) => {
+            const next = !prev
+            if (next) updatePosition()
+            return next
+          })
+        }}
+      >
+        <input
+          type="text"
+          value={value}
+          readOnly
+          placeholder={placeholder}
+          className={`w-full rounded border border-[#D9D9D1] bg-white pl-2 pr-7 py-1.5 text-xs focus:border-[#7B3010] focus:outline-none cursor-pointer ${className}`}
+        />
+        <ChevronDown
+          className={`absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#646464] pointer-events-none transition-transform duration-150 ${
+            open ? "rotate-180 text-[#7B3010]" : ""
+          }`}
+        />
+      </div>
+
+      {open &&
+        portalPos &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={dropdownRef}
+            style={{
+              position: "fixed",
+              top: `${portalPos.top}px`,
+              left: `${portalPos.left}px`,
+              width: `${portalPos.width}px`,
+              zIndex: 99999,
+            }}
+            className="max-h-56 overflow-y-auto rounded-lg border border-[#E8DCC8] bg-white shadow-2xl py-1 text-xs"
+          >
+            <div className="sticky top-0 z-10 px-2 py-1 bg-[#FFFBF5] border-b border-[#F0E8DC]">
+              <input
+                type="text"
+                placeholder="Search option..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full rounded border border-[#D9D9D1] px-2 py-1 text-[11px] focus:border-[#7B3010] focus:outline-none bg-white"
+                autoFocus
+              />
+            </div>
+            {filtered.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-[#8A8A82]">No matching options</div>
+            ) : (
+              filtered.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`w-full text-left px-3 py-1.5 hover:bg-[#FFF7ED] transition ${
+                    opt.value === value ? "bg-[#FFF7ED] font-bold text-[#7B3010]" : "text-[#2A1810]"
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onChange(opt.value)
+                    setOpen(false)
+                  }}
+                >
+                  <div className="font-mono text-xs">{opt.value}</div>
+                  {opt.label && opt.label !== opt.value && (
+                    <div className="text-[10px] text-[#646464] truncate">{opt.label}</div>
+                  )}
+                </button>
+              ))
+            )}
+          </div>,
+          document.body,
+        )}
+    </div>
+  )
+}
+
 const parseWeight = (w: string | null | undefined) => {
-  if (!w) return { value: "", unit: "gm" };
+  if (!w) return { value: "", unit: "g" };
   const val = w.match(/[\d.]+/)?.[0] || "";
   const unitStr = w.replace(/[\d.]/g, "").toLowerCase().trim();
-  let unit = "gm";
+  let unit = "g";
   if (unitStr.includes("kg") || unitStr.includes("kilo")) unit = "kg";
   else if (unitStr.includes("mg") || unitStr.includes("milli")) unit = "mg";
-  else if (unitStr.includes("g")) unit = "gm";
+  else if (unitStr.includes("g")) unit = "g";
   return { value: val, unit };
 };
 
@@ -716,6 +860,31 @@ export function ProductConsolePage({
   const [mediaViewerIndex, setMediaViewerIndex] = useState<number | null>(null)
   const [pendingProductId] = useState(() => resolveOrCreatePendingProductId())
   const [nextSequenceId, setNextSequenceId] = useState<string | null>(null)
+  const [customProductId, setCustomProductId] = useState("")
+  const [showUnsavedEditDialog, setShowUnsavedEditDialog] = useState(false)
+  const [pendingStepAction, setPendingStepAction] = useState<(() => void) | null>(null)
+  const originalLoadedProductRef = useRef<ProductDetail | null>(null)
+
+  const hsnMasterQuery = useMasterValues("HSN_CODE", true, true)
+  const barcodeMasterQuery = useMasterValues("BARCODE_NUMBER", true, true)
+
+  const hsnOptions = useMemo(
+    () =>
+      ((hsnMasterQuery.data as any[]) ?? []).map((x) => ({
+        value: String(x.value || ""),
+        label: String(x.label || x.value || ""),
+      })),
+    [hsnMasterQuery.data],
+  )
+
+  const barcodeOptions = useMemo(
+    () =>
+      ((barcodeMasterQuery.data as any[]) ?? []).map((x) => ({
+        value: String(x.value || ""),
+        label: String(x.label || x.value || ""),
+      })),
+    [barcodeMasterQuery.data],
+  )
 
   useEffect(() => {
     if (mode === "add") {
@@ -769,7 +938,6 @@ export function ProductConsolePage({
   const [updatedAt, setUpdatedAt] = useState<string | Date | null>(null)
   const [createdAt, setCreatedAt] = useState<string | Date | null>(null)
   const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | Date | null>(null)
-  const [shelfLife, setShelfLife] = useState("")
   const [preparationType, setPreparationType] = useState<"" | "ready_to_eat" | "ready_to_cook">("")
   const [spiceLevel, setSpiceLevel] = useState<"" | "mild" | "medium" | "hot" | "extra_hot">("")
   const [taxIncluded, setTaxIncluded] = useState(false)
@@ -949,73 +1117,232 @@ export function ProductConsolePage({
     setCurrentStep(step)
   }
 
-  const handleNextStep = () => {
-    if (currentStep === 1) {
-      if (!name.trim() || !slug.trim()) {
-        setError("Name and slug are required before continuing")
-        return
-      }
-      if (!categoryId) {
-        setError("Category is mandatory before continuing")
-        return
-      }
-    }
-    if (currentStep === 2) {
-      if (isEmptyRichText(description)) {
-        setError("Description is mandatory")
-        return
-      }
-      if (stripHtmlText(description).length > DESCRIPTION_MAX_CHARS) {
-        setError(`Description must be ${DESCRIPTION_MAX_CHARS} characters or less`)
-        return
-      }
-      if (selectedFeatureDefinitionIds.length === 0) {
-        setError("At least 1 product feature is mandatory")
-        return
-      }
-      const filledSections = sections.filter((s) => s.title.trim() && !isEmptyRichText(s.description))
-      if (filledSections.length === 0) {
-        setError("At least 1 detail section with title and description is mandatory")
-        return
-      }
-    }
-    if (currentStep === 3) {
-      const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
-      if (targetVariants.length === 0) {
-        setError("At least 1 variant detail must be provided")
-        return
-      }
-      for (let i = 0; i < targetVariants.length; i++) {
-        const v = targetVariants[i]
-        const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
-        const vWeight = (v.weight || "").trim()
-        const vSku = (v.sku || "").trim()
-        const vStock = (v.stock || "").trim()
-        const vSalePrice = variantSalePrice(v, discountEnabled)
-        const vMrp = Number(v.mrp || 0)
-        const vPrice = Number(v.price || 0)
+  const categoriesRef = useRef<CategoryRow[]>([])
+  useEffect(() => {
+    categoriesRef.current = categories
+  }, [categories])
 
-        if (!parseWeight(vWeight).value) {
-          setError(`${label}: Weight is mandatory`)
-          return
-        }
-        if (!(vSalePrice > 0) && !(vMrp > 0) && !(vPrice > 0)) {
-          setError(`${label}: Price / MRP is mandatory and must be greater than 0`)
-          return
-        }
-        if (!vSku) {
-          setError(`${label}: SKU is mandatory`)
-          return
-        }
-        if (vStock === "" || isNaN(Number(vStock)) || Number(vStock) < 0) {
-          setError(`${label}: Stock is mandatory`)
-          return
+  const applyProductToForm = useCallback(
+    (p: ProductDetail, catsList?: CategoryRow[], featureDefsList?: any[]) => {
+      const activeCats = catsList && catsList.length > 0 ? catsList : categoriesRef.current
+      const v = p.variants?.find((item) => item.isDefault) ?? p.variants?.[0]
+      if (p.id) setCustomProductId(p.id)
+      setName(p.name)
+      setSlug(p.slug)
+      setSku(p.sku)
+      setDescription(p.description ?? "")
+      setStatus(p.status)
+      setType(p.type === "simple" || p.type === "single" ? "simple" : "variant")
+      setPrice(String(Number(v?.price ?? p.price ?? 0)))
+      setBasePrice(p.basePrice != null ? String(Number(p.basePrice)) : "")
+      setSalePrice(p.salePrice != null ? String(Number(p.salePrice)) : "")
+      setCostPrice("")
+      setAmazonLink(p.amazonLink ?? "")
+      setDiscountPercent(p.discountPercent != null ? String(Number(p.discountPercent)) : "")
+      setSimpleProductWeight(p.weight ?? v?.weight ?? "")
+      setStockStatus(p.stockStatus ?? "in_stock")
+      setTotalStock(String(p.totalStock ?? 0))
+      setPreparationType((p.preparationType ?? "") as "" | "ready_to_eat" | "ready_to_cook")
+      setSpiceLevel((p.spiceLevel ?? "") as "" | "mild" | "medium" | "hot" | "extra_hot")
+      setTaxIncluded(p.taxIncluded ?? false)
+      setIsActive(p.isActive ?? true)
+      setAllowReturn(p.allowReturn ?? true)
+      setThumbnailUrls(uniq([p.thumbnail ?? ""]))
+      setMetaTitle(p.metaTitle ?? "")
+      setMetaDescription(p.metaDescription ?? "")
+      setCreatedBy(p.createdById ?? "user_admin_ziply5")
+      setUpdatedAt(p.updatedAt ?? (p as { updated_at?: string | Date | null }).updated_at ?? null)
+      setCreatedAt(p.createdAt ?? (p as { created_at?: string | Date | null }).created_at ?? null)
+      setPriceUpdatedAt(p.priceUpdatedAt ?? (p as { price_updated_at?: string | Date | null }).price_updated_at ?? null)
+      setFeatures(p.features ?? [])
+
+      const byId = new Set(
+        (p.features ?? [])
+          .map((f) => f.featureDefinitionId)
+          .filter((id): id is string => Boolean(id)),
+      )
+      if (byId.size === 0 && featureDefsList?.length) {
+        const titleMap = new Map(featureDefsList.map((f) => [f.title.trim().toLowerCase(), f.id]))
+        for (const f of p.features ?? []) {
+          const matched = titleMap.get(String(f.title ?? "").trim().toLowerCase())
+          if (matched) byId.add(matched)
         }
       }
-    }
-    setError("")
-    setCurrentStep((prev) => Math.min(5, (prev + 1) as ProductFormStepId) as ProductFormStepId)
-  }
+      setSelectedFeatureDefinitionIds([...byId].slice(0, MAX_PRODUCT_FEATURES))
+      setCategoryId(resolveProductCategoryId(p, activeCats))
+
+      const productTags = (p.tags ?? []).map((x) => x.tag).filter(Boolean)
+      setSelectedTagIds(
+        productTags.filter((t) => !foodTypeOfTag(t)).map((t) => t.id).filter(Boolean).slice(0, 1),
+      )
+      const loadedFoodType =
+        (p.foodType === "veg" || p.foodType === "non-veg" ? p.foodType : null) ??
+        productTags.map((t) => foodTypeOfTag(t)).find(Boolean) ??
+        ""
+      setFoodType(loadedFoodType)
+      setImageUrls(uniq((p.images ?? []).map((img) => img.url)))
+
+      const loadedVariants = p.variants ?? []
+      setVariants(
+        loadedVariants.length
+          ? withSingleDefault(
+              loadedVariants.map((item, idx) => ({
+                id: item.id,
+                name: item.weight ?? item.name ?? `Variant ${idx + 1}`,
+                weight: item.weight ?? item.name ?? "",
+                sku: item.sku ?? "",
+                price: String(Number(item.price ?? 0)),
+                mrp:
+                  item.mrp != null
+                    ? String(Number(item.mrp))
+                    : (item as any).mrp_code != null
+                    ? String(Number((item as any).mrp_code))
+                    : "",
+                discountPercent:
+                  item.discountPercent != null
+                    ? String(Number(item.discountPercent))
+                    : (item as any).discount_percent != null
+                    ? String(Number((item as any).discount_percent))
+                    : "",
+                stock: String(item.stock ?? 0),
+                isDefault: Boolean(item.isDefault ?? (item as any).is_default),
+                hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
+                eanCode: String(item.eanCode ?? item.ean_code ?? ""),
+                updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
+                priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
+              })),
+            )
+          : [
+              {
+                name: p.weight || "250g",
+                weight: p.weight || "250g",
+                sku: p.sku?.startsWith("DRAFT-") ? "" : (p.sku ?? ""),
+                price: Number(p.price) > 0 ? String(Number(p.price)) : "",
+                mrp: p.basePrice != null && Number(p.basePrice) > 0 ? String(Number(p.basePrice)) : "",
+                discountPercent: p.discountPercent != null ? String(Number(p.discountPercent)) : "",
+                stock: String(p.totalStock ?? 0),
+                isDefault: true,
+                hsnCode: "",
+                eanCode: "",
+              },
+            ],
+      )
+      setVariantMode(
+        p.type === "simple" || p.type === "single"
+          ? "single"
+          : p.type === "variant" || p.type === "multiple"
+          ? "multiple"
+          : loadedVariants.length > 1
+          ? "multiple"
+          : "single",
+      )
+
+      const nextSections =
+        (p.sections?.length
+          ? p.sections.map((s) => ({
+              id: s.id,
+              title: s.title,
+              description: s.description,
+              sortOrder: s.sortOrder ?? 0,
+              isActive: s.isActive ?? true,
+            }))
+          : (p.details ?? []).map((d, idx) => ({
+              title: d.title,
+              description: d.content,
+              sortOrder: d.sortOrder ?? idx,
+              isActive: true,
+            }))) ?? []
+      setSections(
+        nextSections.length
+          ? nextSections.sort((a, b) => a.sortOrder - b.sortOrder)
+          : [{ title: "", description: "<p></p>", sortOrder: 0, isActive: true }],
+      )
+    },
+    [],
+  )
+
+  const validateStep = useCallback(
+    (stepToValidate: ProductFormStepId): string | null => {
+      if (stepToValidate === 1) {
+        if (!name.trim() || !slug.trim()) {
+          return "Name and slug are required before continuing"
+        }
+        if (!categoryId) {
+          return "Category is mandatory before continuing"
+        }
+        return null
+      }
+      if (stepToValidate === 2) {
+        if (!thumbnailUrls.some(Boolean)) {
+          return "Thumbnail image is mandatory before continuing"
+        }
+        if (isEmptyRichText(description)) {
+          return "Description is mandatory"
+        }
+        if (stripHtmlText(description).length > DESCRIPTION_MAX_CHARS) {
+          return `Description must be ${DESCRIPTION_MAX_CHARS} characters or less`
+        }
+        if (selectedFeatureDefinitionIds.length === 0) {
+          return "At least 1 product feature is mandatory"
+        }
+        const filledSections = sections.filter((s) => s.title.trim() && !isEmptyRichText(s.description))
+        if (filledSections.length === 0) {
+          return "At least 1 detail section with title and description is mandatory"
+        }
+        return null
+      }
+      if (stepToValidate === 3) {
+        const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+        if (targetVariants.length === 0) {
+          return "At least 1 variant detail must be provided"
+        }
+        for (let i = 0; i < targetVariants.length; i++) {
+          const v = targetVariants[i]
+          const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
+          const vWeight = (v.weight || "").trim()
+          const vSku = (v.sku || "").trim()
+          const vStock = (v.stock || "").trim()
+          const vSalePrice = variantSalePrice(v, discountEnabled)
+          const vMrp = Number(v.mrp || 0)
+          const vPrice = Number(v.price || 0)
+
+          if (!parseWeight(vWeight).value) {
+            return `${label}: Weight is mandatory`
+          }
+          if (!(vSalePrice > 0) && !(vMrp > 0) && !(vPrice > 0)) {
+            return `${label}: Price / MRP is mandatory and must be greater than 0`
+          }
+          if (!vSku) {
+            return `${label}: SKU is mandatory`
+          }
+          if (vStock === "" || isNaN(Number(vStock)) || Number(vStock) < 0) {
+            return `${label}: Stock is mandatory`
+          }
+          if (!v.hsnCode?.trim()) {
+            return `${label}: HSN Code is mandatory`
+          }
+          if (!v.eanCode?.trim()) {
+            return `${label}: Barcode number is mandatory`
+          }
+        }
+        return null
+      }
+      return null
+    },
+    [
+      name,
+      slug,
+      categoryId,
+      thumbnailUrls,
+      description,
+      selectedFeatureDefinitionIds,
+      sections,
+      variantMode,
+      variants,
+      discountEnabled,
+    ],
+  )
+
 
   const loadList = useCallback(() => {
     setLoading(true)
@@ -1023,7 +1350,7 @@ export function ProductConsolePage({
     Promise.all([
       authedFetch<{ items: ProductDetail[]; total: number }>("/api/v1/products?page=1&limit=100"),
       authedFetch<CategoryRow[]>("/api/v1/categories").catch(() => []),
-      authedFetch<Tags[]>("/api/v1/tags").catch(() => [])
+      authedFetch<Tags[]>("/api/v1/tags").catch(() => []),
     ])
       .then(([products, cats, tags]) => {
         setRows(products.items as ProductDetail[])
@@ -1059,126 +1386,13 @@ export function ProductConsolePage({
         authedFetch<Tags[]>("/api/v1/tags").catch(() => []),
         authedFetch<Array<{ id: string; title: string; icon: string | null; isActive: boolean }>>("/api/v1/feature-definitions?activeOnly=false").catch(() => []),
       ])
-      const v = p.variants?.find((item) => item.isDefault) ?? p.variants?.[0]
-      setCategories(cats.filter((c) => Boolean(c.id)))
+      const activeCats = cats.filter((c) => Boolean(c.id))
+      setCategories(activeCats)
       setTags(tagsRows.filter((t) => t.isActive !== false || foodTypeOfTag(t)))
-      setFeatureCatalog(featureDefs.filter((f) => f.isActive !== false))
-      setName(p.name)
-      setSlug(p.slug)
-      setSku(p.sku)
-      setDescription(p.description ?? "")
-      setStatus(p.status)
-      setType(p.type === "simple" || p.type === "single" ? "simple" : "variant")
-      setPrice(String(Number(v?.price ?? p.price ?? 0)))
-      setBasePrice(p.basePrice != null ? String(Number(p.basePrice)) : "")
-      setSalePrice(p.salePrice != null ? String(Number(p.salePrice)) : "")
-      setCostPrice("")
-      setAmazonLink(p.amazonLink ?? "")
-      setDiscountPercent(p.discountPercent != null ? String(Number(p.discountPercent)) : "")
-      setSimpleProductWeight(p.weight ?? v?.weight ?? ""); // Populate weight field
-      setStockStatus(p.stockStatus ?? "in_stock")
-      setTotalStock(String(p.totalStock ?? 0))
-      setShelfLife(p.shelfLife ?? "")
-      setPreparationType((p.preparationType ?? "") as "" | "ready_to_eat" | "ready_to_cook")
-      setSpiceLevel((p.spiceLevel ?? "") as "" | "mild" | "medium" | "hot" | "extra_hot")
-      setTaxIncluded(p.taxIncluded ?? false)
-      setIsActive(p.isActive ?? true)
-      setAllowReturn(p.allowReturn ?? true)
-      setThumbnailUrls(uniq([p.thumbnail ?? ""]))
-      setMetaTitle(p.metaTitle ?? "")
-      setMetaDescription(p.metaDescription ?? "")
-      setCreatedBy(p.createdById ?? "user_admin_ziply5")
-      setUpdatedAt(p.updatedAt ?? (p as { updated_at?: string | Date | null }).updated_at ?? null)
-      setCreatedAt(p.createdAt ?? (p as { created_at?: string | Date | null }).created_at ?? null)
-      setPriceUpdatedAt(p.priceUpdatedAt ?? (p as { price_updated_at?: string | Date | null }).price_updated_at ?? null)
-      setFeatures(p.features ?? [])
-      {
-        const byId = new Set(
-          (p.features ?? [])
-            .map((f) => f.featureDefinitionId)
-            .filter((id): id is string => Boolean(id)),
-        )
-        if (byId.size === 0 && featureDefs.length) {
-          const titleMap = new Map(featureDefs.map((f) => [f.title.trim().toLowerCase(), f.id]))
-          for (const f of p.features ?? []) {
-            const matched = titleMap.get(String(f.title ?? "").trim().toLowerCase())
-            if (matched) byId.add(matched)
-          }
-        }
-        setSelectedFeatureDefinitionIds([...byId].slice(0, MAX_PRODUCT_FEATURES))
-      }
-      setCategoryId(resolveProductCategoryId(p, cats))
-      const productTags = (p.tags ?? []).map((x) => x.tag).filter(Boolean)
-      setSelectedTagIds(
-        productTags.filter((t) => !foodTypeOfTag(t)).map((t) => t.id).filter(Boolean).slice(0, 1),
-      )
-      const loadedFoodType =
-        (p.foodType === "veg" || p.foodType === "non-veg" ? p.foodType : null) ??
-        productTags.map((t) => foodTypeOfTag(t)).find(Boolean) ??
-        ""
-      setFoodType(loadedFoodType)
-      setImageUrls(uniq((p.images ?? []).map((img) => img.url)))
-      const loadedVariants = p.variants ?? []
-      setVariants(
-        loadedVariants.length
-          ? withSingleDefault(loadedVariants.map((item, idx) => ({
-            id: item.id,
-            name: item.weight ?? item.name ?? `Variant ${idx + 1}`,
-            weight: item.weight ?? item.name ?? "",
-            sku: item.sku ?? "",
-            price: String(Number(item.price ?? 0)),
-            mrp: item.mrp != null ? String(Number(item.mrp)) : ((item as any).mrp_code != null ? String(Number((item as any).mrp_code)) : ""),
-            discountPercent: item.discountPercent != null ? String(Number(item.discountPercent)) : ((item as any).discount_percent != null ? String(Number((item as any).discount_percent)) : ""),
-            stock: String(item.stock ?? 0),
-            isDefault: Boolean(item.isDefault ?? (item as any).is_default),
-            hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
-            eanCode: String(item.eanCode ?? item.ean_code ?? ""),
-            updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
-            priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
-          })))
-          : [{
-            name: p.weight || "250g",
-            weight: p.weight || "250g",
-            sku: p.sku?.startsWith("DRAFT-") ? "" : (p.sku ?? ""),
-            price: Number(p.price) > 0 ? String(Number(p.price)) : "",
-            mrp: p.basePrice != null && Number(p.basePrice) > 0 ? String(Number(p.basePrice)) : "",
-            discountPercent: p.discountPercent != null ? String(Number(p.discountPercent)) : "",
-            stock: String(p.totalStock ?? 0),
-            isDefault: true,
-            hsnCode: "",
-            eanCode: "",
-          }],
-      )
-      // Reflect original weight option on view/edit: simple -> single variant, variant/multiple -> multi variant.
-      setVariantMode(
-        p.type === "simple" || p.type === "single"
-          ? "single"
-          : p.type === "variant" || p.type === "multiple"
-            ? "multiple"
-            : loadedVariants.length > 1
-              ? "multiple"
-              : "single",
-      )
-      const nextSections =
-        (p.sections?.length
-          ? p.sections.map((s) => ({
-            id: s.id,
-            title: s.title,
-            description: s.description,
-            sortOrder: s.sortOrder ?? 0,
-            isActive: s.isActive ?? true,
-          }))
-          : (p.details ?? []).map((d, idx) => ({
-            title: d.title,
-            description: d.content,
-            sortOrder: d.sortOrder ?? idx,
-            isActive: true,
-          }))) ?? []
-      setSections(
-        nextSections.length
-          ? nextSections.sort((a, b) => a.sortOrder - b.sortOrder)
-          : [{ title: "", description: "<p></p>", sortOrder: 0, isActive: true }],
-      )
+      setFeatureCatalog((featureDefs ?? []).filter((f) => f.isActive !== false))
+      originalLoadedProductRef.current = p
+      applyProductToForm(p, activeCats, featureDefs)
+
       const existingDiscount = discountRows?.[0]
       if (existingDiscount) {
         setDiscountRecordId(existingDiscount.id)
@@ -1214,9 +1428,10 @@ export function ProductConsolePage({
         skipAutosaveRef.current = false
         setEditHydrated(true)
         setDraftSaveStatus("saved")
+        updateAllStepBaselines()
       }, 0)
     }
-  }, [productId, mode])
+  }, [productId, mode, applyProductToForm])
 
   useEffect(() => {
     if (mode === "edit") {
@@ -1234,32 +1449,19 @@ export function ProductConsolePage({
       }
     }
     if (mode === "add" && catalog !== "combos") {
+      setReviewConfirmed(false)
+      window.sessionStorage.removeItem(ADD_DRAFT_ID_KEY)
       Promise.all([
         authedFetch<CategoryRow[]>("/api/v1/categories").catch(() => []),
         authedFetch<Tags[]>("/api/v1/tags").catch(() => []),
-      ]).then(([cats, tagRows]) => {
+        authedFetch<Array<{ id: string; title: string; icon: string | null; isActive: boolean }>>("/api/v1/feature-definitions?activeOnly=true").catch(() => []),
+      ]).then(([cats, tagRows, featureRows]) => {
         setCategories(cats.filter((c) => Boolean(c.id)))
         setTags(tagRows.filter((t) => t.isActive !== false || foodTypeOfTag(t)))
+        setFeatureCatalog((featureRows ?? []).filter((f) => f.isActive !== false))
       })
     }
     if (mode === "edit" || mode === "view") void loadEdit()
-    if (mode === "add") {
-      setReviewConfirmed(false)
-      const existingDraftId = window.sessionStorage.getItem(ADD_DRAFT_ID_KEY)?.trim()
-      if (existingDraftId) {
-        const step = readStepFromLocation()
-        const storedStep = Number(window.sessionStorage.getItem(productStepStorageKey(existingDraftId)) || "")
-        const nextStep = step !== 1 ? step : storedStep >= 1 && storedStep <= 5 ? storedStep : 1
-        skipAutosaveRef.current = true
-        router.replace(`/admin/products/${existingDraftId}/edit?step=${nextStep}`)
-        return
-      }
-      void authedFetch<Array<{ id: string; title: string; icon: string | null; isActive: boolean }>>(
-        "/api/v1/feature-definitions?activeOnly=true",
-      )
-        .then((rows) => setFeatureCatalog(rows.filter((f) => f.isActive !== false)))
-        .catch(() => setFeatureCatalog([]))
-    }
   }, [catalog, loadCombos, loadEdit, loadList, mode, router])
 
   // Keep wizard step in the URL + sessionStorage so refresh stays on the same step.
@@ -1329,6 +1531,13 @@ export function ProductConsolePage({
     }
   }, [basePrice, discountPercent, type, price])
 
+  const displayProductId =
+    mode === "edit" && productId
+      ? productId
+      : (autosavedDraftId && /^PRD-\d+$/i.test(autosavedDraftId) ? autosavedDraftId : null) ??
+        nextSequenceId ??
+        (pendingProductId && /^PRD-\d+$/i.test(pendingProductId) ? pendingProductId : "")
+
   const payload = useMemo(() => {
     const sourceVariants = variantMode === "single" ? variants.slice(0, 1) : variants
     const normalizedVariants = withSingleDefault(sourceVariants
@@ -1351,31 +1560,35 @@ export function ProductConsolePage({
       })
       .filter((v) => v.name))
     const defaultVariant = normalizedVariants.find((v) => v.isDefault) ?? normalizedVariants[0]
-    const parsedPrice =
-      type === "variant"
-        ? Number(defaultVariant?.price ?? 0)
-        : (toNumOrNull(price) ?? toNumOrNull(salePrice) ?? toNumOrNull(basePrice) ?? 0)
-    const derivedSku = type === "variant" ? (defaultVariant?.sku ?? sku.trim()) : sku.trim()
-    const derivedStock = type === "variant"
+    const derivedPrice = defaultVariant
+      ? (Number(defaultVariant.price) > 0 ? Number(defaultVariant.price) : Number(defaultVariant.mrp ?? 0))
+      : (toNumOrNull(price) ?? toNumOrNull(salePrice) ?? toNumOrNull(basePrice) ?? 0)
+
+    const derivedBasePrice = defaultVariant?.mrp ?? toNumOrNull(basePrice)
+    const derivedSalePrice = defaultVariant?.price ?? toNumOrNull(salePrice)
+    const derivedDiscountPercent = defaultVariant?.discountPercent ?? toNumOrNull(discountPercent)
+    const derivedSku = (defaultVariant?.sku?.trim() || sku.trim() || (slug.trim() ? `${slug.trim()}-1`.toUpperCase() : "")).trim()
+    const derivedStock = normalizedVariants.length > 0
       ? normalizedVariants.reduce((sum, v) => sum + v.stock, 0)
       : (totalStock.trim() ? Number(totalStock) : 0)
+    const effId = (customProductId.trim() || displayProductId || "").trim()
+
     return {
-      ...(mode === "add" ? { id: nextSequenceId ?? pendingProductId } : {}),
+      ...(effId ? { id: effId } : {}),
       name: name.trim(),
       slug: slug.trim(),
       sku: derivedSku,
       description: isEmptyRichText(description) ? undefined : description.trim(),
       status: status,
       type: variantMode === "single" ? "simple" : "variant",
-      price: parsedPrice,
-      variants: variantMode === "single" ? [] : normalizedVariants,
-      basePrice: toNumOrNull(basePrice),
-      salePrice: toNumOrNull(salePrice),
-      discountPercent: toNumOrNull(discountPercent),
-      weight: variantMode === "single" ? (parseWeight(simpleProductWeight).value ? simpleProductWeight.trim() : null) : null, // Include new weight field
+      price: derivedPrice,
+      variants: normalizedVariants,
+      basePrice: derivedBasePrice,
+      salePrice: derivedSalePrice,
+      discountPercent: derivedDiscountPercent,
+      weight: variantMode === "single" ? (parseWeight(simpleProductWeight).value ? simpleProductWeight.trim() : (defaultVariant?.weight || null)) : null,
       stockStatus,
       totalStock: derivedStock,
-      shelfLife: shelfLife.trim() || null,
       spiceLevel: spiceLevel || null,
       taxIncluded,
       isActive,
@@ -1424,8 +1637,8 @@ export function ProductConsolePage({
     isActive,
     allowReturn,
     metaDescription,
-    metaTitle,
-    mode,
+    customProductId,
+    displayProductId,
     pendingProductId,
     simpleProductWeight, // Add to dependencies
     selectedFeatureDefinitionIds,
@@ -1433,7 +1646,6 @@ export function ProductConsolePage({
     name,
     price,
     salePrice,
-    shelfLife,
     sku,
     slug,
     amazonLink,
@@ -1454,7 +1666,247 @@ export function ProductConsolePage({
   const variantModeRef = useRef(variantMode)
   const discountEnabledRef = useRef(discountEnabled)
   discountEnabledRef.current = discountEnabled
-  const displayProductId = mode === "edit" && productId ? productId : autosavedDraftId ?? nextSequenceId ?? pendingProductId
+
+  const stepBaselinesRef = useRef<Record<number, string>>({})
+
+  const getStepState = useCallback(
+    (step: ProductFormStepId) => {
+      switch (step) {
+        case 1:
+          return {
+            name: name.trim(),
+            slug: slug.trim(),
+            categoryId: categoryId || "",
+            customProductId: customProductId.trim(),
+            status,
+          }
+        case 2:
+          return {
+            thumbnailUrls: uniq(thumbnailUrls),
+            imageUrls: uniq(imageUrls),
+            description: description.trim(),
+            selectedFeatureDefinitionIds: [...selectedFeatureDefinitionIds].sort(),
+            sections: sections.map((s) => ({
+              id: s.id,
+              title: s.title.trim(),
+              description: s.description.trim(),
+              sortOrder: s.sortOrder,
+              isActive: s.isActive,
+            })),
+          }
+        case 3:
+          return {
+            variantMode,
+            price: price.trim(),
+            basePrice: basePrice.trim(),
+            salePrice: salePrice.trim(),
+            discountPercent: discountPercent.trim(),
+            simpleProductWeight: simpleProductWeight.trim(),
+            stockStatus,
+            totalStock: totalStock.trim(),
+            discountEnabled,
+            discountType,
+            discountValue: discountValue.trim(),
+            discountStartDate,
+            discountEndDate,
+            discountStackable,
+            variants: variants.map((v) => ({
+              id: v.id,
+              name: (v.name || "").trim(),
+              weight: (v.weight || "").trim(),
+              sku: (v.sku || "").trim(),
+              price: (v.price || "").trim(),
+              mrp: (v.mrp || "").trim(),
+              discountPercent: (v.discountPercent || "").trim(),
+              stock: (v.stock || "").trim(),
+              isDefault: v.isDefault,
+              hsnCode: (v.hsnCode || "").trim(),
+              eanCode: (v.eanCode || "").trim(),
+            })),
+          }
+        case 4:
+          return {
+            spiceLevel,
+            taxIncluded,
+            isActive,
+            allowReturn,
+            amazonLink: amazonLink.trim(),
+            metaTitle: metaTitle.trim(),
+            metaDescription: metaDescription.trim(),
+            selectedTagIds: [...selectedTagIds].sort(),
+            foodType,
+          }
+        case 5:
+        default:
+          return {}
+      }
+    },
+    [
+      name,
+      slug,
+      categoryId,
+      customProductId,
+      status,
+      thumbnailUrls,
+      imageUrls,
+      description,
+      selectedFeatureDefinitionIds,
+      sections,
+      variantMode,
+      price,
+      basePrice,
+      salePrice,
+      discountPercent,
+      simpleProductWeight,
+      stockStatus,
+      totalStock,
+      discountEnabled,
+      discountType,
+      discountValue,
+      discountStartDate,
+      discountEndDate,
+      discountStackable,
+      variants,
+      spiceLevel,
+      taxIncluded,
+      isActive,
+      allowReturn,
+      amazonLink,
+      metaTitle,
+      metaDescription,
+      selectedTagIds,
+      foodType,
+    ],
+  )
+
+  const updateAllStepBaselines = useCallback(() => {
+    stepBaselinesRef.current = {
+      1: JSON.stringify(getStepState(1)),
+      2: JSON.stringify(getStepState(2)),
+      3: JSON.stringify(getStepState(3)),
+      4: JSON.stringify(getStepState(4)),
+      5: JSON.stringify(getStepState(5)),
+    }
+  }, [getStepState])
+
+  const isStepDirty = useCallback(
+    (step: ProductFormStepId) => {
+      if (mode !== "edit" || !editHydrated) return false
+      const baseline = stepBaselinesRef.current[step]
+      if (!baseline) return false
+      return JSON.stringify(getStepState(step)) !== baseline
+    },
+    [editHydrated, getStepState, mode],
+  )
+
+  const restoreStepFromBaseline = useCallback(
+    (step: ProductFormStepId) => {
+      const raw = stepBaselinesRef.current[step]
+      if (!raw) return
+      try {
+        const data = JSON.parse(raw)
+        if (step === 1) {
+          setName(data.name ?? "")
+          setSlug(data.slug ?? "")
+          setCategoryId(data.categoryId ?? "")
+          setCustomProductId(data.customProductId ?? "")
+          if (data.status) setStatus(data.status)
+        } else if (step === 2) {
+          setThumbnailUrls(data.thumbnailUrls ?? [""])
+          setImageUrls(data.imageUrls ?? [])
+          setDescription(data.description ?? "")
+          setSelectedFeatureDefinitionIds(data.selectedFeatureDefinitionIds ?? [])
+          setSections(data.sections ?? [{ title: "", description: "<p></p>", sortOrder: 0, isActive: true }])
+        } else if (step === 3) {
+          setVariantMode(data.variantMode ?? "single")
+          setPrice(data.price ?? "")
+          setBasePrice(data.basePrice ?? "")
+          setSalePrice(data.salePrice ?? "")
+          setDiscountPercent(data.discountPercent ?? "")
+          setSimpleProductWeight(data.simpleProductWeight ?? "")
+          if (data.stockStatus) setStockStatus(data.stockStatus)
+          setTotalStock(data.totalStock ?? "")
+          setDiscountEnabled(Boolean(data.discountEnabled))
+          setDiscountType(data.discountType ?? "percentage")
+          setDiscountValue(data.discountValue ?? "")
+          setDiscountStartDate(data.discountStartDate ?? "")
+          setDiscountEndDate(data.discountEndDate ?? "")
+          setDiscountStackable(Boolean(data.discountStackable))
+          if (data.variants) setVariants(data.variants)
+        } else if (step === 4) {
+          setSpiceLevel(data.spiceLevel ?? "")
+          setTaxIncluded(Boolean(data.taxIncluded))
+          setIsActive(data.isActive ?? true)
+          setAllowReturn(data.allowReturn ?? true)
+          setAmazonLink(data.amazonLink ?? "")
+          setMetaTitle(data.metaTitle ?? "")
+          setMetaDescription(data.metaDescription ?? "")
+          setSelectedTagIds(data.selectedTagIds ?? [])
+          setFoodType(data.foodType ?? "")
+        }
+      } catch {
+        // ignore parse error
+      }
+    },
+    [],
+  )
+
+  const handleStepClick = (targetStep: ProductFormStepId) => {
+    if (targetStep === currentStep) return
+
+    // Backward navigation: allow immediately without popup!
+    if (targetStep < currentStep) {
+      setError("")
+      setCurrentStep(targetStep)
+      return
+    }
+
+    // Forward navigation: check prior steps validation
+    for (let s = 1; s < targetStep; s++) {
+      const err = validateStep(s as ProductFormStepId)
+      if (err) {
+        setCurrentStep(s as ProductFormStepId)
+        setError(err)
+        return
+      }
+    }
+
+    const doNavigate = () => {
+      setError("")
+      setCurrentStep(targetStep)
+    }
+
+    // Forward navigation: check if CURRENT step has unsaved changes
+    if (mode === "edit" && isStepDirty(currentStep)) {
+      setPendingStepAction(() => doNavigate)
+      setShowUnsavedEditDialog(true)
+    } else {
+      doNavigate()
+    }
+  }
+
+  const handleNextStep = () => {
+    const currentErr = validateStep(currentStep)
+    if (currentErr) {
+      setError(currentErr)
+      return
+    }
+    setError("")
+    const nextStep = Math.min(5, (currentStep + 1) as ProductFormStepId) as ProductFormStepId
+    if (nextStep === currentStep) return
+
+    const doNext = () => {
+      setCurrentStep(nextStep)
+    }
+
+    // Moving forward to next step: check if CURRENT step has unsaved changes
+    if (mode === "edit" && isStepDirty(currentStep)) {
+      setPendingStepAction(() => doNext)
+      setShowUnsavedEditDialog(true)
+    } else {
+      doNext()
+    }
+  }
 
   const foodTagCreateAttemptedRef = useRef<Set<string>>(new Set())
   useEffect(() => {
@@ -1477,14 +1929,13 @@ export function ProductConsolePage({
   const reviewMissing = useMemo(() => {
     const step1: string[] = []
     if (!name.trim()) step1.push("Product name")
-    if (!slug.trim()) step1.push("Product slug")
+    if (!slug.trim()) step1.push("Product slug/url")
     if (!categoryId) step1.push("Category")
     if (!foodType) step1.push("Food type")
     if (!spiceLevel) step1.push("Spice level")
-    if (!shelfLife.trim()) step1.push("Shelf life")
 
     const step2: string[] = []
-    if (!thumbnailUrls.some(Boolean)) step2.push("Thumbnail image")
+    if (!thumbnailUrls.some(Boolean)) step2.push("Thumbnail image (Mandatory)")
     if (isEmptyRichText(description)) step2.push("Description")
     else if (stripHtmlText(description).length > DESCRIPTION_MAX_CHARS) step2.push(`Description (exceeds ${DESCRIPTION_MAX_CHARS} chars)`)
     if (selectedFeatureDefinitionIds.length === 0) step2.push("Product features (at least 1 feature required)")
@@ -1499,13 +1950,15 @@ export function ProductConsolePage({
       if (!(Number(v.mrp) > 0)) gaps.push("MRP")
       if (!(variantSalePrice(v, discountEnabled) > 0)) gaps.push("sale price")
       if (!v.sku.trim()) gaps.push("SKU")
+      if (!v.hsnCode?.trim()) gaps.push("HSN Code (Mandatory)")
+      if (!v.eanCode?.trim()) gaps.push("Barcode Number (Mandatory)")
       if (gaps.length) step3.push(`Variant ${idx + 1}: ${gaps.join(", ")}`)
     })
     const step4: string[] = []
 
     return { 1: step1, 2: step2, 3: step3, 4: step4 } as Record<1 | 2 | 3 | 4, string[]>
   }, [
-    name, slug, categoryId, foodType, spiceLevel, shelfLife, thumbnailUrls, description,
+    name, slug, categoryId, foodType, spiceLevel, thumbnailUrls, description,
     selectedFeatureDefinitionIds, sections, variantMode, variants, discountEnabled,
   ])
   const reviewMissingCount = Object.values(reviewMissing).reduce((n, list) => n + list.length, 0)
@@ -1540,7 +1993,6 @@ export function ProductConsolePage({
     if ((p.sections?.length ?? 0) > 0) return true
     if (p.metaTitle || p.metaDescription) return true
     if (p.amazonLink) return true
-    if (p.shelfLife) return true
     if (p.basePrice != null || (p.salePrice != null && p.salePrice > 0) || p.price > 0) return true
     const source = variantModeRef.current === "single" ? variantsRef.current.slice(0, 1) : variantsRef.current
     return source.some(
@@ -1647,16 +2099,8 @@ export function ProductConsolePage({
   // editing an existing product saves only when the admin clicks Save Draft / Publish.
   const [autosaveEnabled, setAutosaveEnabled] = useState(mode === "add")
   useEffect(() => {
-    if (mode === "add") {
-      setAutosaveEnabled(true)
-      return
-    }
-    if (mode === "edit" && productId) {
-      setAutosaveEnabled(window.sessionStorage.getItem(ADD_DRAFT_ID_KEY)?.trim() === productId)
-      return
-    }
-    setAutosaveEnabled(false)
-  }, [mode, productId])
+    setAutosaveEnabled(mode === "add")
+  }, [mode])
 
   const flushAutosaveDraft = useCallback(
     async (opts?: { keepalive?: boolean; navigateToEdit?: boolean }) => {
@@ -1731,10 +2175,6 @@ export function ProductConsolePage({
               productStepStorageKey(created.id),
               String(currentStepRef.current),
             )
-            if (opts?.navigateToEdit !== false && mode === "add") {
-              skipAutosaveRef.current = true
-              router.replace(`/admin/products/${created.id}/edit?step=${currentStepRef.current}`)
-            }
           }
         } catch {
           setDraftSaveStatus("idle")
@@ -1790,7 +2230,7 @@ export function ProductConsolePage({
     if (!hasDraftWorthyContent()) return
     const timer = window.setTimeout(() => {
       void flushAutosaveDraft()
-    }, 1200)
+    }, 400)
     return () => window.clearTimeout(timer)
   }, [autosaveEnabled, editHydrated, flushAutosaveDraft, hasDraftWorthyContent, mode, payload])
 
@@ -1860,12 +2300,24 @@ export function ProductConsolePage({
   const onSubmit = async (e: React.FormEvent, statusOverride?: (typeof statuses)[number]) => {
     e.preventDefault()
     const effectiveStatus = statusOverride ?? status
-    const submitPayload = { ...payload, status: effectiveStatus }
+    let submitPayload = { ...payload, status: effectiveStatus }
     const isDraft = effectiveStatus === "draft"
 
-    if (!submitPayload.name || !submitPayload.slug || !submitPayload.sku) {
-      setError("Name, slug and SKU are required")
-      return
+    if (isDraft) {
+      const draftName = submitPayload.name || "Untitled Draft"
+      const draftSlug = submitPayload.slug || makeSlug(draftName) || "untitled-draft"
+      const draftSku = submitPayload.sku || `${draftSlug}-1`.toUpperCase()
+      submitPayload = {
+        ...submitPayload,
+        name: draftName,
+        slug: draftSlug,
+        sku: draftSku,
+      }
+    } else {
+      if (!submitPayload.name || !submitPayload.slug || !submitPayload.sku) {
+        setError("Name, slug and SKU are required")
+        return
+      }
     }
     if (submitPayload.type === "variant") {
       if (!submitPayload.variants.length) {
@@ -1895,6 +2347,12 @@ export function ProductConsolePage({
       }
     }
 
+    const effPid = (customProductId.trim() || displayProductId || "").trim()
+    if (effPid && !/^PRD-\d+$/i.test(effPid)) {
+      setError("Product ID format is invalid. Must follow format PRD-##### (e.g. PRD-00025)")
+      return
+    }
+
     if (!isDraft) {
       const baseMrp = toNumOrNull(basePrice)
       const selling = toNumOrNull(price)
@@ -1911,18 +2369,14 @@ export function ProductConsolePage({
           setError("Sale Price must be greater than 0 to publish")
           return
         }
-        if (!submitPayload.shelfLife) {
-          setError("Shelf Life is required to publish")
-          return
-        }
       }
       if (submitPayload.type === "simple" && submitPayload.discountPercent == null) {
         setError("Discount percentage is required")
         return
       }
-      if (submitPayload.type === "simple" && !submitPayload.weight) { // New validation for simple product weight
-        setError("Weight is required for simple products.");
-        return;
+      if (submitPayload.type === "simple" && !submitPayload.weight) {
+        setError("Weight is required for simple products.")
+        return
       }
       if (!submitPayload.type) {
         setError("Product type is required")
@@ -1932,13 +2386,24 @@ export function ProductConsolePage({
         setError("Stock status is required")
         return
       }
-      if (!submitPayload.shelfLife) {
-        setError("Shelf life is required")
+      if (!submitPayload.thumbnail) {
+        setError("Thumbnail image is mandatory")
         return
       }
-      if (!submitPayload.thumbnail) {
-        setError("Thumbnail image is required")
-        return
+
+      // Validate HSN Code & Barcode Number on variants
+      const activeSubmitVars = variantMode === "single" ? variants.slice(0, 1) : variants
+      for (let i = 0; i < activeSubmitVars.length; i++) {
+        const v = activeSubmitVars[i]
+        const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
+        if (!v.hsnCode?.trim()) {
+          setError(`${label}: HSN Code is mandatory`)
+          return
+        }
+        if (!v.eanCode?.trim()) {
+          setError(`${label}: Barcode number is mandatory`)
+          return
+        }
       }
       if (!submitPayload.description || isEmptyRichText(submitPayload.description)) {
         setError("Description is required")
@@ -1953,7 +2418,9 @@ export function ProductConsolePage({
     const isPublishing = effectiveStatus === "published"
 
     if (isPublishing) {
-      if (!submitPayload.price || submitPayload.price <= 0) {
+      const defaultVar = submitPayload.variants?.find((v) => v.isDefault) ?? submitPayload.variants?.[0]
+      const effectivePrice = Number(submitPayload.price) > 0 ? Number(submitPayload.price) : (Number(defaultVar?.price) > 0 ? Number(defaultVar?.price) : Number(defaultVar?.mrp ?? 0))
+      if (effectivePrice <= 0) {
         setError("Provide at least one valid price to publish the product")
         return
       }
@@ -1973,18 +2440,22 @@ export function ProductConsolePage({
         const id = productId ?? draftProductIdRef.current!
         await authedPatch(`/api/v1/products/${id}`, submitPayload)
         resolvedProductId = id
-        alert(mode === "edit" ? "Product updated successfully" : "Product created successfully")
       } else {
         const created = await authedPost<ProductDetail>("/api/v1/products", submitPayload)
         resolvedProductId = created.id
         draftProductIdRef.current = created.id
         setAutosavedDraftId(created.id)
-        alert("Product created successfully")
       }
+
       if (isDraft) {
         lastAutosavedHashRef.current = JSON.stringify(buildSoftDraftPayload())
+        updateAllStepBaselines()
         setDraftSaveStatus("saved")
+        toast.success("Draft saved successfully")
+      } else {
+        toast.success(mode === "edit" ? "Product updated successfully" : "Product published successfully")
       }
+
       if (resolvedProductId && discountEnabled) {
         const discountPayload = {
           productId: resolvedProductId,
@@ -2017,12 +2488,15 @@ export function ProductConsolePage({
       }
       window.sessionStorage.removeItem(ADD_PENDING_ID_KEY)
       window.sessionStorage.removeItem(ADD_DRAFT_ID_KEY)
-      router.push(mode === "edit" ? `${basePath}/${resolvedProductId}` : `${basePath}`)
+
+      if (!isDraft) {
+        router.push(mode === "edit" ? `${basePath}/${resolvedProductId}` : `${basePath}`)
+      }
     } catch (e) {
-      skipAutosaveRef.current = false
       if (isDraft) setDraftSaveStatus("idle")
       setError(e instanceof Error ? e.message : "Save failed")
     } finally {
+      skipAutosaveRef.current = false
       setSaving(false)
     }
   }
@@ -2146,14 +2620,14 @@ export function ProductConsolePage({
   }
 
   const validatePublishable = (product: ProductDetail) => {
-    const hasPrice = Number(product.price) > 0
+    const defaultVar = product.variants?.find((v) => v.isDefault) ?? product.variants?.[0]
+    const hasPrice = Number(product.price) > 0 || Number(defaultVar?.price) > 0 || Number(defaultVar?.mrp) > 0
     const hasDiscount = product.discountPercent != null
     const hasWeight = product.type === "simple" ? Boolean(product.weight && parseWeight(product.weight).value) : true; // New validation
     const hasType = Boolean(product.type)
     const tagNames = (product.tags ?? []).map((x) => x.tag.name.toLowerCase())
     // const hasFoodType = product.foodType === "veg" || product.foodType === "non-veg"
     const hasStockStatus = Boolean(product.stockStatus)
-    const hasShelfLife = Boolean(product.shelfLife?.trim())
     const hasThumbnail = Boolean(product.thumbnail?.trim())
     const hasDescription = Boolean(product.description && !isEmptyRichText(product.description))
     const hasFeatures = (product.features?.filter((f) => Boolean(f.title)).length ?? 0) > 0
@@ -2164,7 +2638,6 @@ export function ProductConsolePage({
     if (!hasType) return "Product type is required to publish the product."
     // if (!hasFoodType) return "Food type (veg/non-veg) is required to publish the product."
     if (!hasStockStatus) return "Stock status is required to publish the product."
-    if (!hasShelfLife) return "Shelf life is required to publish the product."
     if (!hasThumbnail) return "Thumbnail image is required to publish the product."
     if (!hasDescription) return "Description is required to publish the product."
     if (!hasFeatures) return "At least one product feature is required to publish the product."
@@ -2626,7 +3099,17 @@ export function ProductConsolePage({
     <section className="w-full space-y-4 pb-2">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <Link href={basePath} className="text-xs font-semibold uppercase text-[#7B3010] underline">
+          <Link
+            href={basePath}
+            onClick={(e) => {
+              if (mode === "edit" && isEditDirty) {
+                e.preventDefault()
+                setPendingStepAction(() => () => router.push(basePath))
+                setShowUnsavedEditDialog(true)
+              }
+            }}
+            className="text-xs font-semibold uppercase text-[#7B3010] underline"
+          >
             ← Back to Products
           </Link>
           <h1 className="mt-2 font-melon text-2xl font-bold text-[#4A1D1F]">
@@ -2720,9 +3203,7 @@ export function ProductConsolePage({
         <>
           <ProductFormStepper
             currentStep={currentStep}
-            onStepClick={(step) => {
-              if (step <= currentStep) setCurrentStep(step)
-            }}
+            onStepClick={handleStepClick}
           />
           <p className="text-xs text-[#646464]">Draft saves can be partial. Publishing requires complete pricing, media, features, and content.</p>
         </>
@@ -2793,24 +3274,24 @@ export function ProductConsolePage({
                     />
                   </Field>
 
-                  <Field label="Product ID">
+                  <Field label="Product ID" info="Auto-generated sequence product ID (e.g. PRD-00024)">
                     <Input
-                      value={displayProductId}
+                      value={displayProductId || "PRD-....."}
                       readOnly
                       disabled
-                      className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed"
-                      title="Auto-generated product ID"
+                      className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed font-mono"
+                      title="Auto-generated sequence product ID"
                     />
                     <p className="mt-1 text-[11px] text-[#646464]">
-                      {mode === "edit" ? "Product ID (auto-generated)" : "Auto-generated ID for this product"}
+                      Auto-generated sequence ID (e.g. PRD-00024). Read-only field.
                     </p>
                   </Field>
 
                   {/* Row 2 */}
-                  <Field label="Product Slug" required>
+                  <Field label="Product slug/url" required>
                     <div className="relative">
                       <Input
-                        placeholder="Enter product slug"
+                        placeholder="Enter product slug/url"
                         value={slug}
                         onChange={(e) => {
                           let value = e.target.value.toLowerCase()
@@ -2885,25 +3366,6 @@ export function ProductConsolePage({
                         ))}
                       </SelectContent>
                     </Select>
-                  </Field>
-
-                  {/* Row 3 */}
-                  <Field
-                    label="Shelf Life"
-                    required={status !== "draft"}
-                    info="Shelf life is counted in months. Enter how many months this product stays good to use from the manufacturing or packing date."
-                  >
-                    <Input
-                      placeholder="Enter shelf life in months"
-                      type="number"
-                      min={0}
-                      inputMode="decimal"
-                      value={shelfLife}
-                      onKeyDown={blockNumberFieldKeys}
-                      onChange={(e) => setShelfLife(sanitizeNonNegativeInput(e.target.value))}
-                      className={`rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm ${NUMBER_INPUT_CLASS}`}
-                      title="Shelf life in months"
-                    />
                   </Field>
 
                   <div className="sm:col-span-2 lg:col-span-2">
@@ -2981,7 +3443,7 @@ export function ProductConsolePage({
               <div className={`md:col-span-3 grid gap-3 md:grid-cols-2 md:items-stretch ${currentStep === 2 ? "" : "hidden"}`}>
                 <ImageUploadPicker
                   label="Thumbnails"
-                  required={status !== "draft"}
+                  required={true}
                   hint="Shown on product cards and as the main cover. First image is cover by default — click any other image to make it cover."
                   resolutionHint="800 × 800 px (square)"
                   maxSizeLabel="Max 1 MB each"
@@ -3129,14 +3591,14 @@ export function ProductConsolePage({
                           </th>
                           <th className="px-2 py-2.5">
                             <span className="inline-flex items-center gap-1">
-                              HSN Code
-                              <span title="HSN / tax classification code" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                              HSN Code <span className="text-red-500">*</span>
+                              <span title="HSN / tax classification code (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
                             </span>
                           </th>
                           <th className="px-2 py-2.5">
                             <span className="inline-flex items-center gap-1">
-                              EAN / GTIN Code / Barcode
-                              <span title="Barcode / GTIN for this variant" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                              Barcode Number <span className="text-red-500">*</span>
+                              <span title="Barcode / GTIN for this variant (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
                             </span>
                           </th>
                           <th className="px-2 py-2.5 text-center">Default</th>
@@ -3169,7 +3631,7 @@ export function ProductConsolePage({
                               </td>
                               <td className="px-2 py-2 align-middle">
                                 <Select
-                                  value={weightParts.unit || "gm"}
+                                  value={weightParts.unit || "g"}
                                   onValueChange={(unit) => {
                                     const newVal = weightParts.value + unit
                                     setVariants((prev) =>
@@ -3181,7 +3643,7 @@ export function ProductConsolePage({
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="gm">gm</SelectItem>
+                                    <SelectItem value="g">g</SelectItem>
                                     <SelectItem value="mg">mg</SelectItem>
                                     <SelectItem value="kg">kg</SelectItem>
                                   </SelectContent>
@@ -3278,28 +3740,28 @@ export function ProductConsolePage({
                                   className="h-9 w-28 rounded border border-[#D9D9D1] bg-white px-2 text-sm"
                                 />
                               </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  placeholder="HSN"
+                              <td className="px-2 py-2 align-middle min-w-[150px]">
+                                <SearchableMasterSelect
                                   value={variant.hsnCode}
-                                  onChange={(e) =>
+                                  onChange={(val) =>
                                     setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, hsnCode: e.target.value } : x)),
+                                      prev.map((x, i) => (i === idx ? { ...x, hsnCode: val } : x)),
                                     )
                                   }
-                                  className="h-9 w-24 rounded border border-[#D9D9D1] bg-white px-2 text-sm"
+                                  options={hsnOptions}
+                                  placeholder="Select HSN *"
                                 />
                               </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  placeholder="Barcode"
+                              <td className="px-2 py-2 align-middle min-w-[160px]">
+                                <SearchableMasterSelect
                                   value={variant.eanCode}
-                                  onChange={(e) =>
+                                  onChange={(val) =>
                                     setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, eanCode: e.target.value } : x)),
+                                      prev.map((x, i) => (i === idx ? { ...x, eanCode: val } : x)),
                                     )
                                   }
-                                  className="h-9 w-32 rounded border border-[#D9D9D1] bg-white px-2 text-sm"
+                                  options={barcodeOptions}
+                                  placeholder="Select Barcode *"
                                 />
                               </td>
                               <td className="px-2 py-2 align-middle text-center">
@@ -3689,9 +4151,6 @@ export function ProductConsolePage({
                       <span className="capitalize text-[#646464]">{status}</span>
                     </span>
                   </ReviewRow>
-                  <ReviewRow label="Shelf Life">
-                    {shelfLife.trim() ? `${shelfLife} months` : <ReviewMissing />}
-                  </ReviewRow>
                   {preparationType ? (
                     <ReviewRow label="Preparation">
                       <span className="capitalize">{preparationType.replace(/_/g, " ")}</span>
@@ -3974,7 +4433,7 @@ export function ProductConsolePage({
                         <tr key={`${variant.id ?? "rev"}-${idx}`} className="border-b border-[#F0E8DC] last:border-b-0">
                           <td className="px-2 py-2.5 text-xs text-[#646464]">{idx + 1}</td>
                           <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.value || missingCell}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.unit || "gm"}</td>
+                          <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.unit || "g"}</td>
                           <td className="px-2 py-2.5 text-[#2A1810]">{Number(variant.mrp) > 0 ? variant.mrp : missingCell}</td>
                           <td className="px-2 py-2.5">
                             {discNum > 0 ? (
@@ -4097,21 +4556,6 @@ export function ProductConsolePage({
         {mode !== "view" && (
           <div className="md:col-span-3 flex flex-col gap-3 border-t border-[#E8DCC8] pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="space-y-3">
-              {currentStep === 5 ? (
-                <label className="flex max-w-md cursor-pointer items-start gap-2.5 text-sm text-[#2A1810]">
-                  <Checkbox
-                    checked={reviewConfirmed}
-                    onCheckedChange={(v) => setReviewConfirmed(Boolean(v))}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    I confirm that all product information is accurate and complies with Ziply5&apos;s policies.
-                    <span className="block text-xs text-[#646464]">
-                      By publishing, you agree to our content and product guidelines.
-                    </span>
-                  </span>
-                </label>
-              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -4152,15 +4596,11 @@ export function ProductConsolePage({
               ) : (
                 <Button
                   type="button"
-                  disabled={saving || !reviewConfirmed || reviewMissingCount > 0 || uploadingThumbnails || uploadingGallery || uploadingIcon}
+                  disabled={saving || reviewMissingCount > 0 || uploadingThumbnails || uploadingGallery || uploadingIcon}
                   title={reviewMissingCount > 0 ? "Complete the missing details before publishing" : undefined}
                   onClick={() => {
                     if (reviewMissingCount > 0) {
                       setError("Complete the missing details before publishing")
-                      return
-                    }
-                    if (!reviewConfirmed) {
-                      setError("Please confirm the product details before publishing")
                       return
                     }
                     void onSubmit({ preventDefault() {} } as React.FormEvent, "published")
@@ -4176,6 +4616,72 @@ export function ProductConsolePage({
         )}
       </form>
       )}
+
+      {/* Unsaved Changes Confirmation Modal for Edit Mode */}
+      <Dialog open={showUnsavedEditDialog} onOpenChange={setShowUnsavedEditDialog}>
+        <DialogContent className="max-w-lg bg-white rounded-2xl p-6 shadow-2xl border border-[#E8DCC8]">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-bold text-[#4A1D1F]">Unsaved Changes</DialogTitle>
+            <DialogDescription className="text-xs text-[#646464] mt-1">
+              You have unsaved changes on this product. Would you like to save your changes as a draft or discard them before moving?
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="mt-5 flex flex-row items-center justify-end gap-2 sm:gap-3">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={saving}
+              onClick={() => {
+                setShowUnsavedEditDialog(false)
+                setPendingStepAction(null)
+              }}
+              className="rounded-full px-4 py-2.5 text-xs font-semibold text-[#646464] hover:bg-gray-100 transition"
+            >
+              Cancel
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              disabled={saving}
+              onClick={() => {
+                restoreStepFromBaseline(currentStep)
+                setShowUnsavedEditDialog(false)
+                if (pendingStepAction) {
+                  const action = pendingStepAction
+                  setPendingStepAction(null)
+                  action()
+                }
+              }}
+              className="rounded-full border-red-200 bg-red-50 px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-red-700 hover:bg-red-100 transition"
+            >
+              Discard Changes
+            </Button>
+
+            <Button
+              type="button"
+              disabled={saving}
+              onClick={async () => {
+                try {
+                  await onSubmit({ preventDefault() {} } as React.FormEvent, "draft")
+                  setShowUnsavedEditDialog(false)
+                  if (pendingStepAction) {
+                    const action = pendingStepAction
+                    setPendingStepAction(null)
+                    action()
+                  }
+                } catch {
+                  // error already displayed by onSubmit
+                }
+              }}
+              className="rounded-full bg-[#7B3010] px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white transition hover:bg-[#5E240C]"
+            >
+              {saving ? "Saving Draft..." : "Save as Draft"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }
