@@ -8,6 +8,8 @@ const sanitizeSegment = (s: string) =>
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "") || "product"
 
+const VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".mov", ".m4v"])
+
 export const uploadProductImage = async (input: {
   slug: string
   relativePath: string
@@ -21,6 +23,21 @@ export const uploadProductImage = async (input: {
     .filter(Boolean)
     .join("/")
   const leaf = safeFilePath || `${Date.now()}-${sanitizeSegment(input.sourceFileName || "image")}`
+  
+  const ext = (input.sourceFileName.includes(".")
+    ? input.sourceFileName.slice(input.sourceFileName.lastIndexOf("."))
+    : ""
+  ).toLowerCase()
+
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    const saved = await storageService.saveRawUpload({
+      folder: `products/${folder}`,
+      originalName: leaf.endsWith(ext) ? leaf : `${leaf}${ext}`,
+      buffer: input.bytes,
+    })
+    return saved.url
+  }
+
   const saved = await storageService.saveProductImageSet({
     folder: `products/${folder}`,
     originalName: leaf,

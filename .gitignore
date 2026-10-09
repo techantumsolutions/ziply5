@@ -33,4 +33,6 @@ package-lock.json
 test-db.js
 test-sms.ts
 test-fetch.js
+/storage/
+sample-bulk-upload/
 
