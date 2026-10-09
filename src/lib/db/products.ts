@@ -447,18 +447,18 @@ const readByProductId = async <T extends Record<string, unknown>>(
       () =>
         opts?.orderBy
           ? client
-              .from(table)
-              .select("*")
-              .eq("productId", productId)
-              .order(opts.orderBy.camel, { ascending: opts.orderBy.ascending ?? true })
+            .from(table)
+            .select("*")
+            .eq("productId", productId)
+            .order(opts.orderBy.camel, { ascending: opts.orderBy.ascending ?? true })
           : client.from(table).select("*").eq("productId", productId),
       () =>
         opts?.orderBy
           ? client
-              .from(table)
-              .select("*")
-              .eq("product_id", productId)
-              .order(opts.orderBy.snake, { ascending: opts.orderBy.ascending ?? true })
+            .from(table)
+            .select("*")
+            .eq("product_id", productId)
+            .order(opts.orderBy.snake, { ascending: opts.orderBy.ascending ?? true })
           : client.from(table).select("*").eq("product_id", productId),
     ]
     for (const run of attempts) {
@@ -733,7 +733,7 @@ export const createProductSupabase = async (input: {
   const existingId = safeString((baseInput as any).id)
   if (!existingId || !/^PRD-\d+$/i.test(existingId)) {
     const seqId = await getNextProductSequenceId()
-    ;(baseInput as any).id = seqId
+      ; (baseInput as any).id = seqId
   }
   const base = await normalizeActorFks(withId(withTimestampsForInsert(baseInput)))
   const created = await insertFirst(PRODUCT_TABLES, [base])
