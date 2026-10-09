@@ -296,6 +296,9 @@ export const shiprocketClient = {
   async createReturnOrder(input: Record<string, unknown>): Promise<CreateReturnOrderResponse> {
     return request<CreateReturnOrderResponse>("/orders/create/return", "POST", input)
   },
+  async generateInvoice(ids: number[]): Promise<{ is_invoice_created?: boolean; invoice_url?: string; [key: string]: unknown }> {
+    return request<{ is_invoice_created?: boolean; invoice_url?: string }>("/orders/print/invoice", "POST", { ids })
+  },
 }
 
 export const getShiprocketConfig = () => ({

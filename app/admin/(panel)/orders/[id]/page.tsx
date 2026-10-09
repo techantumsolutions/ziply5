@@ -71,6 +71,29 @@ export default function AdminOrderDetailPage() {
   const lifecycleStatus = hasAdminRejected ? "rejected" : rawLifecycle
   const refundStatus = (order?.refunds?.[0]?.status ?? "pending").toLowerCase()
 
+  const [downloadingShiprocketInvoice, setDownloadingShiprocketInvoice] = useState(false)
+
+  // Fetches and opens/downloads official Shiprocket PDF invoice.
+  const handleDownloadShiprocketInvoice = async () => {
+    if (!order) return
+    setDownloadingShiprocketInvoice(true)
+    try {
+      const res = await authedPost<{ invoiceUrl?: string }>(`/api/v1/orders/${order.id}/shiprocket`, {
+        action: "fetch_invoice",
+      })
+      if (res?.invoiceUrl) {
+        window.open(res.invoiceUrl, "_blank")
+        toast.success("Success", "Shiprocket invoice fetched successfully")
+      } else {
+        toast.error("Invoice Error", "Could not fetch Shiprocket invoice URL")
+      }
+    } catch (err) {
+      toast.error("Shiprocket Invoice Error", err instanceof Error ? err.message : "Failed to fetch Shiprocket invoice")
+    } finally {
+      setDownloadingShiprocketInvoice(false)
+    }
+  }
+
   // Generates and downloads the PDF invoice matching the admin commercial/dispatch template.
   const handleDownloadInvoice = async () => {
     if (!order) return
@@ -335,6 +358,19 @@ export default function AdminOrderDetailPage() {
               <Download className="mr-1.5 h-4 w-4" />
             )}
             Download invoice
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => void handleDownloadShiprocketInvoice()}
+            disabled={!order || downloadingShiprocketInvoice}
+            className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+          >
+            {downloadingShiprocketInvoice ? (
+              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="mr-1.5 h-4 w-4" />
+            )}
+            Shiprocket Invoice
           </Button>
           <Button variant="outline" onClick={() => void loadOrder()}>
             Refresh
