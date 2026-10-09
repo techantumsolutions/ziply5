@@ -20,8 +20,6 @@ const PRODUCT_BASE_COLUMNS = [
   "id",
   "sellerId",
   "brandId",
-  "categoryId",
-  "category_id",
   "name",
   "slug",
   "description",
@@ -668,8 +666,17 @@ export const createProductSupabase = async (input: {
 }) => {
   let baseInput: Record<string, unknown> = {
     ...input.base,
-    ...(input.categoryId ? { categoryId: input.categoryId, category_id: input.categoryId } : {}),
   }
+  delete (baseInput as any).categoryId
+  delete (baseInput as any).category_id
+  delete (baseInput as any).categories
+  delete (baseInput as any).tags
+  delete (baseInput as any).variants
+  delete (baseInput as any).images
+  delete (baseInput as any).features
+  delete (baseInput as any).labels
+  delete (baseInput as any).details
+  delete (baseInput as any).sections
   const existingId = safeString((baseInput as any).id)
   if (!existingId || !/^PRD-\d{6}$/i.test(existingId)) {
     const seqId = await getNextProductSequenceId()
@@ -805,10 +812,21 @@ export const updateProductSupabase = async (input: {
     if (synced.catalogPriceChanged) stampProductPrice = true
   }
 
+  const baseUpdatePayload = { ...input.baseUpdate }
+  delete (baseUpdatePayload as any).categoryId
+  delete (baseUpdatePayload as any).category_id
+  delete (baseUpdatePayload as any).categories
+  delete (baseUpdatePayload as any).tags
+  delete (baseUpdatePayload as any).variants
+  delete (baseUpdatePayload as any).images
+  delete (baseUpdatePayload as any).features
+  delete (baseUpdatePayload as any).labels
+  delete (baseUpdatePayload as any).details
+  delete (baseUpdatePayload as any).sections
+
   const baseUpdate = await normalizeActorFks(
     withTimestampForUpdate({
-      ...input.baseUpdate,
-      ...(input.categoryId !== undefined ? { categoryId: input.categoryId, category_id: input.categoryId } : {}),
+      ...baseUpdatePayload,
       ...(stampProductPrice ? { priceUpdatedAt: new Date().toISOString() } : {}),
     }),
   )

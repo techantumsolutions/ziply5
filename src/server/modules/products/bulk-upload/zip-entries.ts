@@ -1,7 +1,17 @@
 import AdmZip from "adm-zip"
 import path from "node:path"
 
-const IMAGE_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"])
+const MEDIA_EXT = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".webp",
+  ".gif",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".m4v",
+])
 
 const isSafeZipPath = (entryName: string) => {
   const normalized = entryName.replaceAll("\\", "/").replace(/^\/+/, "")
@@ -10,7 +20,7 @@ const isSafeZipPath = (entryName: string) => {
   const base = path.posix.basename(normalized)
   if (!base || base.startsWith(".")) return false
   const ext = path.posix.extname(base).toLowerCase()
-  return IMAGE_EXT.has(ext)
+  return MEDIA_EXT.has(ext)
 }
 
 /**

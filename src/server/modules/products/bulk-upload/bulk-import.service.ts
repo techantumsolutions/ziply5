@@ -64,46 +64,48 @@ const toSafeSkuFragment = (raw: string) =>
 
 const parseDetailsCell = (raw: unknown): Array<{ title: string; content: string; sortOrder?: number }> => {
   const items = splitMulti(raw)
-  return items
-    .map((entry, idx) => {
-      const [title, content, sort] = entry.split("::").map((x) => x.trim())
-      const sortOrder = sort ? Number(sort) : idx
-      if (!title || !content) return null
-      return {
-        title,
-        content,
-        sortOrder: Number.isFinite(sortOrder) ? sortOrder : idx,
-      }
+  const result: Array<{ title: string; content: string; sortOrder?: number }> = []
+  for (let idx = 0; idx < items.length; idx++) {
+    const entry = items[idx]
+    const [title, content, sort] = entry.split("::").map((x) => x.trim())
+    if (!title || !content) continue
+    const sortOrder = sort ? Number(sort) : idx
+    result.push({
+      title,
+      content,
+      sortOrder: Number.isFinite(sortOrder) ? sortOrder : idx,
     })
-    .filter((x): x is { title: string; content: string; sortOrder?: number } => Boolean(x))
+  }
+  return result
 }
 
 const parseFeaturesCell = (raw: unknown): Array<{ title: string; icon?: string | null }> => {
   const items = splitMulti(raw)
-  return items
-    .map((entry) => {
-      const [title, icon] = entry.split("::").map((x) => x.trim())
-      if (!title) return null
-      return { title, icon: icon || null }
-    })
-    .filter((x): x is { title: string; icon?: string | null } => Boolean(x))
+  const result: Array<{ title: string; icon?: string | null }> = []
+  for (const entry of items) {
+    const [title, icon] = entry.split("::").map((x) => x.trim())
+    if (!title) continue
+    result.push({ title, icon: icon || null })
+  }
+  return result
 }
 
 const parseSectionsCell = (raw: unknown): Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }> => {
   const items = splitMulti(raw)
-  return items
-    .map((entry, idx) => {
-      const [title, description, sort, isActiveRaw] = entry.split("::").map((x) => x.trim())
-      if (!title || !description) return null
-      const sortOrder = sort ? Number(sort) : idx
-      return {
-        title,
-        description,
-        sortOrder: Number.isFinite(sortOrder) ? sortOrder : idx,
-        isActive: parseBool(isActiveRaw) ?? true,
-      }
+  const result: Array<{ title: string; description: string; sortOrder?: number; isActive?: boolean }> = []
+  for (let idx = 0; idx < items.length; idx++) {
+    const entry = items[idx]
+    const [title, description, sort, isActiveRaw] = entry.split("::").map((x) => x.trim())
+    if (!title || !description) continue
+    const sortOrder = sort ? Number(sort) : idx
+    result.push({
+      title,
+      description,
+      sortOrder: Number.isFinite(sortOrder) ? sortOrder : idx,
+      isActive: parseBool(isActiveRaw) ?? true,
     })
-    .filter((x): x is { title: string; description: string; sortOrder?: number; isActive?: boolean } => Boolean(x))
+  }
+  return result
 }
 
 type CategoryLite = { id: string; name: string; slug: string }
@@ -534,6 +536,8 @@ const buildSimpleCreateInput = async (opts: {
   const details = parseDetailsCell(getCell(raw, "details"))
   const features = parseFeaturesCell(getCell(raw, "features"))
   const sections = parseSectionsCell(getCell(raw, "sections"))
+  const hsnCode = str(getCell(raw, "hsnCode", "hsn", "hsn_code")) || null
+  const barcode = str(getCell(raw, "barcode", "eanCode", "ean_code", "ean", "gtin", "upc")) || null
 
   return {
     name: str(getCell(raw, "name")),
@@ -570,6 +574,20 @@ const buildSimpleCreateInput = async (opts: {
     details,
     sections,
     features,
+    variants: [
+      {
+        name: str(getCell(raw, "name")),
+        weight: str(getCell(raw, "weight")) || null,
+        sku,
+        price,
+        mrp: basePrice != null && basePrice > 0 ? basePrice : null,
+        discountPercent: discountPercent != null && discountPercent >= 0 ? discountPercent : null,
+        stock: totalStock,
+        isDefault: true,
+        hsnCode,
+        eanCode: barcode,
+      },
+    ],
   }
 }
 
@@ -620,6 +638,15 @@ const buildVariantCreateInput = async (opts: {
   const normalizedVariants = lines.map((line) => {
     const nm = str(getCell(line.raw, "variantName")) || str(getCell(line.raw, "variantSku"))
     const def = parseBool(getCell(line.raw, "isDefault"))
+    const hsnCode =
+      str(getCell(line.raw, "hsnCode", "hsn", "hsn_code")) ||
+      str(getCell(parentRaw, "hsnCode", "hsn", "hsn_code")) ||
+      null
+    const barcode =
+      str(getCell(line.raw, "barcode", "eanCode", "ean_code", "ean", "gtin", "upc")) ||
+      str(getCell(parentRaw, "barcode", "eanCode", "ean_code", "ean", "gtin", "upc")) ||
+      null
+
     return {
       name: nm,
       weight: str(getCell(line.raw, "weight")) || null,
@@ -635,6 +662,8 @@ const buildVariantCreateInput = async (opts: {
       })(),
       stock: parseInt0(getCell(line.raw, "stock")) ?? 0,
       isDefault: Boolean(def),
+      hsnCode,
+      eanCode: barcode,
     }
   })
   if (!normalizedVariants.some((v) => v.isDefault)) {
@@ -728,6 +757,8 @@ const buildVariantCreateInput = async (opts: {
       discountPercent: v.discountPercent,
       stock: v.stock,
       isDefault: v.isDefault,
+      hsnCode: v.hsnCode,
+      eanCode: v.eanCode,
     })),
   }
 }

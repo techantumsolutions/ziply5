@@ -57,6 +57,11 @@ export const readWorkbookBuffer = (buffer: Buffer, uploadType: BulkUploadType) =
   const wb = XLSX.read(buffer, { type: "buffer", cellDates: true })
   const sheetNames = wb.SheetNames
   if (uploadType === "simple") {
+    const hasVariantsSheet = sheetNames.some((n) => n.trim().toLowerCase() === VARIANT_CHILD_SHEET.toLowerCase())
+    const hasSimpleSheet = sheetNames.some((n) => n.trim().toLowerCase() === SIMPLE_SHEET.toLowerCase())
+    if (hasVariantsSheet && !hasSimpleSheet) {
+      throw new Error("This file contains multiple variant sheets (Variants). Please select 'Multi Variant Product' in Step 1 to upload this file.")
+    }
     const name =
       sheetNames.find((n) => n.trim().toLowerCase() === SIMPLE_SHEET.toLowerCase()) ??
       sheetNames[0] ??
@@ -71,6 +76,10 @@ export const readWorkbookBuffer = (buffer: Buffer, uploadType: BulkUploadType) =
   const variantName =
     sheetNames.find((n) => n.trim().toLowerCase() === VARIANT_CHILD_SHEET.toLowerCase()) ?? ""
   if (!parentName || !variantName) {
+    const hasSimpleSheet = sheetNames.some((n) => n.trim().toLowerCase() === SIMPLE_SHEET.toLowerCase())
+    if (hasSimpleSheet) {
+      throw new Error("This file is a Single Variant spreadsheet (SimpleProducts). Please select 'Single Variant Product' in Step 1 to upload this file.")
+    }
     throw new Error(`Variant workbook must include sheets "${VARIANT_PARENT_SHEET}" and "${VARIANT_CHILD_SHEET}"`)
   }
   return {
