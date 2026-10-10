@@ -3,13 +3,14 @@ import { z } from "zod"
 import { fail, ok } from "@/src/server/core/http/response"
 import { requireAuth } from "@/src/server/middleware/auth"
 import { requirePermission } from "@/src/server/middleware/rbac"
-import { createBundleV2, listBundlesAdmin } from "@/src/server/modules/bundles/bundles.service"
+import { createBundleV2, listActiveCombosForProduct, listBundlesAdmin } from "@/src/server/modules/bundles/bundles.service"
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional(),
   q: z.string().optional(),
   isActive: z.enum(["true", "false"]).optional(),
+  productId: z.string().min(1).optional(),
   sort: z.enum(["created_desc", "created_asc"]).optional(),
 })
 
@@ -21,7 +22,11 @@ const bundlePayloadSchema = z.object({
   description: z.string().nullable().optional(),
   image: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
-  productIds: z.array(z.string().min(1)).min(1).max(3),
+  productIds: z.array(z.string().min(1)).max(3),
+  productPrices: z.array(z.object({
+    productId: z.string().min(1),
+    comboPrice: z.number().nonnegative(),
+  })).max(3).optional(),
 })
 
 export async function GET(request: NextRequest) {
@@ -33,6 +38,10 @@ export async function GET(request: NextRequest) {
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()))
   if (!parsed.success) return fail("Invalid query params", 422, parsed.error.flatten())
   const data = parsed.data
+  if (data.productId && data.isActive !== "false") {
+    const items = await listActiveCombosForProduct(data.productId)
+    return ok({ items, total: items.length, page: 1, limit: items.length || 1 }, "Bundles fetched")
+  }
   const result = await listBundlesAdmin({
     page: data.page,
     limit: data.limit,

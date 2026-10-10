@@ -13,7 +13,11 @@ const updateSchema = z.object({
   description: z.string().nullable().optional(),
   image: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
-  productIds: z.array(z.string().min(1)).min(1).max(3),
+  productIds: z.array(z.string().min(1)).max(3),
+  productPrices: z.array(z.object({
+    productId: z.string().min(1),
+    comboPrice: z.number().nonnegative(),
+  })).max(3).optional(),
 })
 
 const patchSchema = z.object({

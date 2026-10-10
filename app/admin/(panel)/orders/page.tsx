@@ -6,6 +6,7 @@ import { authedFetch, authedPost } from "@/lib/dashboard-fetch";
 import { useRealtimeTables } from "@/hooks/useRealtimeTables";
 import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search, ShoppingCart, Clock, XCircle } from "lucide-react";
 import { toast } from "@/lib/toast";
+import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from "@/src/lib/datetime";
 import {
   Select,
   SelectContent,
@@ -297,7 +298,7 @@ export default function AdminOrdersPage() {
       const payment = toPaymentStatus(o);
       const lifecycle = lifecycleStatus(o);
       const ship = latestShipmentStatus(o);
-      const date = new Date(o.createdAt);
+      const date = new Date(toUtcIso(o.createdAt) ?? o.createdAt);
 
       // Status Tab filter
       if (statusTab !== "all") {
@@ -464,7 +465,7 @@ export default function AdminOrdersPage() {
     const header = ["order_id", "date_time", "customer_name", "mobile", "email", "payment_method", "payment_status", "order_status", "shipment_status", "total_amount", "items_count", "warehouse", "delivery_eta"];
     const body = filteredRows.map((o) => [
       o.id,
-      new Date(o.createdAt).toISOString(),
+      formatIstSqlDateTime(o.createdAt) ?? "",
       o.customerName ?? o.user?.name ?? "",
       o.customerPhone ?? "",
       o.user?.email ?? "",
@@ -786,8 +787,8 @@ export default function AdminOrdersPage() {
                     <td className="px-2 py-2"><input type="checkbox" checked={selectedIds.includes(o.id)} onChange={() => toggleSelect(o.id)} /></td>
                     <td className="px-2 py-2 font-mono text-[11px]">#{o.id.slice(0, 10).toUpperCase()}</td>
                     <td className="px-2 py-2 text-xs text-[#7A7A7A]">
-                      <div>{new Date(o.createdAt).toLocaleDateString()}</div>
-                      <div>{new Date(o.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
+                      <div>{formatOrderDate(o.createdAt)}</div>
+                      <div>{formatOrderTime(o.createdAt)}</div>
                     </td>
                     <td className="px-2 py-2">
                       <p className="text-sm font-semibold text-[#2A1810]">{o.customerName ?? o.user?.name ?? "Guest Customer"}</p>

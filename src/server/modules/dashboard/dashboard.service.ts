@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/src/lib/supabase/admin"
 import { safeString } from "@/src/lib/db/supabaseIntegrity"
+import { toUtcIso } from "@/src/lib/datetime"
 
 /** Avoid crashing the whole dashboard when optional tables are missing or DB is partial. */
 const safe = async <T>(fn: () => Promise<T>, fallback: T): Promise<T> => {
@@ -139,7 +140,7 @@ export const getDashboardSummary = async () => {
           id: safeString(o.id),
           status: safeString(o.status),
           total: Number(o.total ?? 0),
-          createdAt: safeString(o.createdAt ?? o.created_at),
+          createdAt: toUtcIso(o.createdAt ?? o.created_at) ?? "",
           customerName: safeString(o.customerName ?? o.customer_name),
         }))
       }
@@ -203,7 +204,7 @@ export const getDashboardSummary = async () => {
 
   const monthTotals = new Map<string, number>()
   for (const row of salesRows) {
-    const ts = row.createdAt ?? row.created_at
+    const ts = toUtcIso(row.createdAt ?? row.created_at)
     if (!ts) continue
     const d = new Date(ts)
     if (!Number.isFinite(d.getTime())) continue
@@ -254,7 +255,7 @@ export const getDashboardSummary = async () => {
   const thisWeek = new Map<string, number>()
   const lastWeek = new Map<string, number>()
   for (const row of weeklyRows) {
-    const ts = row.createdAt ?? row.created_at
+    const ts = toUtcIso(row.createdAt ?? row.created_at)
     if (!ts) continue
     const d = new Date(ts)
     const key = weekday(d)

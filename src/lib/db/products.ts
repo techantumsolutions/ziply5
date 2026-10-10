@@ -672,10 +672,10 @@ export const getNextProductSequenceId = async (): Promise<string> => {
           }
         }
       }
-      return `PRD-${String(maxSeq + 1).padStart(5, "0")}`
+      return `PRD-${String(maxSeq + 1).padStart(6, "0")}`
     }
   }
-  return "PRD-00001"
+  return "PRD-000001"
 }
 
 export const createProductSupabase = async (input: {

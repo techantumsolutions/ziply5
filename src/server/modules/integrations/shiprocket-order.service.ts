@@ -3,6 +3,7 @@ import { ShiprocketApiError, shiprocketClient } from "@/lib/integrations/shiproc
 import { randomUUID } from "crypto"
 import { logger } from "@/lib/logger"
 import { upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
+import { formatIstSqlDateTime, pgTimestampToUtcIso } from "@/src/lib/datetime"
 
 const parsePostalCode = (text?: string | null) => {
   if (!text) return null
@@ -824,7 +825,9 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
 
   const createPayload = {
     order_id: order.id,
-    order_date: new Date(order.createdAt).toISOString().slice(0, 19).replace("T", " "),
+    order_date: formatIstSqlDateTime(
+      order.createdAt instanceof Date ? pgTimestampToUtcIso(order.createdAt) : order.createdAt,
+    ) ?? formatIstSqlDateTime(new Date().toISOString()),
     pickup_location: pickupLocation,
     billing_customer_name: order.customerName ?? "Customer",
     billing_last_name: "",

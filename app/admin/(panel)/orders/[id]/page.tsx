@@ -5,8 +5,9 @@ import { useParams, useRouter } from "next/navigation"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { AlertTriangle, Ban, Download, Loader2, RefreshCw, XCircle } from "lucide-react"
-import { formatInvoiceNumber, generateAdminInvoicePDF } from "@/lib/invoice"
+import { AlertTriangle, Ban, Check, Download, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
+import { generateAdminInvoicePDF } from "@/lib/invoice"
+import { formatOrderDateTime } from "@/src/lib/datetime"
 import { toast } from "@/lib/toast"
 
 type OrderDetail = {
@@ -19,12 +20,17 @@ type OrderDetail = {
   discount?: string | number
   currency: string
   createdAt: string
+  discount?: string | number
+  couponCode?: string | null
+  paymentMethod?: string | null
   items: Array<{
     id?: string
     quantity: number
+    sku?: string | null
     unitPrice?: string | number
     lineTotal?: string | number
-    product?: { id: string; name: string; slug: string } | null
+    product?: { id: string; name: string; slug: string; sku?: string | null; weight?: string | null; thumbnail?: string | null } | null
+    variant?: { id?: string; name?: string | null; sku?: string | null; weight?: string | null; hsnCode?: string | null } | null
     productId?: string | null
   }>
   transactions?: Array<{ id: string; gateway: string; amount: string | number; status: string; createdAt: string }>
@@ -49,6 +55,76 @@ type OrderDetail = {
   customerAddress?: string | null
 }
 
+const formatInr = (value: number) => {
+  const amount = Number.isFinite(value) ? value : 0
+  return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+const initials = (name?: string | null) => {
+  const parts = String(name ?? "").trim().split(/\s+/).filter(Boolean)
+  if (!parts.length) return "CU"
+  return parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("")
+}
+
+const progressRank = (status: string) => {
+  const value = status.toLowerCase()
+  if (["delivered", "completed"].includes(value)) return 4
+  if (["shipped", "in_transit", "out_for_delivery", "dispatched"].includes(value)) return 3
+  if (["processing", "packed"].includes(value)) return 2
+  if (["confirmed", "approved"].includes(value)) return 1
+  return 0
+}
+
+function OrderProgress({
+  status,
+  createdAt,
+  history,
+}: {
+  status: string
+  createdAt: string
+  history?: Array<{ toStatus: string; changedAt: string; notes?: string | null }>
+}) {
+  const rank = progressRank(status)
+  const steps = [
+    { label: "Order placed", hint: "", rank: 0 },
+    { label: "Confirmed", hint: "", rank: 1 },
+    { label: "Processing", hint: "Your order is being prepared", rank: 2 },
+    { label: "Shipped", hint: "", rank: 3 },
+    { label: "Delivered", hint: "", rank: 4 },
+  ]
+  const when = (stepRank: number, fallback?: string) => {
+    if (stepRank === 0) return createdAt
+    const match = [...(history ?? [])].reverse().find((entry) => progressRank(entry.toStatus) >= stepRank && progressRank(entry.toStatus) < stepRank + 1)
+      ?? (history ?? []).find((entry) => progressRank(entry.toStatus) === stepRank)
+    if (match?.changedAt) return match.changedAt
+    return fallback ?? null
+  }
+  return (
+    <div className="rounded-xl border border-[#E5E7EB] bg-white px-4 py-5 shadow-sm">
+      <div className="grid grid-cols-5 gap-2">
+        {steps.map((step, index) => {
+          const done = rank >= step.rank
+          const current = rank === step.rank
+          const date = done ? when(step.rank, index === 0 ? createdAt : undefined) : null
+          return (
+            <div key={step.label} className="relative text-center">
+              {index < steps.length - 1 ? (
+                <span className={`absolute left-1/2 top-3 h-0.5 w-full ${rank > step.rank ? "bg-[#16803C]" : "bg-[#E5E7EB]"}`} />
+              ) : null}
+              <span className={`relative mx-auto flex h-6 w-6 items-center justify-center rounded-full border-2 ${done ? "border-[#16803C] bg-[#16803C] text-white" : "border-[#D1D5DB] bg-white text-[#9CA3AF]"}`}>
+                {done ? <Check className="h-3.5 w-3.5" /> : <span className="h-2 w-2 rounded-full bg-[#D1D5DB]" />}
+              </span>
+              <p className={`mt-2 text-xs font-semibold ${current || done ? "text-[#111827]" : "text-[#9CA3AF]"}`}>{step.label}</p>
+              <p className="text-[11px] text-[#6B7280]">{date ? formatOrderDateTime(date) : ""}</p>
+              {current && step.hint ? <p className="text-[11px] text-[#16803C]">{step.hint}</p> : null}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function AdminOrderDetailPage() {
   const params = useParams() as { id?: string }
   const router = useRouter()
@@ -70,6 +146,11 @@ export default function AdminOrderDetailPage() {
     order?.statusHistory?.some((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected")
   const lifecycleStatus = hasAdminRejected ? "rejected" : rawLifecycle
   const refundStatus = (order?.refunds?.[0]?.status ?? "pending").toLowerCase()
+  const shipmentState = (order?.shipmentStatus ?? order?.shipments?.[0]?.shipmentStatus ?? "").toLowerCase()
+  const orderShipped =
+    progressRank(lifecycleStatus) >= 3 ||
+    progressRank(order?.status ?? "") >= 3 ||
+    ["shipped", "in_transit", "out_for_delivery", "dispatched", "delivered", "completed"].includes(shipmentState)
 
   const [downloadingShiprocketInvoice, setDownloadingShiprocketInvoice] = useState(false)
 
@@ -221,21 +302,6 @@ export default function AdminOrderDetailPage() {
     }
   }
 
-  const activity = [
-    ...(order?.statusHistory ?? []).map((entry) => ({
-      id: `status-${entry.changedAt}-${entry.toStatus}`,
-      title: `Status changed to ${entry.toStatus.replace(/_/g, " ")}`,
-      at: entry.changedAt,
-      detail: `${entry.notes ?? "Order lifecycle update"}${entry.changedById ? ` • by ${entry.changedById.slice(0, 8)}` : ""}`,
-    })),
-    ...(order?.transactions ?? []).map((tx) => ({
-      id: `tx-${tx.id}`,
-      title: `Payment ${tx.status}`,
-      at: tx.createdAt,
-      detail: `${tx.gateway} • ${order?.currency ?? "INR"} ${Number(tx.amount).toFixed(2)}`,
-    })),
-  ].sort((a, b) => +new Date(b.at) - +new Date(a.at))
-
   const getOrderStatusBadge = (status: string) => {
     const s = status.toLowerCase().trim();
 
@@ -311,423 +377,305 @@ export default function AdminOrderDetailPage() {
   };
 
   return (
-    <section className="w-full space-y-5 py-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+    <section className="w-full space-y-4 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Order details</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#646464]">
-            <span>Order ID: <code className="font-mono font-bold text-[#7B3010]">{order?.id ?? "----"}</code></span>
-            <span>•</span>
-            <span>Invoice No: <code className="font-mono font-bold text-[#2A1810]">{order ? formatInvoiceNumber(order.id, order.createdAt) : "----"}</code></span>
-            <span>•</span>
-            <span>{order ? new Date(order.createdAt).toLocaleString() : "Loading"}</span>
+          <p className="text-xs text-[#646464]">
+            <button type="button" onClick={() => router.push("/admin/orders")} className="hover:text-[#166534]">Orders</button>
+            <span className="mx-1.5">›</span>
+            <span className="text-[#111827]">Order details</span>
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight text-[#111827]">
+              Order #{order ? order.id.slice(0, 8).toUpperCase() : "--------"}
+            </h1>
+            {order ? getOrderStatusBadge(lifecycleStatus) : null}
           </div>
+          <p className="mt-1 text-xs text-[#6B7280]">
+            {order
+              ? `Placed on ${formatOrderDateTime(order.createdAt)}`
+              : "Loading"}
+            {order ? `  |  Channel: Online Store` : ""}
+            {order?.paymentStatus ? `  |  Payment: ${order.paymentStatus}` : ""}
+            {order?.paymentMethod ? ` (${order.paymentMethod.replaceAll("_", " ")})` : ""}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {order?.status !== "cancelled" && (
-            <Button
-              className="bg-red-600 text-white hover:bg-red-700 font-semibold"
-              onClick={() => setShowCancelModal(true)}
-              disabled={actionBusy === "admin_cancel"}
-            >
-              <Ban className="mr-1.5 h-4 w-4" />
-              Cancel Order
+          {lifecycleStatus === "admin_approval_pending" ? (
+            <Button className="bg-[#16803C] text-white hover:bg-[#146C33]" disabled={actionBusy === "approve_order"} onClick={() => void runAction("approve_order")}>
+              <Check className="mr-1.5 h-4 w-4" />
+              {actionBusy === "approve_order" ? "Working..." : "Accept order"}
             </Button>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => void handleSyncOrder()}
-            disabled={!order || syncingOrder}
-            className="border-[#7B3010] text-[#7B3010] hover:bg-[#FFF7EA]"
-          >
-            {syncingOrder ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-1.5 h-4 w-4" />
-            )}
-            Sync Order
+          ) : null}
+          <Button variant="outline" onClick={() => void loadOrder()} disabled={!order || loading}>
+            {loading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+            Refresh
           </Button>
-          <Button
-            variant="outline"
-            onClick={() => void handleDownloadInvoice()}
-            disabled={!order || downloadingInvoice}
-          >
-            {downloadingInvoice ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-1.5 h-4 w-4" />
-            )}
-            Download invoice
+          {lifecycleStatus === "admin_approval_pending" ? (
+            <Button variant="outline" disabled={actionBusy === "reject_order"} onClick={() => void runAction("reject_order")}>
+              {actionBusy === "reject_order" ? "Working..." : "Reject order"}
+            </Button>
+          ) : null}
+          {lifecycleStatus === "cancel_requested" ? (
+            <>
+              <Button variant="outline" disabled={actionBusy === "approve_cancel"} onClick={() => void runAction("approve_cancel")}>{actionBusy === "approve_cancel" ? "Working..." : "Approve cancel"}</Button>
+              <Button variant="outline" disabled={actionBusy === "reject_cancel"} onClick={() => void runAction("reject_cancel")}>{actionBusy === "reject_cancel" ? "Working..." : "Reject cancel"}</Button>
+            </>
+          ) : null}
+          {lifecycleStatus === "return_requested" ? (
+            <>
+              <Button variant="outline" disabled={actionBusy === "approve_return"} onClick={() => void runAction("approve_return")}>{actionBusy === "approve_return" ? "Working..." : "Approve return"}</Button>
+              <Button variant="outline" disabled={actionBusy === "reject_return"} onClick={() => void runAction("reject_return")}>{actionBusy === "reject_return" ? "Working..." : "Reject return"}</Button>
+            </>
+          ) : null}
+          {refundStatus === "initiated" ? (
+            <Button variant="outline" disabled={actionBusy === "trigger_refund"} onClick={() => void runAction("trigger_refund")}>{actionBusy === "trigger_refund" ? "Working..." : "Trigger refund"}</Button>
+          ) : null}
+          {["failed", "rejected"].includes(refundStatus) ? (
+            <Button variant="outline" disabled={actionBusy === "retry_refund"} onClick={() => void runAction("retry_refund")}>{actionBusy === "retry_refund" ? "Working..." : "Retry refund"}</Button>
+          ) : null}
+          <Button variant="outline" onClick={() => void handleSyncOrder()} disabled={!order || syncingOrder}>
+            {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+            Sync order
+          </Button>
+          <Button variant="outline" onClick={() => void handleDownloadInvoice()} disabled={!order || downloadingInvoice}>
+            {downloadingInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
+            Ziply5 invoice
           </Button>
           <Button
             variant="outline"
             onClick={() => void handleDownloadShiprocketInvoice()}
-            disabled={!order || downloadingShiprocketInvoice}
-            className="border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+            disabled={!order || downloadingShiprocketInvoice || !orderShipped}
+            title={orderShipped ? "Download the Shiprocket invoice" : "Available after the order is shipped"}
           >
-            {downloadingShiprocketInvoice ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-1.5 h-4 w-4" />
-            )}
-            Shiprocket Invoice
+            {downloadingShiprocketInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
+            Shiprocket invoice
           </Button>
-          <Button variant="outline" onClick={() => void loadOrder()}>
-            Refresh
-          </Button>
-          <Button variant="outline" onClick={() => router.back()}>
-            Back to orders
-          </Button>
+          {order?.status !== "cancelled" ? (
+            <Button className="border border-red-300 bg-white text-red-600 hover:bg-red-50" onClick={() => setShowCancelModal(true)} disabled={actionBusy === "admin_cancel"}>
+              <Ban className="mr-1.5 h-4 w-4" />
+              Cancel order
+            </Button>
+          ) : null}
         </div>
       </div>
 
-      {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>
-      ) : loading ? (
+      {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
+
+      {loading ? (
         <p className="text-sm text-[#646464]">Loading order details…</p>
       ) : order ? (
-        <div className="grid gap-5 lg:grid-cols-3">
-          <div className="space-y-5 lg:col-span-2">
-            <div className="grid gap-4 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6">
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Order ID</p>
-                <code className="mt-1 block font-mono text-xs font-bold text-[#7B3010] truncate" title={order.id}>{order.id}</code>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Invoice No</p>
-                <code className="mt-1 block font-mono text-xs font-bold text-[#2A1810]">{formatInvoiceNumber(order.id, order.createdAt)}</code>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Status</p>
-                <div className="mt-1">{getOrderStatusBadge(lifecycleStatus)}</div>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Payment</p>
-                <p className="mt-1 font-semibold uppercase text-[#2A1810]">{order.paymentStatus ?? "PENDING"}</p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Total</p>
-                <p className="mt-1 font-semibold text-[#2A1810]">
-                  {order.currency} {Number(order.total).toFixed(2)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.15em] text-[#646464]">Payment Ref</p>
-                <p className="mt-1 font-mono text-xs text-[#2A1810] truncate" title={order.paymentId ?? "—"}>{order.paymentId ?? "—"}</p>
-              </div>
+        <div className="space-y-4">
+          {lifecycleStatus === "rejected" ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+              <p className="text-sm font-bold text-red-800">Order Rejected</p>
+              <p className="mt-1 text-xs text-red-700">
+                {order.statusHistory?.find((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected")?.notes
+                  || "This order was rejected by an administrator."}
+              </p>
             </div>
+          ) : null}
 
-            {lifecycleStatus === "rejected" && (
-              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 shadow-sm">
-                <p className="text-sm font-bold uppercase tracking-wider text-red-800">Order Rejected</p>
-                {(() => {
-                  const entry = order.statusHistory?.find((h) => (h.reasonCode ?? "").toLowerCase() === "admin_rejected" || (h.toStatus ?? "").toLowerCase() === "rejected")
-                  const reasonNote = entry?.notes || order.statusHistory?.[0]?.notes
-                  return reasonNote ? (
-                    <p className="mt-1 text-xs font-semibold text-red-700">Rejection Reason: {reasonNote}</p>
-                  ) : (
-                    <p className="mt-1 text-xs text-red-600">This order was rejected by an administrator.</p>
-                  )
-                })()}
-              </div>
-            )}
+          <OrderProgress status={lifecycleStatus} createdAt={order.createdAt} history={order.statusHistory} />
 
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Order items</h2>
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.85fr)]">
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Product details ({order.items?.length ?? 0} items)</h2>
               {(order.items ?? []).length === 0 ? (
-                <p className="text-sm text-[#646464]">No items in this order.</p>
+                <p className="text-sm text-[#6B7280]">No items in this order.</p>
               ) : (
-                <ul className="space-y-2">
-                  {(order.items ?? []).map((item, idx) => {
-                    const productName = item.product?.name ?? "Deleted product"
-                    const key = item.id ?? `${item.product?.id ?? item.productId ?? "unknown"}-${idx}`
-                    return (
-                      <li key={key} className="rounded-xl border border-[#EFE3D5] bg-[#FFFBF7] px-3 py-2">
-                        <div className="flex items-center justify-between gap-3 text-sm text-[#2A1810]">
-                          <span>{productName}</span>
-                          <span className="font-semibold">x{item.quantity}</span>
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ul>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Payment</h2>
-              <div className="grid gap-3 text-sm md:grid-cols-2">
-                <div className="rounded-lg bg-[#FFFBF3] px-3 py-2">
-                  <p className="text-xs uppercase text-[#646464]">Subtotal</p>
-                  <p className="font-semibold text-[#2A1810]">
-                    {order.currency} {Number(order.subtotal).toFixed(2)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[#FFFBF3] px-3 py-2">
-                  <p className="text-xs uppercase text-[#646464]">Shipping</p>
-                  <p className="font-semibold text-[#2A1810]">
-                    {order.currency} {Number(order.shipping).toFixed(2)}
-                  </p>
-                </div>
-                <div className="rounded-lg bg-[#FFFBF3] px-3 py-2 md:col-span-2">
-                  <p className="text-xs uppercase text-[#646464]">Net payment</p>
-                  <p className="font-semibold text-[#2A1810]">
-                    {order.currency} {Number(order.total).toFixed(2)}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Transaction details</h2>
-              {!order.transactions?.length ? (
-                <p className="text-sm text-[#646464]">No transaction records found.</p>
-              ) : (
-                <div className="space-y-2">
-                  {order.transactions.map((tx) => (
-                    <div key={tx.id} className="grid grid-cols-4 rounded-lg border border-[#EFE3D5] bg-[#FFFBF7] px-3 py-2 text-xs text-[#2A1810]">
-                      <span>{new Date(tx.createdAt).toLocaleDateString()}</span>
-                      <span className="truncate">{tx.gateway}</span>
-                      <span>
-                        {order.currency} {Number(tx.amount).toFixed(2)}
-                      </span>
-                      <span className="uppercase">{tx.status}</span>
-                    </div>
-                  ))}
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-[#E5E7EB] text-xs text-[#6B7280]">
+                        <th className="py-2 pr-3 font-medium">Product</th>
+                        <th className="py-2 pr-3 font-medium">SKU code</th>
+                        <th className="py-2 pr-3 font-medium">HSN Code</th>
+                        <th className="py-2 pr-3 font-medium">Price</th>
+                        <th className="py-2 pr-3 font-medium">Quantity</th>
+                        <th className="py-2 font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(order.items ?? []).map((item, idx) => {
+                        const productName = item.product?.name ?? "Deleted product"
+                        const weightLabel = item.variant?.weight || item.product?.weight || ""
+                        const variantName = item.variant?.name && item.variant.name !== weightLabel ? item.variant.name : ""
+                        const subtitle = [variantName, weightLabel].filter(Boolean).join(" | ")
+                        const sku = item.sku || item.variant?.sku || item.product?.sku || "—"
+                        const hsn = item.variant?.hsnCode || "—"
+                        const qty = Number(item.quantity || 0)
+                        const total = Number(item.lineTotal ?? 0)
+                        const unit = qty > 0 ? total / qty : Number(item.unitPrice ?? 0)
+                        return (
+                          <tr key={item.id ?? `${item.productId ?? "item"}-${idx}`} className="border-b border-[#F3F4F6] last:border-0">
+                            <td className="py-3 pr-3">
+                              <div className="flex items-center gap-3">
+                                {item.product?.thumbnail ? (
+                                  <img src={item.product.thumbnail} alt="" className="h-10 w-10 rounded-md border border-[#E5E7EB] object-cover" />
+                                ) : (
+                                  <span className="flex h-10 w-10 items-center justify-center rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-[#9CA3AF]">
+                                    <Package className="h-4 w-4" />
+                                  </span>
+                                )}
+                                <div>
+                                  <p className="font-medium text-[#111827]">{productName}</p>
+                                  {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-3 pr-3 text-[#374151]">{sku}</td>
+                            <td className="py-3 pr-3 text-[#374151]">{hsn}</td>
+                            <td className="py-3 pr-3 text-[#111827]">{formatInr(unit)}</td>
+                            <td className="py-3 pr-3 text-[#111827]">{qty}</td>
+                            <td className="py-3 font-medium text-[#111827]">{formatInr(total || unit * qty)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
-            </div>
-
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Activity</h2>
-              <div className="space-y-2">
-                {activity.length === 0 ? (
-                  <p className="text-sm text-[#646464]">No activity yet.</p>
-                ) : (
-                  activity.slice(0, 12).map((event) => (
-                    <div key={event.id} className="rounded-lg border border-[#EFE3D5] bg-[#FFFBF7] px-3 py-2">
-                      <div className="flex items-center justify-between gap-3 text-sm">
-                        <p className="font-medium text-[#2A1810]">{event.title}</p>
-                        <p className="text-xs text-[#646464]">{new Date(event.at).toLocaleString()}</p>
-                      </div>
-                      <p className="mt-1 text-xs text-[#646464]">{event.detail}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="space-y-5">
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Customer information</h2>
-              <div className="space-y-2 text-sm text-[#2A1810]">
-                <p className="font-semibold">{order.customerName ?? order.user?.name ?? "Guest customer"}</p>
-                <p className="text-[#646464]">{order.user?.email ?? "No email available"}</p>
-                <p className="text-[#646464]">{order.customerPhone ?? "No phone available"}</p>
-                <p className="text-[#646464]">{order.customerAddress ?? "No billing address saved"}</p>
+              <div className="mt-4 flex justify-end">
+                <div className="w-full max-w-xs space-y-2 text-sm text-[#374151]">
+                  <div className="flex items-center justify-between gap-6">
+                    <span>Subtotal ({order.items?.length ?? 0} items)</span>
+                    <span>{formatInr(Number(order.subtotal))}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-6">
+                    <span>Shipping charge</span>
+                    <span>{formatInr(Number(order.shipping))}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-6 text-green-700">
+                    <span>Discount{order.couponCode ? ` (${order.couponCode})` : ""}</span>
+                    <span>- {formatInr(Number(order.discount ?? 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-6">
+                    <span>Tax</span>
+                    <span>{formatInr(Number(order.tax ?? 0))}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-6 border-t border-[#E5E7EB] pt-2 text-base font-semibold text-[#111827]">
+                    <span>Total amount</span>
+                    <span>{formatInr(Number(order.total))}</span>
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Notes</h2>
-              <textarea
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                rows={4}
-                placeholder="Write order notes..."
-                className="w-full rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
-              />
-              <button
-                type="button"
-                onClick={() => void addNote()}
-                disabled={!note.trim() || savingNote}
-                className="mt-2 rounded-lg bg-[#7B3010] px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-white disabled:opacity-40"
-              >
+            <div className="space-y-4">
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-[#111827]">Payment summary</h2>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${String(order.paymentStatus).toLowerCase() === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                  {order.paymentStatus ?? "Pending"}
+                </span>
+              </div>
+              <div className="space-y-2 text-sm text-[#374151]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Payment method</span>
+                  <span className="font-medium capitalize">{(order.paymentMethod || "—").replaceAll("_", " ")}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Transaction ID</span>
+                  <span className="max-w-[180px] truncate font-mono text-xs" title={order.paymentId ?? ""}>{order.paymentId || "—"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Payment date</span>
+                  <span>{order.transactions?.[0]?.createdAt ? formatOrderDateTime(order.transactions[0].createdAt) : "—"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Amount paid</span>
+                  <span className="text-base font-semibold text-[#111827]">{formatInr(Number(order.total))}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Customer details</h2>
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ECFDF3] text-sm font-semibold text-[#166534]">
+                  {initials(order.customerName ?? order.user?.name)}
+                </span>
+                <div className="min-w-0 space-y-1 text-sm">
+                  <p className="font-semibold text-[#111827]">{order.customerName ?? order.user?.name ?? "Guest customer"}</p>
+                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Mail className="h-3.5 w-3.5" />{order.customerEmail ?? order.user?.email ?? "No email"}</p>
+                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Phone className="h-3.5 w-3.5" />{order.customerPhone ?? "No phone"}</p>
+                </div>
+              </div>
+              <div className="mt-4 border-t border-[#F3F4F6] pt-3">
+                <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+                  <MapPin className="h-3.5 w-3.5" /> Shipping address
+                </p>
+                <p className="text-sm leading-relaxed text-[#111827]">{order.customerName ?? order.user?.name ?? "Customer"}</p>
+                <p className="text-sm leading-relaxed text-[#4B5563]">{order.customerAddress ?? "No shipping address saved"}</p>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Delivery details</h2>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Delivery method</span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
+                    <Truck className="h-4 w-4 text-[#166534]" />
+                    {order.courierName ?? order.shipments?.[0]?.carrier ?? "Not assigned"}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Estimated delivery</span>
+                  <span className="font-medium text-[#111827]">{order.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not scheduled"}</span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Tracking number</span>
+                  <span className="font-medium text-[#111827]">{order.awbCode ?? order.trackingNumber ?? order.shipments?.[0]?.trackingNo ?? "Not yet shipped"}</span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Tracking link</span>
+                  {order.trackingUrl ? (
+                    <a href={order.trackingUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-[#166534] hover:underline">Open tracking</a>
+                  ) : (
+                    <span className="text-[#111827]">—</span>
+                  )}
+                </div>
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F3F4F6] pt-3">
+                <button type="button" disabled={shiprocketBusy === "serviceability"} onClick={() => void runShiprocketAction("serviceability")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "serviceability" ? "Checking..." : "Check Serviceability"}</button>
+                <button type="button" disabled={shiprocketBusy === "create_shipment" || Boolean(order.shipments?.length)} onClick={() => void runShiprocketAction("create_shipment")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "create_shipment" ? "Creating..." : "Create Shipment"}</button>
+                <button type="button" disabled={shiprocketBusy === "assign_awb" || !order.shipments?.length || Boolean(order.shipments?.[0]?.trackingNo)} onClick={() => void runShiprocketAction("assign_awb")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "assign_awb" ? "Assigning..." : "Assign AWB"}</button>
+                <button type="button" disabled={shiprocketBusy === "generate_pickup" || !order.shipments?.length} onClick={() => void runShiprocketAction("generate_pickup")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "generate_pickup" ? "Generating..." : "Generate Pickup"}</button>
+                <button type="button" disabled={shiprocketBusy === "refresh_tracking" || !order.shipments?.length} onClick={() => void runShiprocketAction("refresh_tracking")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "refresh_tracking" ? "Refreshing..." : "Refresh Tracking"}</button>
+                <button type="button" disabled={shiprocketBusy === "retry_shipment_sync"} onClick={() => void runShiprocketAction("retry_shipment_sync")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "retry_shipment_sync" ? "Retrying..." : "Retry Sync"}</button>
+              </div>
+              {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
+              <div className="mt-3">
+                <TrackingTimeline
+                  orderStatus={order.status}
+                  shipmentStatus={order.shipmentStatus ?? order.shipments?.[0]?.shipmentStatus ?? null}
+                  statusHistory={order.statusHistory}
+                />
+              </div>
+            </div>
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Notes</h2>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Write order notes..." className="w-full rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm focus:border-[#166534] focus:outline-none" />
+              <button type="button" onClick={() => void addNote()} disabled={!note.trim() || savingNote} className="mt-2 rounded-lg bg-[#166534] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">
                 {savingNote ? "Saving..." : "Add note"}
               </button>
               <div className="mt-3 space-y-2">
-                {(order.notes ?? []).length === 0 ? (
-                  <p className="text-sm text-[#646464]">No notes added yet.</p>
-                ) : (
-                  (order.notes ?? []).map((entry) => (
-                    <div key={entry.id} className="rounded-lg border border-[#EFE3D5] bg-[#FFFBF7] px-3 py-2">
-                      <p className="text-sm text-[#2A1810]">{entry.note}</p>
-                      <p className="mt-1 text-xs text-[#646464]">{new Date(entry.createdAt).toLocaleString()}</p>
-                    </div>
-                  ))
-                )}
+                {(order.notes ?? []).length === 0 ? <p className="text-sm text-[#6B7280]">No notes added yet.</p> : (order.notes ?? []).map((entry) => (
+                  <div key={entry.id} className="rounded-lg border border-[#F3F4F6] px-3 py-2">
+                    <p className="text-sm text-[#111827]">{entry.note}</p>
+                    <p className="mt-1 text-xs text-[#6B7280]">{formatOrderDateTime(entry.createdAt)}</p>
+                  </div>
+                ))}
               </div>
             </div>
-
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-[#4A1D1F]">Shipping</h2>
-              <div className="mb-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "serviceability"}
-                  onClick={() => void runShiprocketAction("serviceability")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "serviceability" ? "Checking..." : "Check Serviceability"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "create_shipment" || Boolean(order.shipments?.length)}
-                  onClick={() => void runShiprocketAction("create_shipment")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "create_shipment" ? "Creating..." : "Create Shipment"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "assign_awb" || !order.shipments?.length || Boolean(order.shipments?.[0]?.trackingNo)}
-                  onClick={() => void runShiprocketAction("assign_awb")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "assign_awb" ? "Assigning..." : "Assign AWB"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "generate_pickup" || !order.shipments?.length}
-                  onClick={() => void runShiprocketAction("generate_pickup")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "generate_pickup" ? "Generating..." : "Generate Pickup"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "retry_shipment_sync"}
-                  onClick={() => void runShiprocketAction("retry_shipment_sync")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "retry_shipment_sync" ? "Retrying..." : "Retry Shipment Sync"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "refresh_tracking" || !order.shipments?.length}
-                  onClick={() => void runShiprocketAction("refresh_tracking")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "refresh_tracking" ? "Refreshing..." : "Refresh Tracking"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "regenerate_tracking_data" || !order.shipments?.length}
-                  onClick={() => void runShiprocketAction("regenerate_tracking_data")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "regenerate_tracking_data" ? "Working..." : "Regenerate Tracking Data"}
-                </button>
-                <button
-                  type="button"
-                  disabled={shiprocketBusy === "repair_shipment_state"}
-                  onClick={() => void runShiprocketAction("repair_shipment_state")}
-                  className="rounded-lg border border-[#E8DCC8] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:opacity-40"
-                >
-                  {shiprocketBusy === "repair_shipment_state" ? "Repairing..." : "Repair Shipment State"}
-                </button>
-              </div>
-              {serviceabilitySummary && <p className="mb-3 rounded-lg bg-[#FFFBF3] px-3 py-2 text-xs text-[#646464]">{serviceabilitySummary}</p>}
-              <TrackingTimeline
-                orderStatus={order.status}
-                shipmentStatus={order.shipmentStatus ?? order.shipments?.[0]?.shipmentStatus ?? null}
-                statusHistory={order.statusHistory}
-              />
-              <div className="mt-3 grid gap-1 text-xs text-[#646464]">
-                <p><span className="font-semibold text-[#2A1810]">Courier:</span> {order.courierName ?? order.shipments?.[0]?.carrier ?? "—"}</p>
-                <p><span className="font-semibold text-[#2A1810]">AWB:</span> {order.awbCode ?? order.trackingNumber ?? order.shipments?.[0]?.trackingNo ?? "—"}</p>
-                <p><span className="font-semibold text-[#2A1810]">Last Tracking Sync:</span> {order.lastTrackingSyncAt ? new Date(order.lastTrackingSyncAt).toLocaleString() : "—"}</p>
-                <p><span className="font-semibold text-[#2A1810]">ETA:</span> {order.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString() : "—"}</p>
-              </div>
-              {!order.shipments?.length ? (
-                <p className="text-sm text-[#646464]">No shipment records found yet.</p>
-              ) : (
-                <div className="space-y-2 text-sm">
-                  {order.shipments.map((shipment) => (
-                    <div key={shipment.id} className="rounded-lg border border-[#EFE3D5] bg-[#FFFBF7] px-3 py-2">
-                      <p className="font-medium text-[#2A1810]">{shipment.carrier ?? "Carrier not set"}</p>
-                      <p className="font-mono text-xs text-[#646464]">{shipment.trackingNo ?? "No tracking number"}</p>
-                      <p className="mt-1 text-xs uppercase text-[#646464]">{shipment.shipmentStatus}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="lg:col-span-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-            <div>
-              <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Lifecycle actions</h2>
-            </div>
-            <p className="text-xs uppercase text-[#646464]">
-              {(order.statusHistory ?? [])
-                .map((entry) => entry.toStatus.toUpperCase())
-                .slice(0, 7)
-                .reverse()
-                .join(" → ") || "CREATED"}
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {lifecycleStatus === "admin_approval_pending" && (
-                <>
-                  <Button variant="outline" disabled={actionBusy === "approve_order"} onClick={() => void runAction("approve_order")}>
-                    {actionBusy === "approve_order" ? "Working..." : "Approve Order"}
-                  </Button>
-                  <Button variant="outline" disabled={actionBusy === "reject_order"} onClick={() => void runAction("reject_order")}>
-                    {actionBusy === "reject_order" ? "Working..." : "Reject Order"}
-                  </Button>
-                </>
-              )}
-              {lifecycleStatus === "cancel_requested" && (
-                <>
-                  <Button variant="outline" disabled={actionBusy === "approve_cancel"} onClick={() => void runAction("approve_cancel")}>
-                    {actionBusy === "approve_cancel" ? "Working..." : "Approve Cancel"}
-                  </Button>
-                  <Button variant="outline" disabled={actionBusy === "reject_cancel"} onClick={() => void runAction("reject_cancel")}>
-                    {actionBusy === "reject_cancel" ? "Working..." : "Reject Cancel"}
-                  </Button>
-                </>
-              )}
-              {lifecycleStatus === "return_requested" && (
-                <>
-                  <Button variant="outline" disabled={actionBusy === "approve_return"} onClick={() => void runAction("approve_return")}>
-                    {actionBusy === "approve_return" ? "Working..." : "Approve Return"}
-                  </Button>
-                  <Button variant="outline" disabled={actionBusy === "reject_return"} onClick={() => void runAction("reject_return")}>
-                    {actionBusy === "reject_return" ? "Working..." : "Reject Return"}
-                  </Button>
-                </>
-              )}
-              {refundStatus === "initiated" && (
-                <>
-                  <Button variant="outline" disabled={actionBusy === "trigger_refund"} onClick={() => void runAction("trigger_refund")}>
-                    {actionBusy === "trigger_refund" ? "Working..." : "Trigger Refund"}
-                  </Button>
-                </>
-              )}
-              {["failed", "rejected"].includes(refundStatus) && (
-                <>
-                  <Button variant="outline" disabled={actionBusy === "retry_refund"} onClick={() => void runAction("retry_refund")}>
-                    {actionBusy === "retry_refund" ? "Working..." : "Retry Refund"}
-                  </Button>
-                </>
-              )}
-              {order.status !== "cancelled" && (
-                <Button
-                  className="bg-red-600 text-white hover:bg-red-700 font-semibold"
-                  disabled={actionBusy === "admin_cancel"}
-                  onClick={() => setShowCancelModal(true)}
-                >
-                  <Ban className="mr-1.5 h-4 w-4" />
-                  {actionBusy === "admin_cancel" ? "Cancelling..." : "Cancel Order (Admin)"}
-                </Button>
-              )}
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* CANCEL ORDER MODAL */}
+            {/* CANCEL ORDER MODAL */}
       {showCancelModal && order && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl border border-[#E8DCC8] space-y-4 animate-in fade-in zoom-in-95">

@@ -1,20 +1,21 @@
 "use client"
 
 import type { ReactNode } from "react"
-import { Download, RefreshCw } from "lucide-react"
+import { Download } from "lucide-react"
 import type { CustomerOrderDetail } from "@/src/lib/orders/customer-order-detail"
 import { formatInvoiceNumber } from "@/lib/invoice"
+import { formatOrderDateTime } from "@/src/lib/datetime"
 
 type Props = {
   order: CustomerOrderDetail
   paymentStatus: string
   onDownloadInvoice: () => void
-  onSyncOrder?: () => void
-  syncingOrder?: boolean
+  invoiceAvailable?: boolean
+  downloadingInvoice?: boolean
   extraActions?: ReactNode
 }
 
-export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, onSyncOrder, syncingOrder, extraActions }: Props) {
+export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, invoiceAvailable = true, downloadingInvoice = false, extraActions }: Props) {
   const invoiceNo = formatInvoiceNumber(order.id, order.createdAt)
 
   return (
@@ -29,7 +30,7 @@ export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, 
             Invoice No: <code className="font-mono font-semibold text-[#7B3010]">{invoiceNo}</code>
           </p>
           <p className="mt-1 text-xs text-[#6B7280]">
-            Placed on {new Date(order.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+            Placed on {formatOrderDateTime(order.createdAt)}
           </p>
           <p className="mt-2 text-sm text-[#374151]">
             Payment: <span className="font-semibold uppercase">{paymentStatus}</span>
@@ -47,24 +48,15 @@ export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, 
               </span>
             )
           })()}
-          {onSyncOrder ? (
-            <button
-              type="button"
-              onClick={() => void onSyncOrder()}
-              disabled={syncingOrder}
-              className="flex items-center gap-1.5 rounded-md border border-[#7B3010] bg-white px-3 py-1.5 text-xs font-medium text-[#7B3010] hover:bg-[#FFF7EA] disabled:opacity-50"
-            >
-              <RefreshCw size={14} className={syncingOrder ? "animate-spin" : ""} />
-              Sync Order
-            </button>
-          ) : null}
           <button
             type="button"
             onClick={() => void onDownloadInvoice()}
-            className="flex items-center gap-1.5 rounded-md border border-[#D1D5DB] bg-white px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB]"
+            disabled={!invoiceAvailable || downloadingInvoice}
+            title={invoiceAvailable ? "Download invoice" : "Available after the order is shipped"}
+            className="flex items-center gap-1.5 rounded-md border border-[#D1D5DB] bg-white px-3 py-1.5 text-xs font-medium text-[#111827] hover:bg-[#F9FAFB] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download size={14} />
-            Invoice
+            {downloadingInvoice ? "Downloading…" : "Invoice"}
           </button>
           <button
             type="button"

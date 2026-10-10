@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from "@/src/lib/supabase/admin"
 import { camelToSnakeObject, shouldRetryWithId, safeString, withId } from "@/src/lib/db/supabaseIntegrity"
+import { toUtcIso } from "@/src/lib/datetime"
 
 const ORDER_TABLES = ["Order"]
 const PRODUCT_TABLES = ["Product", "products"]
@@ -1387,12 +1388,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
       const variantIds = itemRows
         .map((row) => safeString(row.variantId ?? row.variant_id))
         .filter(Boolean)
-      const variantRows = await fetchRowsByIds(
-        PRODUCT_VARIANT_TABLES,
-        "id",
-        variantIds,
-        "id,name,sku,weight,price,stock",
-      )
+      const variantRows = await fetchRowsByIds(PRODUCT_VARIANT_TABLES, "id", variantIds)
       const variantById = new Map<string, Record<string, unknown>>()
       for (const variant of variantRows) {
         const id = safeString(variant.id)
@@ -1448,6 +1444,8 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               weight: safeString(variant.weight) || null,
               price: safeNumber(variant.price, 0),
               stock: safeNumber(variant.stock, 0),
+              hsnCode: safeString(variant.hsnCode ?? variant.hsn_code) || null,
+              mrp: safeNumber(variant.mrp, 0),
             }
             : null,
         }
@@ -1520,14 +1518,14 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         amount: safeNumber(tx.amount, 0),
         status: safeString(tx.status),
         externalId: safeString(tx.externalId ?? tx.external_id) || null,
-        createdAt: (tx.createdAt ?? tx.created_at ?? null) as string | Date | null,
+        createdAt: toUtcIso(tx.createdAt ?? tx.created_at),
       }))
 
       const notes = noteRows.map((note) => ({
         id: safeString(note.id),
         note: safeString(note.note),
         isInternal: Boolean(note.isInternal ?? note.is_internal),
-        createdAt: (note.createdAt ?? note.created_at ?? null) as string | Date | null,
+        createdAt: toUtcIso(note.createdAt ?? note.created_at),
       }))
 
       const statusHistory = statusHistoryRows.map((entry) => ({
@@ -1537,7 +1535,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         notes: safeString(entry.notes) || null,
         reasonCode: safeString(entry.reasonCode ?? entry.reason_code) || null,
         changedById: safeString(entry.changedById ?? entry.changed_by_id) || null,
-        changedAt: (entry.changedAt ?? entry.changed_at ?? null) as string | Date | null,
+        changedAt: toUtcIso(entry.changedAt ?? entry.changed_at),
       }))
 
       const refunds = refundRows.map((refund) => ({
@@ -1579,8 +1577,8 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
           reverseAwb: safeString((req as any).reverseAwb ?? (req as any).reverse_awb) || null,
           reverseCourier: safeString((req as any).reverseCourier ?? (req as any).reverse_courier) || null,
           reverseTrackingUrl: safeString((req as any).reverseTrackingUrl ?? (req as any).reverse_tracking_url) || null,
-          pickupScheduledAt: (req as any).pickupScheduledAt ?? (req as any).pickup_scheduled_at ?? null,
-          createdAt: (req as any).createdAt ?? (req as any).created_at ?? null,
+          pickupScheduledAt: toUtcIso((req as any).pickupScheduledAt ?? (req as any).pickup_scheduled_at),
+          createdAt: toUtcIso((req as any).createdAt ?? (req as any).created_at),
           items,
         }
       })
@@ -1624,16 +1622,16 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         shippingMethod: safeString((row as Record<string, unknown>).shippingMethod ?? (row as Record<string, unknown>).shipping_method) || null,
         estimatedDeliveryDate: (row.estimatedDeliveryDate ?? row.estimated_delivery_date ?? null) as string | Date | null,
         shiprocketRawResponse: (row.shiprocketRawResponse ?? row.shiprocket_raw_response ?? null) as unknown,
-        shipmentCreatedAt: (row.shipmentCreatedAt ?? row.shipment_created_at ?? null) as string | Date | null,
-        shipmentSyncedAt: (row.shipmentSyncedAt ?? row.shipment_synced_at ?? null) as string | Date | null,
-        shipmentDeliveredAt: (row.shipmentDeliveredAt ?? row.shipment_delivered_at ?? null) as string | Date | null,
-        lastTrackingSyncAt: (row.lastTrackingSyncAt ?? row.last_tracking_sync_at ?? null) as string | Date | null,
+        shipmentCreatedAt: toUtcIso(row.shipmentCreatedAt ?? row.shipment_created_at),
+        shipmentSyncedAt: toUtcIso(row.shipmentSyncedAt ?? row.shipment_synced_at),
+        shipmentDeliveredAt: toUtcIso(row.shipmentDeliveredAt ?? row.shipment_delivered_at),
+        lastTrackingSyncAt: toUtcIso(row.lastTrackingSyncAt ?? row.last_tracking_sync_at),
         isShipmentCreated: (row.isShipmentCreated ?? row.is_shipment_created ?? null) as boolean | null,
         isPickupGenerated: (row.isPickupGenerated ?? row.is_pickup_generated ?? null) as boolean | null,
         isLabelGenerated: (row.isLabelGenerated ?? row.is_label_generated ?? null) as boolean | null,
         trackingData: (row.trackingData ?? row.tracking_data ?? null) as unknown,
-        createdAt: (row.createdAt ?? row.created_at ?? null) as string | Date | null,
-        updatedAt: (row.updatedAt ?? row.updated_at ?? null) as string | Date | null,
+        createdAt: toUtcIso(row.createdAt ?? row.created_at),
+        updatedAt: toUtcIso(row.updatedAt ?? row.updated_at),
         items: hydratedItems,
         transactions,
         statusHistory,
@@ -1752,12 +1750,12 @@ export const createOrderWithItemsSupabase = async (input: {
   const now = new Date().toISOString()
   const camelOrderData = withId({
     ...input.orderData,
-    createdAt: input.orderData.createdAt ?? now,
+    createdAt: now,
     updatedAt: now,
   })
   const snakeOrderData = withId({
     ...camelToSnakeObject(input.orderData),
-    created_at: input.orderData.createdAt ?? now,
+    created_at: now,
     updated_at: now,
   })
 
@@ -1831,7 +1829,7 @@ export const createOrderWithItemsSupabase = async (input: {
     throw new Error("Order items insert failed; order rolled back")
   }
 
-  return { id: orderId }
+  return { id: orderId, createdAt: now }
 }
 
 export const createTransactionSupabase = async (input: {

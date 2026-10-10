@@ -1,0 +1,1 @@
+ALTER TABLE "BundleProduct" ADD COLUMN IF NOT EXISTS "comboPrice" DECIMAL(10,2);

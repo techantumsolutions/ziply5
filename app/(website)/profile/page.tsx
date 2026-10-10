@@ -20,6 +20,7 @@ import {
   shouldRenderCustomerCancelOrderButton,
 } from "@/src/lib/orders/order-cancel-policy"
 import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibility"
+import { formatOrderDateTime } from "@/src/lib/datetime"
 
 const CUSTOMER_RETURN_WINDOW_DAYS = 7
 
@@ -1057,7 +1058,7 @@ function ProfilePageContent() {
                           <div className="space-y-1">
                             <p className="text-[11px] uppercase tracking-[0.15em] text-[#8A6A52]">Order {order.id.slice(0, 8)}</p>
                             <p className="text-xs text-[#646464]">
-                              Order created on {new Date(order.createdAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })}
+                              Order created on {formatOrderDateTime(order.createdAt)}
                             </p>
                           </div>
                           <div className="flex flex-col items-end gap-1">

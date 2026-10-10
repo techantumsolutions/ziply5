@@ -9,6 +9,9 @@ type BundleProductLite = {
   price: number
   basePrice: number | null
   thumbnail: string | null
+  status?: string | null
+  isActive?: boolean | null
+  comboPrice?: number | null
 }
 
 type BundleAvailability = {
@@ -59,6 +62,9 @@ async function hydrateBundles(baseRows: BundleRow[]) {
         price: number
         basePrice: number | null
         thumbnail: string | null
+        status: string | null
+        isActive: boolean | null
+        comboPrice: number | null
       }>(
         `
           SELECT
@@ -68,7 +74,10 @@ async function hydrateBundles(baseRows: BundleRow[]) {
             p.slug,
             p.price,
             p."basePrice" as "basePrice",
-            p.thumbnail
+            p.thumbnail,
+            p.status,
+            p."isActive" as "isActive",
+            bp."comboPrice" as "comboPrice"
           FROM "BundleProduct" bp
           JOIN "Product" p ON p.id = bp."productId"
           WHERE bp."bundleId" = ANY($1::text[])
@@ -81,14 +90,17 @@ async function hydrateBundles(baseRows: BundleRow[]) {
   const byBundle = new Map<string, BundleProductLite[]>()
   for (const p of products) {
     const arr = byBundle.get(p.bundleId) ?? []
-    arr.push({
-      productId: p.productId,
-      name: p.name,
-      slug: p.slug,
-      price: Number(p.price),
-      basePrice: p.basePrice == null ? null : Number(p.basePrice),
-      thumbnail: p.thumbnail,
-    })
+      arr.push({
+        productId: p.productId,
+        name: p.name,
+        slug: p.slug,
+        price: Number(p.price),
+        basePrice: p.basePrice == null ? null : Number(p.basePrice),
+        thumbnail: p.thumbnail,
+        status: p.status,
+        isActive: p.isActive,
+        comboPrice: p.comboPrice == null ? null : Number(p.comboPrice),
+      })
     byBundle.set(p.bundleId, arr)
   }
 
@@ -197,11 +209,13 @@ async function hydrateBundles(baseRows: BundleRow[]) {
   })
 }
 
+const isPublishedProduct = (status: unknown) =>
+  String(status ?? "").toLowerCase() === "published"
+
+/** Keep published products and drop the rest. A combo stays active only with at least two. */
 async function loadEligibleProducts(productIds: string[]) {
   const unique = [...new Set(productIds.map((x) => x.trim()).filter(Boolean))]
-  if (unique.length < 1 || unique.length > MAX_BUNDLE_PRODUCTS) {
-    throw new Error(`Select 1 to ${MAX_BUNDLE_PRODUCTS} products`)
-  }
+  if (unique.length === 0) return []
 
   const rows = await pgQuery<{ id: string; name: string; status: string; isActive: boolean }>(
     `SELECT id, name, status, "isActive" as "isActive" FROM "Product" WHERE id = ANY($1::text[])`,
@@ -209,15 +223,23 @@ async function loadEligibleProducts(productIds: string[]) {
   )
 
   const byId = new Map(rows.map((r) => [r.id, r]))
-  for (const id of unique) {
+  const eligible = unique.filter((id) => {
     const row = byId.get(id)
-    if (!row) throw new Error(`Product not found: ${id}`)
-    if (row.status !== "published" || !row.isActive) {
-      throw new Error(`Only active/published products allowed: ${row.name}`)
-    }
+    return Boolean(row && isPublishedProduct(row.status))
+  })
+  if (eligible.length > MAX_BUNDLE_PRODUCTS) {
+    throw new Error(`Select 1 to ${MAX_BUNDLE_PRODUCTS} products`)
   }
+  return eligible
+}
 
-  return unique
+const comboIsActive = (productCount: number, requested?: boolean) =>
+  productCount >= 2 && requested !== false
+
+const storedProductComboPrice = (productId: string, productPrices?: Array<{ productId: string; comboPrice: number }>) => {
+  const match = productPrices?.find((row) => row.productId === productId)
+  const value = Number(match?.comboPrice)
+  return Number.isFinite(value) && value >= 0 ? Number(value.toFixed(2)) : null
 }
 
 function validateInput(input: {
@@ -237,6 +259,105 @@ function validateInput(input: {
     }
   }
   return { name, slug }
+}
+
+export type ActiveComboRef = { id: string; name: string; slug: string }
+
+export const listActiveCombosForProduct = async (productId: string): Promise<ActiveComboRef[]> => {
+  const id = productId.trim()
+  if (!id) return []
+  return pgQuery<ActiveComboRef>(
+    `
+      SELECT b.id, b.name, b.slug
+      FROM "Bundle" b
+      INNER JOIN "BundleProduct" bp ON bp."bundleId" = b.id
+      WHERE bp."productId" = $1
+        AND b."isActive" = true
+        AND b."isCombo" = true
+      ORDER BY b.name ASC
+    `,
+    [id],
+  )
+}
+
+/** Drop an unpublished product from its combos, retotal the remaining prices, and deactivate a combo that no longer has 2 products. */
+export const syncCombosAfterProductUnpublished = async (productId: string) => {
+  const id = productId.trim()
+  if (!id) return []
+
+  const bundles = await pgQuery<{ bundleId: string }>(
+    `SELECT DISTINCT "bundleId" as "bundleId" FROM "BundleProduct" WHERE "productId" = $1`,
+    [id],
+  )
+
+  const updated: Array<{ id: string; productCount: number; comboPrice: number | null; isActive: boolean }> = []
+  for (const bundle of bundles) {
+    const bundleId = bundle.bundleId
+    await pgQuery(
+      `
+        DELETE FROM "BundleProduct" bp
+        USING "Product" p
+        WHERE bp."bundleId" = $1
+          AND bp."productId" = p.id
+          AND lower(p.status::text) <> 'published'
+      `,
+      [bundleId],
+    )
+    await pgQuery(
+      `DELETE FROM "BundleProduct" WHERE "bundleId" = $1 AND "productId" = $2`,
+      [bundleId, id],
+    )
+
+    const totals = await pgQuery<{ total: string; count: string }>(
+      `
+        SELECT
+          COALESCE(SUM(COALESCE(bp."comboPrice", NULLIF(p.price, 0), p."basePrice", 0)), 0)::text as total,
+          COUNT(*)::text as count
+        FROM "BundleProduct" bp
+        JOIN "Product" p ON p.id = bp."productId"
+        WHERE bp."bundleId" = $1
+          AND lower(p.status::text) = 'published'
+      `,
+      [bundleId],
+    )
+    const productCount = Number(totals[0]?.count ?? 0)
+    const comboPrice = productCount > 0 ? Number(Number(totals[0]?.total ?? 0).toFixed(2)) : null
+    const rows = await pgQuery<{ id: string; isActive: boolean }>(
+      `
+        UPDATE "Bundle"
+        SET
+          "comboPrice" = $2,
+          "isActive" = CASE WHEN $3 < 2 THEN false ELSE "isActive" END,
+          "updatedAt" = now()
+        WHERE id = $1
+        RETURNING id, "isActive" as "isActive"
+      `,
+      [bundleId, comboPrice, productCount],
+    )
+    if (rows[0]) {
+      updated.push({ id: rows[0].id, productCount, comboPrice, isActive: productCount >= 2 ? rows[0].isActive : false })
+    }
+  }
+  return updated
+}
+
+export const deactivateActiveCombosForProduct = async (productId: string): Promise<ActiveComboRef[]> => {
+  const id = productId.trim()
+  if (!id) return []
+  return pgQuery<ActiveComboRef>(
+    `
+      UPDATE "Bundle" b
+      SET "isActive" = false, "updatedAt" = now()
+      WHERE b."isActive" = true
+        AND b."isCombo" = true
+        AND EXISTS (
+          SELECT 1 FROM "BundleProduct" bp
+          WHERE bp."bundleId" = b.id AND bp."productId" = $1
+        )
+      RETURNING b.id, b.name, b.slug
+    `,
+    [id],
+  )
 }
 
 export const listBundlesAdmin = async (input?: {
@@ -332,6 +453,7 @@ export const createBundleV2 = async (input: {
   image?: string | null
   isActive?: boolean
   productIds: string[]
+  productPrices?: Array<{ productId: string; comboPrice: number }>
 }) => {
   const { name, slug } = validateInput(input)
   const productIds = await loadEligibleProducts(input.productIds)
@@ -357,13 +479,13 @@ export const createBundleV2 = async (input: {
         input.pricingMode === "fixed" ? Number(input.comboPrice) : null,
         input.description?.trim() || null,
         input.image?.trim() || null,
-        input.isActive ?? true,
+        comboIsActive(productIds.length, input.isActive),
       ],
     )
     for (const productId of productIds) {
       await client.query(
-        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "createdAt", "updatedAt") VALUES ($1,$2,$3,now(),now())`,
-        [crypto.randomUUID(), id, productId],
+        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,now(),now())`,
+        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices)],
       )
     }
   })
@@ -381,6 +503,7 @@ export const updateBundleV2 = async (
     image?: string | null
     isActive?: boolean
     productIds: string[]
+    productPrices?: Array<{ productId: string; comboPrice: number }>
   },
 ) => {
   const { name, slug } = validateInput(input)
@@ -416,14 +539,14 @@ export const updateBundleV2 = async (
         input.pricingMode === "fixed" ? Number(input.comboPrice) : null,
         input.description?.trim() || null,
         input.image?.trim() || null,
-        input.isActive ?? true,
+        comboIsActive(productIds.length, input.isActive),
       ],
     )
     await client.query(`DELETE FROM "BundleProduct" WHERE "bundleId" = $1`, [id])
     for (const productId of productIds) {
       await client.query(
-        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "createdAt", "updatedAt") VALUES ($1,$2,$3,now(),now())`,
-        [crypto.randomUUID(), id, productId],
+        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,now(),now())`,
+        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices)],
       )
     }
   })

@@ -7,8 +7,8 @@ import { useRealtimeTables } from "@/hooks/useRealtimeTables"
 import { useMasterValues } from "@/hooks/useMasterData"
 import { Camera, X } from "lucide-react"
 import { toast } from "@/lib/toast"
-import { generateInvoicePDF } from "@/lib/invoice"
 import { useOrderWithTracking } from "@/hooks/useOrderWithTracking"
+import { isOrderShipped } from "@/src/lib/orders/order-shipped"
 import {
   deriveLatestLifecycleToStatus,
   orderHistoryHasCancelRequested,
@@ -78,6 +78,7 @@ export default function OrderDetailPage() {
   })
 
   const [actionBusy, setActionBusy] = useState<string | null>(null)
+  const [downloadingInvoice, setDownloadingInvoice] = useState(false)
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { rating: number; content: string }>>({})
   const [existingReviewedProducts, setExistingReviewedProducts] = useState<Set<string>>(new Set())
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
@@ -295,6 +296,7 @@ export default function OrderDetailPage() {
   })
 
   const order = orderQuery.data
+  const orderShipped = order ? isOrderShipped(order) : false
   const historySet = useMemo(() => new Set(order?.statusHistory.map((entry) => entry.toStatus.toLowerCase())), [order?.statusHistory])
   const returnedProductIds = useMemo(
     () =>
@@ -431,12 +433,29 @@ export default function OrderDetailPage() {
   }
 
   const downloadInvoice = async () => {
-    if (!order) return
-    const success = await generateInvoicePDF(order as any)
-    if (success) {
-      toast.success("Success", "Invoice downloaded as PDF")
-    } else {
-      toast.error("Error", "Failed to generate PDF invoice")
+    if (!order || !orderShipped) return
+    const token = window.localStorage.getItem("ziply5_access_token")
+    if (!token) {
+      toast.error("Invoice", "Please login to download the invoice.")
+      return
+    }
+    setDownloadingInvoice(true)
+    try {
+      const res = await fetch(`/api/v1/orders/${order.id}/shiprocket-invoice`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const payload = (await res.json()) as { success?: boolean; message?: string; data?: { invoiceUrl?: string } }
+      const invoiceUrl = payload.data?.invoiceUrl
+      if (!res.ok || payload.success === false || !invoiceUrl) {
+        throw new Error(payload.message ?? "Could not fetch the invoice")
+      }
+      window.open(invoiceUrl, "_blank", "noopener,noreferrer")
+      toast.success("Success", "Invoice is ready")
+    } catch (err) {
+      toast.error("Invoice", err instanceof Error ? err.message : "Failed to download invoice")
+    } finally {
+      setDownloadingInvoice(false)
     }
   }
 
@@ -467,8 +486,8 @@ export default function OrderDetailPage() {
             order={order}
             paymentStatus={paymentStatus}
             onDownloadInvoice={() => void downloadInvoice()}
-            onSyncOrder={() => refreshTrackingMutation.mutate()}
-            syncingOrder={refreshTrackingMutation.isPending}
+            invoiceAvailable={orderShipped}
+            downloadingInvoice={downloadingInvoice}
             extraActions={
               <>
                 {canShowCustomerCancel && (
@@ -549,7 +568,7 @@ export default function OrderDetailPage() {
                     ? new Error("Tracking failed")
                     : null
               }
-              orderLifecycleStatus={order.status}
+              orderLifecycleStatus={latestLifecycle || order.status}
               onRefreshFromShiprocket={async () => {
                 await refreshTrackingMutation.mutateAsync()
               }}
