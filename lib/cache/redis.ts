@@ -91,6 +91,23 @@ export const cache = {
     }
     for (const key of keys) memoryStore.delete(key)
   },
+  async delByPrefix(prefix: string) {
+    if (canUseRedis()) {
+      try {
+        let cursor = "0"
+        do {
+          const [next, keys] = await withRedisTimeout(redis.scan(cursor, "MATCH", `${prefix}*`, "COUNT", 100))
+          cursor = next
+          if (keys.length) await withRedisTimeout(redis.del(...keys))
+        } while (cursor !== "0")
+      } catch {
+        // no-op
+      }
+    }
+    for (const key of memoryStore.keys()) {
+      if (key.startsWith(prefix)) memoryStore.delete(key)
+    }
+  },
   metrics() {
     const totalReads = metrics.hits + metrics.misses
     return {
