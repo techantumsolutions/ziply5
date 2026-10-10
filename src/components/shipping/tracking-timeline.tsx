@@ -19,14 +19,16 @@ export function TrackingTimeline(props: {
   const shipmentStatus = String(props.shipmentStatus ?? "").toLowerCase()
   const orderStatus = String(props.orderStatus ?? "").toLowerCase()
 
+  const pickupGenerated = shipmentStatus.includes("pickup")
+  const shipped = ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(orderStatus) || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(shipmentStatus)
   const steps: TrackingStep[] = [
     { key: "confirmed", label: "Order Confirmed", reached: reached.has("confirmed") || orderStatus === "confirmed" },
     {
       key: "pickup_generated",
       label: "Pickup Generated",
-      reached: shipmentStatus.includes("pickup") || reached.has("packed") || orderStatus === "packed",
+      reached: pickupGenerated,
     },
-    { key: "shipped", label: "Shipped", reached: shipmentStatus.includes("ship") || reached.has("shipped") || orderStatus === "shipped" },
+    { key: "shipped", label: "Shipped", reached: shipped || reached.has("shipped") },
     { key: "in_transit", label: "In Transit", reached: shipmentStatus.includes("transit") },
     { key: "out_for_delivery", label: "Out For Delivery", reached: shipmentStatus.includes("out_for_delivery") || shipmentStatus.includes("out for delivery") },
     { key: "delivered", label: "Delivered", reached: reached.has("delivered") || orderStatus === "delivered" || shipmentStatus.includes("delivered") },

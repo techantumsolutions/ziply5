@@ -37,12 +37,14 @@ type OrderDetail = {
   statusHistory?: Array<{ toStatus: string; changedAt: string; notes?: string | null; reasonCode?: string | null; changedById?: string | null }>
   notes?: Array<{ id: string; note: string; isInternal: boolean; createdAt: string }>
   user?: { id: string; name: string; email: string }
-  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null }>
+  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null; courierName?: string | null; shipmentNo?: string | null; cancelledAt?: string | null }>
   awbCode?: string | null
   courierName?: string | null
   trackingNumber?: string | null
   trackingUrl?: string | null
   shipmentStatus?: string | null
+  pickupStatus?: string | null
+  isPickupGenerated?: boolean | null
   estimatedDeliveryDate?: string | null
   lastTrackingSyncAt?: string | null
   returnRequests?: Array<{ id: string; status: string; reason: string | null }>
@@ -205,10 +207,10 @@ export default function AdminOrderDetailPage() {
     }
   }
 
-  const loadOrder = async () => {
+  const loadOrder = async (options?: { silent?: boolean }) => {
     if (!params.id) return
-    setLoading(true)
-    setError("")
+    if (!options?.silent) setLoading(true)
+    if (!options?.silent) setError("")
     return authedFetch<OrderDetail>(`/api/v1/orders/${params.id}`)
       .then((data) => setOrder(data))
       .catch((e: Error) => setError(e.message))
@@ -285,18 +287,35 @@ export default function AdminOrderDetailPage() {
     try {
       const result = await authedPost<{
         availableCouriers?: Array<{ name: string; eta_days: number; rate: number }>
+        shipmentId?: string | null
+        awbCode?: string | null
+        courierName?: string | null
+        pickup?: { pickup_status?: string | null }
       }>(`/api/v1/orders/${params.id}/shiprocket`, { action })
       if (action === "serviceability") {
         const top = (result.availableCouriers ?? []).slice(0, 2)
-        setServiceabilitySummary(
-          top.length
-            ? top.map((courier) => `${courier.name} (${courier.eta_days}d • Rs.${courier.rate})`).join(" | ")
-            : "No courier serviceability found",
-        )
+        const summary = top.length
+          ? top.map((courier) => `${courier.name} (${courier.eta_days}d • Rs.${courier.rate})`).join(" | ")
+          : "No courier can deliver this pincode"
+        setServiceabilitySummary(summary)
+        toast.success("Serviceability", summary)
+        return
       }
-      await loadOrder()
+      const labels: Record<string, string> = {
+        create_shipment: "Shipment created on Shiprocket",
+        assign_awb: result.awbCode ? `AWB ${result.awbCode} assigned` : "AWB assigned",
+        generate_pickup: "Pickup requested",
+        refresh_tracking: "Tracking refreshed",
+        retry_shipment_sync: "Shiprocket sync completed",
+        regenerate_tracking_data: "Tracking data regenerated",
+        repair_shipment_state: "Shipment state repaired",
+      }
+      toast.success("Shiprocket", labels[action] ?? "Done")
+      await loadOrder({ silent: true })
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Shiprocket action failed")
+      const message = e instanceof Error ? e.message : "Shiprocket action failed"
+      setError(message)
+      toast.error("Shiprocket", message)
     } finally {
       setShiprocketBusy(null)
     }
@@ -612,48 +631,67 @@ export default function AdminOrderDetailPage() {
             </div>
 
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Delivery details</h2>
-              <div className="space-y-3 text-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[#6B7280]">Delivery method</span>
-                  <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
-                    <Truck className="h-4 w-4 text-[#166534]" />
-                    {order.courierName ?? order.shipments?.[0]?.carrier ?? "Not assigned"}
-                  </span>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[#6B7280]">Estimated delivery</span>
-                  <span className="font-medium text-[#111827]">{order.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not scheduled"}</span>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[#6B7280]">Tracking number</span>
-                  <span className="font-medium text-[#111827]">{order.awbCode ?? order.trackingNumber ?? order.shipments?.[0]?.trackingNo ?? "Not yet shipped"}</span>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <span className="text-[#6B7280]">Tracking link</span>
-                  {order.trackingUrl ? (
-                    <a href={order.trackingUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-[#166534] hover:underline">Open tracking</a>
-                  ) : (
-                    <span className="text-[#111827]">—</span>
-                  )}
-                </div>
-              </div>
-              <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F3F4F6] pt-3">
-                <button type="button" disabled={shiprocketBusy === "serviceability"} onClick={() => void runShiprocketAction("serviceability")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "serviceability" ? "Checking..." : "Check Serviceability"}</button>
-                <button type="button" disabled={shiprocketBusy === "create_shipment" || Boolean(order.shipments?.length)} onClick={() => void runShiprocketAction("create_shipment")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "create_shipment" ? "Creating..." : "Create Shipment"}</button>
-                <button type="button" disabled={shiprocketBusy === "assign_awb" || !order.shipments?.length || Boolean(order.shipments?.[0]?.trackingNo)} onClick={() => void runShiprocketAction("assign_awb")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "assign_awb" ? "Assigning..." : "Assign AWB"}</button>
-                <button type="button" disabled={shiprocketBusy === "generate_pickup" || !order.shipments?.length} onClick={() => void runShiprocketAction("generate_pickup")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "generate_pickup" ? "Generating..." : "Generate Pickup"}</button>
-                <button type="button" disabled={shiprocketBusy === "refresh_tracking" || !order.shipments?.length} onClick={() => void runShiprocketAction("refresh_tracking")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "refresh_tracking" ? "Refreshing..." : "Refresh Tracking"}</button>
-                <button type="button" disabled={shiprocketBusy === "retry_shipment_sync"} onClick={() => void runShiprocketAction("retry_shipment_sync")} className="rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:opacity-40">{shiprocketBusy === "retry_shipment_sync" ? "Retrying..." : "Retry Sync"}</button>
-              </div>
-              {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
-              <div className="mt-3">
-                <TrackingTimeline
-                  orderStatus={order.status}
-                  shipmentStatus={order.shipmentStatus ?? order.shipments?.[0]?.shipmentStatus ?? null}
-                  statusHistory={order.statusHistory}
-                />
-              </div>
+              {(() => {
+                const activeShipment = (order.shipments ?? []).find((shipment) => String(shipment.shipmentStatus ?? "").toLowerCase() !== "cancelled" && !shipment.cancelledAt) ?? null
+                const courier = order.courierName || activeShipment?.courierName || activeShipment?.carrier || null
+                const trackingNumber = order.awbCode || order.trackingNumber || activeShipment?.awbCode || activeShipment?.trackingNo || null
+                const trackingUrl = order.trackingUrl || activeShipment?.trackingUrl || null
+                const hasShipment = Boolean(activeShipment)
+                const hasAwb = Boolean(trackingNumber)
+                const pickupDone = Boolean(order.isPickupGenerated) || String(order.pickupStatus ?? activeShipment?.pickupStatus ?? "").toLowerCase().includes("pickup")
+                const busy = (action: string) => shiprocketBusy === action
+                const buttonClass = "rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:cursor-not-allowed disabled:opacity-40"
+                return (
+                  <>
+                    <h2 className="mb-3 text-sm font-semibold text-[#111827]">Delivery details</h2>
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#6B7280]">Delivery method</span>
+                        <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
+                          <Truck className="h-4 w-4 text-[#166534]" />
+                          {courier || "Not assigned"}
+                        </span>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#6B7280]">Estimated delivery</span>
+                        <span className="font-medium text-[#111827]">{order.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not scheduled"}</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#6B7280]">Tracking number</span>
+                        <span className="font-medium text-[#111827]">{trackingNumber || "Not yet shipped"}</span>
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#6B7280]">Tracking link</span>
+                        {trackingUrl ? (
+                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-[#166534] hover:underline">Open tracking</a>
+                        ) : (
+                          <span className="text-[#111827]">—</span>
+                        )}
+                      </div>
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="text-[#6B7280]">Shipment</span>
+                        <span className="font-medium text-[#111827]">{activeShipment?.shipmentNo || activeShipment?.id || "Not created"}</span>
+                      </div>
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F3F4F6] pt-3">
+                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
+                      <button type="button" disabled={Boolean(shiprocketBusy) || hasShipment} title={hasShipment ? "A shipment already exists" : "Create the Shiprocket shipment"} onClick={() => void runShiprocketAction("create_shipment")} className={buttonClass}>{busy("create_shipment") ? "Creating..." : "Create Shipment"}</button>
+                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasShipment || hasAwb} title={!hasShipment ? "Create a shipment first" : hasAwb ? "AWB already assigned" : "Assign a courier AWB"} onClick={() => void runShiprocketAction("assign_awb")} className={buttonClass}>{busy("assign_awb") ? "Assigning..." : "Assign AWB"}</button>
+                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasAwb || pickupDone} title={!hasAwb ? "Assign an AWB first" : "Request courier pickup"} onClick={() => void runShiprocketAction("generate_pickup")} className={buttonClass}>{busy("generate_pickup") ? "Generating..." : "Generate Pickup"}</button>
+                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasAwb} title={!hasAwb ? "Assign an AWB first" : "Pull the latest tracking from Shiprocket"} onClick={() => void runShiprocketAction("refresh_tracking")} className={buttonClass}>{busy("refresh_tracking") ? "Refreshing..." : "Refresh Tracking"}</button>
+                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("retry_shipment_sync")} className={buttonClass}>{busy("retry_shipment_sync") ? "Retrying..." : "Retry Sync"}</button>
+                    </div>
+                    {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
+                    <div className="mt-3">
+                      <TrackingTimeline
+                        orderStatus={lifecycleStatus}
+                        shipmentStatus={pickupDone ? (order.pickupStatus || activeShipment?.pickupStatus || "pickup_generated") : (activeShipment?.shipmentStatus ?? order.shipmentStatus ?? null)}
+                        statusHistory={order.statusHistory}
+                      />
+                    </div>
+                  </>
+                )
+              })()}
             </div>
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-sm font-semibold text-[#111827]">Notes</h2>

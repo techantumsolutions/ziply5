@@ -54,6 +54,10 @@ const recoverSnapshotFromExistingShipment = async (orderId: string) => {
     ? (((order as { shipments?: Array<Record<string, unknown>> }).shipments ?? [])[0] ?? null)
     : null
   if (!latestShipment) return { recovered: false, reason: "no_existing_shipment_row" }
+  const latestStatus = String(latestShipment.shipmentStatus ?? "").toLowerCase()
+  if (latestStatus === "cancelled" || latestShipment.cancelledAt) {
+    return { recovered: false, reason: "latest_shipment_cancelled" }
+  }
   const shipmentNo = latestShipment.shipmentNo ? String(latestShipment.shipmentNo) : null
   const trackingNo = latestShipment.trackingNo ? String(latestShipment.trackingNo) : null
   const carrier = latestShipment.carrier ? String(latestShipment.carrier) : null

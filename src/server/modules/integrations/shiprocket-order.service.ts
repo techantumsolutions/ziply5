@@ -4,22 +4,9 @@ import { randomUUID } from "crypto"
 import { logger } from "@/lib/logger"
 import { upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
 import { formatIstSqlDateTime, pgTimestampToUtcIso } from "@/src/lib/datetime"
+import { buildShiprocketLineItems, parseOrderPostalCode, parseShiprocketAddress, weightToKg } from "@/src/server/modules/shipping/shiprocket.utils"
 
-const parsePostalCode = (text?: string | null) => {
-  if (!text) return null
-  const match = text.match(/\b\d{6}\b/)
-  return match?.[0] ?? null
-}
-
-const toWeight = (weight?: string | null) => {
-  if (!weight) return 0.5
-  const normalized = weight.trim().toLowerCase()
-  const n = Number(normalized.replace(/[^\d.]/g, ""))
-  if (!Number.isFinite(n) || n <= 0) return 0.5
-  if (normalized.endsWith("kg")) return n
-  if (normalized.endsWith("g")) return n / 1000
-  return n
-}
+const parsePostalCode = parseOrderPostalCode
 
 const sanitizePhone = (phone?: string | null) => {
   const digits = String(phone ?? "").replace(/\D/g, "")
@@ -56,18 +43,7 @@ const maskSensitive = (value: string | null) => {
   return `${value.slice(0, 2)}***${value.slice(-2)}`
 }
 
-const parseAddressParts = (address?: string | null) => {
-  const parts = String(address ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-  return {
-    line1: parts[0] ?? "Address unavailable",
-    city: parts[1] ?? "NA",
-    state: parts[2] ?? "NA",
-    pincode: parts.find((part) => /\b\d{6}\b/.test(part))?.match(/\b\d{6}\b/)?.[0] ?? null,
-  }
-}
+const parseAddressParts = parseShiprocketAddress
 
 const shipmentLog = (
   level: "info" | "warn" | "error",
@@ -167,7 +143,7 @@ const fetchLatestSyncState = async (orderId: string) => {
       shippingStatusCode: number | null
     }>
   >(
-    `SELECT id, "shipmentNo", "trackingNo", "shipmentStatus", "pickupStatus", "awbCode", "shippingStatusCode" FROM "Shipment" WHERE "orderId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+    `SELECT id, "shipmentNo", "trackingNo", "shipmentStatus", "pickupStatus", "awbCode", "shippingStatusCode" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
   const order = orderRows[0] ?? null
@@ -694,12 +670,15 @@ export const checkOrderServiceability = async (orderId: string) => {
               'productId', oi."productId",
               'quantity', oi.quantity,
               'unitPrice', oi."unitPrice",
-              'product', jsonb_build_object('name', p.name, 'slug', p.slug, 'sku', p.sku, 'weight', p.weight)
+              'sku', COALESCE(NULLIF(oi.sku, ''), NULLIF(pv.sku, ''), NULLIF(p.sku, '')),
+              'variantName', pv.name,
+              'product', jsonb_build_object('name', p.name, 'slug', p.slug, 'sku', p.sku, 'weight', COALESCE(NULLIF(pv.weight, ''), NULLIF(p.weight, '')))
             )
             ORDER BY oi.id ASC
           )
           FROM "OrderItem" oi
           INNER JOIN "Product" p ON p.id = oi."productId"
+          LEFT JOIN "ProductVariant" pv ON pv.id = oi."variantId"
           WHERE oi."orderId" = o.id
         ), '[]'::jsonb) as items,
         COALESCE((
@@ -736,7 +715,9 @@ export const checkOrderServiceability = async (orderId: string) => {
     throw new Error("Non-serviceable pincode: delivery postcode missing")
   }
   const items = Array.isArray(order.items) ? (order.items as any[]) : []
-  const weight = items.reduce((sum, item) => sum + toWeight(item.product?.weight) * Number(item.quantity ?? 0), 0)
+  const weight = Math.round(
+    items.reduce((sum, item) => sum + weightToKg(item.product?.weight) * Number(item.quantity ?? 0), 0) * 1000,
+  ) / 1000
   if (weight <= 0) {
     shipmentConsole("serviceability.weight_missing", { orderId })
     shipmentLog("warn", "serviceability.skipped", { orderId, skippedReason: "missing_weight" })
@@ -785,7 +766,7 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   shipmentConsole("shipment.create.start", { orderId, actorId })
   shipmentLog("info", "shipment.started", { orderId, actorId })
   const { order, response, deliveryPostcode, pickupPostcode, weight } = await checkOrderServiceability(orderId)
-  const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION?.trim() || "INSTAHOT FOODS"
+  const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION?.trim() || ""
   if (!pickupLocation) {
     shipmentConsole("shipment.create.pickup_location_missing", { orderId })
     shipmentLog("warn", "shipment.failure", {
@@ -798,15 +779,7 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   }
   const bestCourier = [...response.available_couriers].sort((a, b) => a.rate - b.rate)[0]
   const parsedAddress = parseAddressParts(order.customerAddress)
-  const orderItems: ShiprocketOrderItem[] = (Array.isArray(order.items) ? order.items : [])
-    .map((item: any) => ({
-      orderItemId: item.id,
-      quantity: Number(item.quantity ?? 0),
-      name: String(item.product?.name ?? "Item"),
-      sku: String(item.product?.sku ?? item.product?.slug ?? `sku-${item.id}`),
-      sellingPrice: Number(item.unitPrice ?? 0),
-    }))
-    .filter((item: ShiprocketOrderItem) => item.quantity > 0)
+  const orderItems: ShiprocketOrderItem[] = buildShiprocketLineItems(Array.isArray(order.items) ? order.items : [])
   if (!orderItems.length) {
     shipmentConsole("shipment.create.no_items", { orderId })
     shipmentLog("warn", "shipment.skipped", { orderId, skippedReason: "no_order_items" })
@@ -814,7 +787,7 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   }
 
   const shipmentExists = await pgQuery<Array<{ id: string }>>(
-    `SELECT id FROM "Shipment" WHERE "orderId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+    `SELECT id FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
   if (shipmentExists.length > 0) {
@@ -823,8 +796,11 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
     throw new Error("Shipment already exists")
   }
 
+  const channelOrderId = order.shiprocketOrderId
+    ? `${order.id}-r${String(order.shiprocketOrderId).slice(-4)}`
+    : order.id
   const createPayload = {
-    order_id: order.id,
+    order_id: channelOrderId,
     order_date: formatIstSqlDateTime(
       order.createdAt instanceof Date ? pgTimestampToUtcIso(order.createdAt) : order.createdAt,
     ) ?? formatIstSqlDateTime(new Date().toISOString()),
@@ -1032,7 +1008,7 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
 export const assignAwbForOrderShipment = async (orderId: string, actorId: string) => {
   shipmentConsole("awb.assign.start", { orderId, actorId })
   const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; trackingNo: string | null; carrier: string | null; courierId: string | null }>>(
-    `SELECT id, "shipmentNo", "trackingNo", carrier, "courierId" FROM "Shipment" WHERE "orderId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+    `SELECT id, "shipmentNo", "trackingNo", carrier, "courierId" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
   const shipment = rows[0]
@@ -1079,7 +1055,19 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
       rawAwbResponse: awb,
     })
     await addOrderNote(orderId, "AWB assignment pending from Shiprocket. Shipment created and saved; retry AWB sync.", actorId)
-    return { shipmentUpdated: false, reason: "AWB assignment pending", shipment, awb, parsedAwb }
+    const awbRecord = awb as Record<string, unknown>
+    const responseData = awbRecord.response && typeof awbRecord.response === "object"
+      ? (awbRecord.response as Record<string, unknown>).data
+      : awbRecord.data
+    const awbError = responseData && typeof responseData === "object"
+      ? (responseData as Record<string, unknown>).awb_assign_error
+      : null
+    const awbMessage = typeof awbError === "string" && awbError.trim()
+      ? awbError.trim()
+      : typeof awbRecord.message === "string" && awbRecord.message.trim()
+        ? awbRecord.message.trim()
+        : "AWB assignment pending"
+    return { shipmentUpdated: false, reason: awbMessage, shipment, awb, parsedAwb }
   }
 
   const estimatedDeliveryDate = parsedAwb.estimatedDeliveryDate ? new Date(parsedAwb.estimatedDeliveryDate) : null
@@ -1199,7 +1187,7 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
 export const generatePickupForOrderShipment = async (orderId: string, actorId: string) => {
   shipmentConsole("pickup.generate.start", { orderId, actorId })
   const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; shipmentStatus: string | null }>>(
-    `SELECT id, "shipmentNo", "shipmentStatus" FROM "Shipment" WHERE "orderId" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+    `SELECT id, "shipmentNo", "shipmentStatus" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
   const shipment = rows[0]

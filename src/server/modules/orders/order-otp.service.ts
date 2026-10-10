@@ -1,6 +1,6 @@
 import { otpService } from "../otp/otp.service"
 import { smsService } from "../sms/sms.service"
-import { pgQuery } from "@/src/server/db/pg"
+import { formatOrderNumber } from "@/src/lib/orders/order-number"
 
 export const orderOtpService = {
   async requestTransactionOtp(mobile: string, amount: number) {
@@ -24,8 +24,8 @@ export const orderOtpService = {
     await smsService.send({
       mobile,
       templateKey: "ORDER_PAID",
-      variables: [amount.toString(), orderId],
-      body: `Thank you for payment of Rs.${amount} against OrderId - ${orderId} - Team Ziply5`
+      variables: [amount.toString(), formatOrderNumber(orderId)],
+      body: `Thank you for payment of Rs.${amount} against OrderId - ${formatOrderNumber(orderId)} - Team Ziply5`
     }).catch(e => console.error("Order confirmation SMS failed", e))
   }
 }

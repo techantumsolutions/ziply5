@@ -1,6 +1,7 @@
 import { logActivity } from "@/src/server/modules/activity/activity.service"
 import { emailTemplates, enqueueEmail } from "@/src/server/modules/notifications/email.service"
 import { smsService } from "@/src/server/modules/sms/sms.service"
+import { formatOrderNumber } from "@/src/lib/orders/order-number"
 import { env } from "@/src/server/core/config/env"
 import { markCartConverted } from "@/src/server/modules/abandoned-carts/recovery.service"
 import {
@@ -796,7 +797,7 @@ export const createOrderFromCheckout = async (input: {
       await smsService.send({
         mobile: order.customerPhone,
         templateKey: "ORDER_CONFIRM",
-        variables: [customerName, String(order.id)],
+        variables: [customerName, formatOrderNumber(String(order.id))],
       }).catch(e => console.error("Order confirm SMS failed", e))
     }
 
@@ -818,7 +819,7 @@ export const createOrderFromCheckout = async (input: {
       await smsService.send({
         mobile: order.customerPhone,
         templateKey: "ORDER_PAID",
-        variables: [String(total), String(order.id)],
+        variables: [String(total), formatOrderNumber(String(order.id))],
       }).catch(e => console.error("Order payment SMS failed", e))
     }
 
@@ -936,6 +937,21 @@ export const getOrderById = async (id: string) => {
     ...order,
     paymentStatus: deriveEffectivePaymentStatus(order as any),
   }
+  const shipments = await listOrderShipmentsSupabase(String(hydrated.id)).catch(() => [])
+  const activeShipment = shipments.find((shipment) => {
+    const status = String(shipment.shipmentStatus ?? shipment.shipment_status ?? "").toLowerCase()
+    return status !== "cancelled" && !shipment.cancelledAt && !shipment.cancelled_at
+  }) ?? null
+  Object.assign(hydrated, {
+    shipments,
+    courierName: (hydrated as { courierName?: string | null }).courierName || activeShipment?.courierName || activeShipment?.carrier || null,
+    awbCode: (hydrated as { awbCode?: string | null }).awbCode || activeShipment?.awbCode || activeShipment?.trackingNo || null,
+    trackingNumber: (hydrated as { trackingNumber?: string | null }).trackingNumber || activeShipment?.trackingNumber || activeShipment?.trackingNo || null,
+    trackingUrl: (hydrated as { trackingUrl?: string | null }).trackingUrl || activeShipment?.trackingUrl || null,
+    shipmentStatus: (hydrated as { shipmentStatus?: string | null }).shipmentStatus || activeShipment?.shipmentStatus || null,
+    pickupStatus: (hydrated as { pickupStatus?: string | null }).pickupStatus || activeShipment?.pickupStatus || null,
+    estimatedDeliveryDate: (hydrated as { estimatedDeliveryDate?: string | null }).estimatedDeliveryDate || activeShipment?.estimatedDeliveryDate || null,
+  })
   if (shouldAutoSyncOrders()) {
     await autoSyncFromPayment(String(hydrated.id), String(hydrated.status), String(hydrated.paymentStatus))
     await syncOrderStatusFromShiprocket(String(hydrated.id))
@@ -970,21 +986,21 @@ export const updateOrderStatus = async (
         await smsService.send({
           mobile: order.customerPhone,
           templateKey: "ORDER_CONFIRM",
-          variables: [order.customerName || "Customer", String(order.id)],
+          variables: [order.customerName || "Customer", formatOrderNumber(String(order.id))],
         }).catch(e => console.error("Order confirm SMS failed", e))
       } else if (normalizedStatus === "cancelled") {
         console.log(`[Order Service] Triggering ORDER_CANCEL SMS for order ${order.id}`)
         await smsService.send({
           mobile: order.customerPhone,
           templateKey: "ORDER_CANCEL",
-          variables: [String(order.id)],
+          variables: [formatOrderNumber(String(order.id))],
         }).catch(e => console.error("Order cancel SMS failed", e))
       } else if (normalizedStatus === "payment_success") {
         console.log(`[Order Service] Triggering ORDER_PAID SMS for order ${order.id}`)
         await smsService.send({
           mobile: order.customerPhone,
           templateKey: "ORDER_PAID",
-          variables: [String(order.total), String(order.id)],
+          variables: [String(order.total), formatOrderNumber(String(order.id))],
         }).catch(e => console.error("Order payment SMS failed", e))
       }
     }
@@ -1099,17 +1115,18 @@ export const updateOrderStatus = async (
   if (maybePhone) {
     let smsBody = ""
 
+    const orderNumber = formatOrderNumber(id)
     if (status === "shipped") {
-      smsBody = `Hi, your Ziply5 order #${id} has been shipped. Track your package here: ${env.CDN_BASE_URL}/orders/${id}`
+      smsBody = `Hi, your Ziply5 order #${orderNumber} has been shipped. Track your package here: ${env.CDN_BASE_URL}/orders/${id}`
     } else if (status === "delivered") {
-      smsBody = `Hi, your Ziply5 order #${id} has been delivered. We hope you enjoy your delicious meal!`
+      smsBody = `Hi, your Ziply5 order #${orderNumber} has been delivered. We hope you enjoy your delicious meal!`
     }
 
     if (smsBody) {
       smsService.send({
         mobile: maybePhone,
         templateKey: status === "shipped" ? "ORDER_CONFIRM" : "ORDER_CONFIRM", // Fallback or add keys
-        variables: [order.customerName || "Customer", String(order.id)],
+        variables: [order.customerName || "Customer", orderNumber],
         body: smsBody,
       }).catch(err => console.error("Order status SMS failed", err))
     }

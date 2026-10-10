@@ -85,7 +85,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     }
     if (parsed.data.action === "assign_awb") {
       const data = await assignShipmentAwb(id, auth.user.sub)
-      return ok(data, "AWB assigned")
+      if (!data.shipmentUpdated) return fail(data.reason || "AWB was not assigned", 400)
+      const awbCode = data.parsedAwb?.awbCode ?? data.shipment?.trackingNo ?? ""
+      return ok(data, awbCode ? `AWB ${awbCode} assigned` : "AWB assigned")
     }
     if (parsed.data.action === "sync_order" || parsed.data.action === "resync_order" || parsed.data.action === "retry_shipment_sync") {
       const data =
@@ -112,6 +114,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         shippingStatus:
           (data as { awb?: { shipmentUpdated?: boolean } }).awb?.shipmentUpdated === true ? "AWB_ASSIGNED" : "PROCESSING",
         raw: data,
+      }
+      if (data.status === "failed") {
+        return fail((data as { reason?: string }).reason || "Shiprocket sync failed", 400, normalized)
       }
       return ok(normalized, parsed.data.action === "resync_order" ? "Order re-sync completed" : "Order sync completed")
     }

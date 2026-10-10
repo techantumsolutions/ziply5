@@ -2,18 +2,11 @@ import { randomUUID } from "crypto"
 import { shiprocketClient, ShiprocketApiError } from "@/lib/integrations/shiprocket"
 import { env } from "@/src/server/core/config/env"
 import { pgQuery } from "@/src/server/db/pg"
+import { parseShiprocketAddress } from "@/src/server/modules/shipping/shiprocket.utils"
 
 const parseCustomerAddress = (address?: string | null) => {
-  const parts = String(address ?? "")
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-  return {
-    line1: parts[0] ?? "Address unavailable",
-    city: parts[1] ?? "NA",
-    state: parts[2] ?? "NA",
-    pincode: parts.find((part) => /\b\d{6}\b/.test(part))?.match(/\b\d{6}\b/)?.[0] ?? "110001",
-  }
+  const parsed = parseShiprocketAddress(address)
+  return { ...parsed, pincode: parsed.pincode ?? "110001" }
 }
 
 const warehouseShipping = () => ({
