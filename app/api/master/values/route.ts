@@ -3,9 +3,7 @@ import { fail, ok } from "@/src/server/core/http/response"
 import { requireAuth } from "@/src/server/middleware/auth"
 import { createMasterValueSchema } from "@/src/server/modules/master/master.validator"
 import { createMasterValue, listMasterValues, updateMasterValue } from "@/src/server/modules/master/master.service"
-import { clearMasterCache, getMasterCache, setMasterCache } from "@/src/server/modules/master/master.cache"
-import { withCache } from "@/lib/cache/redis"
-import { cacheKeys } from "@/lib/cache/cacheKeys"
+import { clearMasterCache } from "@/src/server/modules/master/master.cache"
 import { logger } from "@/lib/logger"
 
 export const dynamic = "force-dynamic"; // Ensure Next.js never caches this route
@@ -25,20 +23,9 @@ export async function GET(request: NextRequest) {
       }
     } catch (e) {}
 
-    const cacheKey = `values:${group}:${role}:${activeOnly}`
-    
-    const cached = getMasterCache<unknown[]>(cacheKey)
-    if (cached) return ok(cached, "Master values fetched")
-    
-    const values = await withCache(
-      cacheKeys.masterValues(group, role, activeOnly),
-      60 * 60_000,
-      () =>
-        listMasterValues(group, {
-          activeOnly: role === "super_admin" ? false : activeOnly,
-        }),
-    )
-    setMasterCache(cacheKey, values)
+    const values = await listMasterValues(group, {
+      activeOnly: role === "super_admin" ? false : activeOnly,
+    })
     return ok(values, "Master values fetched")
   } catch (error: any) {
     logger.error("api.master.values.get_failed", { error: error?.message ?? "unknown" })

@@ -24,7 +24,8 @@ export const useMasterValues = (groupKey: string, enabled = true, activeOnly = t
   return useQuery({
     queryKey: ["master-values", groupKey, activeOnly],
     enabled: enabled && Boolean(groupKey),
-    staleTime: 5 * 60_000,
+    staleTime: 0,
+    refetchOnMount: "always",
     retry: 1,
     queryFn: () =>
       authedFetch<MasterValue[]>(
