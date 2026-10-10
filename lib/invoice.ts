@@ -1,5 +1,6 @@
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
+import { formatOrderDateTime, toUtcIso } from "@/src/lib/datetime"
 
 export type OrderForInvoice = {
   id: string
@@ -89,11 +90,13 @@ const getRupeeSymbolDataUrl = (color: string = "#111827", isBold: boolean = fals
 
 // Format invoice number: ziply5/26-27/001
 export const formatInvoiceNumber = (orderId: string, createdAt?: string | Date): string => {
-  const date = createdAt ? new Date(createdAt) : new Date()
-  const year = date.getFullYear()
-  const month = date.getMonth() // 0-indexed (3 = April)
+  const iso = createdAt ? toUtcIso(createdAt) : new Date().toISOString()
+  const date = iso ? new Date(iso) : new Date()
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Kolkata", year: "numeric", month: "numeric" }).formatToParts(date)
+  const year = Number(parts.find((part) => part.type === "year")?.value ?? date.getFullYear())
+  const month = Number(parts.find((part) => part.type === "month")?.value ?? date.getMonth() + 1)
   let startYear = year
-  if (month < 3) {
+  if (month < 4) {
     startYear = year - 1
   }
   const endYear = startYear + 1
@@ -168,28 +171,21 @@ export const convertNumberToWords = (amount: number, currency: string = "INR"): 
 
 // Formats a date in YYYY-MM-DD format
 export const formatInvoiceDate = (dateInput: string | Date | number): string => {
-  const d = new Date(dateInput)
-  if (isNaN(d.getTime())) return "—"
-  const yyyy = d.getFullYear()
-  const mm = String(d.getMonth() + 1).padStart(2, "0")
-  const dd = String(d.getDate()).padStart(2, "0")
-  return `${yyyy}-${mm}-${dd}`
+  const iso = toUtcIso(dateInput)
+  if (!iso) return "—"
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso))
 }
 
 export const formatISTDate = formatInvoiceDate
 
 export const formatISTDateTime = (dateInput: string | Date | number): string => {
-  const d = new Date(dateInput)
-  if (isNaN(d.getTime())) return "—"
-  return d.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }) + " IST"
+  const formatted = formatOrderDateTime(dateInput)
+  return formatted === "—" ? formatted : `${formatted} IST`
 }
 
 // Core Tax Invoice PDF Generator following reference layout

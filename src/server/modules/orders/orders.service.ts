@@ -748,6 +748,7 @@ export const createOrderFromCheckout = async (input: {
   const order = {
     ...orderData,
     id: created.id,
+    createdAt: created.createdAt,
     user: (orderData as any).user || null
   } as any
   console.log("Creating order with data:")

@@ -44,40 +44,26 @@ import { toast } from "@/lib/toast"
 
 export function VegLeafIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <path
-        d="M20.5 3.5C13.5 3.5 7.5 7.5 5.5 13C4 16.75 5 19.5 8 21C13.5 21 20.5 14 20.5 3.5Z"
-        fill="#059669"
+        d="M19.8 4.2C12.2 3.4 6.2 7.2 4.6 13.2C3.6 16.8 5.2 19.6 8.4 20.6C14.2 22.2 20.6 15.2 19.8 4.2Z"
+        fill="#16A34A"
       />
-      <path
-        d="M6.5 13.5C8.5 16 12 18.5 17.5 18"
-        stroke="#FFFFFF"
-        strokeWidth="1.75"
-        strokeLinecap="round"
-      />
-      <path
-        d="M4 21C5.5 19.5 7 17.5 8 15.5"
-        stroke="#047857"
-        strokeWidth="2.2"
-        strokeLinecap="round"
-      />
+      <path d="M7.2 16.8C9.4 14.2 12.6 11.2 17.2 8.2" stroke="white" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M6.2 20.2C7.2 18.2 8.2 16.6 9.4 15.2" stroke="#15803D" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   )
 }
 
 export function NonVegDrumstickIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
       <path
-        d="M19.5 4.5C17.2 2.2 13 3 10.5 5.5C8 8 7.5 11.5 9 14.5L5 18.5C4.2 17.7 3 17.7 2.2 18.5C1.4 19.3 1.4 20.5 2.2 21.3C3 22.1 4.2 22.1 5 21.3C5.8 20.5 5.8 19.3 5 18.5L9 14.5C12 16 15.5 15.5 18 13C20.5 10.5 21.3 6.8 19.5 4.5Z"
-        fill="#EA580C"
+        d="M14.2 3.6C11.2 3.2 8.4 5.2 7.6 8.2C6.8 11.2 8.2 13.6 10.4 14.8L8.2 17.2C7.2 16.4 5.8 16.6 5 17.4C4.2 18.2 4.2 19.4 5 20.2C5.8 21 7 21 7.8 20.2C8.6 19.4 8.4 18 7.6 17L10 14.8C12.4 16.2 15.4 15.6 17.6 13.6C20.2 11.2 20.6 7 18.2 4.8C17.2 3.8 15.8 3.8 14.2 3.6Z"
+        fill="#F97316"
       />
-      <path
-        d="M17 6.5C15.5 5 13.5 5.2 12 6.7C10.5 8.2 10.2 10 11.5 11.5"
-        stroke="#FFEDD5"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+      <circle cx="6.2" cy="18.8" r="1.15" fill="#FDBA74" />
+      <path d="M15.6 6.4C14.2 7.2 13.2 8.6 12.8 10.2" stroke="#FFEDD5" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   )
 }
@@ -189,7 +175,7 @@ const MAX_SECTIONS = 10
 const MAX_PRODUCT_FEATURES = 5
 const MAX_IMAGE_BYTES = 1 * 1024 * 1024
 const MAX_VIDEO_BYTES = 10 * 1024 * 1024
-const DESCRIPTION_MAX_CHARS = 500
+const DESCRIPTION_MAX_CHARS = 350
 const LIST_PAGE_SIZE = 10
 const ADD_PENDING_ID_KEY = "ziply5:product-add-pending-id"
 const ADD_DRAFT_ID_KEY = "ziply5:product-add-draft-id"
@@ -888,11 +874,11 @@ export function ProductConsolePage({
 
   useEffect(() => {
     if (mode === "add") {
-      authedFetch<{ data?: { nextId?: string } }>("/api/v1/products/next-id")
+      authedFetch<{ nextId?: string }>("/api/v1/products/next-id")
         .then((res) => {
-          if (res?.data?.nextId) {
-            setNextSequenceId(res.data.nextId)
-          }
+          const nextId = String(res?.nextId ?? "").trim()
+          const match = nextId.match(/^PRD-(\d+)$/i)
+          if (match) setNextSequenceId(`PRD-${match[1].padStart(6, "0")}`)
         })
         .catch(() => null)
     }
@@ -1798,6 +1784,7 @@ export function ProductConsolePage({
     },
     [editHydrated, getStepState, mode],
   )
+  const isEditDirty = ([1, 2, 3, 4, 5] as ProductFormStepId[]).some((step) => isStepDirty(step))
 
   const restoreStepFromBaseline = useCallback(
     (step: ProductFormStepId) => {
@@ -2349,7 +2336,7 @@ export function ProductConsolePage({
 
     const effPid = (customProductId.trim() || displayProductId || "").trim()
     if (effPid && !/^PRD-\d+$/i.test(effPid)) {
-      setError("Product ID format is invalid. Must follow format PRD-##### (e.g. PRD-00025)")
+      setError("Product ID format is invalid. It must look like PRD-000001")
       return
     }
 
@@ -2370,47 +2357,12 @@ export function ProductConsolePage({
           return
         }
       }
-      if (submitPayload.type === "simple" && submitPayload.discountPercent == null) {
-        setError("Discount percentage is required")
-        return
-      }
-      if (submitPayload.type === "simple" && !submitPayload.weight) {
-        setError("Weight is required for simple products.")
-        return
-      }
       if (!submitPayload.type) {
         setError("Product type is required")
         return
       }
       if (!submitPayload.stockStatus) {
         setError("Stock status is required")
-        return
-      }
-      if (!submitPayload.thumbnail) {
-        setError("Thumbnail image is mandatory")
-        return
-      }
-
-      // Validate HSN Code & Barcode Number on variants
-      const activeSubmitVars = variantMode === "single" ? variants.slice(0, 1) : variants
-      for (let i = 0; i < activeSubmitVars.length; i++) {
-        const v = activeSubmitVars[i]
-        const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
-        if (!v.hsnCode?.trim()) {
-          setError(`${label}: HSN Code is mandatory`)
-          return
-        }
-        if (!v.eanCode?.trim()) {
-          setError(`${label}: Barcode number is mandatory`)
-          return
-        }
-      }
-      if (!submitPayload.description || isEmptyRichText(submitPayload.description)) {
-        setError("Description is required")
-        return
-      }
-      if (stripHtmlText(submitPayload.description).length > DESCRIPTION_MAX_CHARS) {
-        setError(`Description must be ${DESCRIPTION_MAX_CHARS} characters or less`)
         return
       }
     }
@@ -2422,10 +2374,6 @@ export function ProductConsolePage({
       const effectivePrice = Number(submitPayload.price) > 0 ? Number(submitPayload.price) : (Number(defaultVar?.price) > 0 ? Number(defaultVar?.price) : Number(defaultVar?.mrp ?? 0))
       if (effectivePrice <= 0) {
         setError("Provide at least one valid price to publish the product")
-        return
-      }
-      if (submitPayload.features.length === 0 && selectedFeatureDefinitionIds.length === 0) {
-        setError("At least one product feature is required to publish")
         return
       }
     }
@@ -3026,7 +2974,7 @@ export function ProductConsolePage({
                       <SelectContent>
                         {(p.status === "draft" ? (["draft", "published"] as const) : (["published", "archived"] as const)).map((s) => (
                           <SelectItem key={s} value={s} className="capitalize">
-                            {s}
+                            {s === "draft" ? "Draft" : s === "published" ? "Published" : "Archived"}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -3235,15 +3183,15 @@ export function ProductConsolePage({
                   {/* Row 1 */}
                   <Field label="Category" required>
                     <Select value={categoryId || undefined} onValueChange={setCategoryId}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm">
-                        <SelectValue placeholder="Select category" />
+                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm capitalize">
+                        <SelectValue placeholder="Select Category" />
                       </SelectTrigger>
                       <SelectContent>
                         {categories.length === 0 ? (
-                          <div className="px-2 py-1.5 text-sm text-[#646464]">No categories available</div>
+                          <div className="px-2 py-1.5 text-sm text-[#646464]">No Categories Available</div>
                         ) : (
                           categories.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
+                            <SelectItem key={c.id} value={c.id} className="capitalize">
                               {c.name}
                             </SelectItem>
                           ))
@@ -3274,16 +3222,17 @@ export function ProductConsolePage({
                     />
                   </Field>
 
-                  <Field label="Product ID" info="Auto-generated sequence product ID (e.g. PRD-00024)">
+                  <Field label="Product ID" info="Auto-generated sequence product ID (for example PRD-000001)">
                     <Input
-                      value={displayProductId || "PRD-....."}
+                      value={displayProductId}
+                      placeholder="PRD-000001"
                       readOnly
                       disabled
-                      className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed font-mono"
+                      className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed font-mono uppercase"
                       title="Auto-generated sequence product ID"
                     />
                     <p className="mt-1 text-[11px] text-[#646464]">
-                      Auto-generated sequence ID (e.g. PRD-00024). Read-only field.
+                      Assigned in order, starting at PRD-000001. This field cannot be edited.
                     </p>
                   </Field>
 
@@ -3355,7 +3304,7 @@ export function ProductConsolePage({
 
                   <Field label="Spice Level" required={status !== "draft"}>
                     <Select value={spiceLevel} onValueChange={(value) => setSpiceLevel(value as "" | "mild" | "medium" | "hot" | "extra_hot")}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm capitalize">
+                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm">
                         <SelectValue placeholder="Select Spice Level" />
                       </SelectTrigger>
                       <SelectContent>
@@ -3643,9 +3592,9 @@ export function ProductConsolePage({
                                     <SelectValue />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    <SelectItem value="g">g</SelectItem>
-                                    <SelectItem value="mg">mg</SelectItem>
-                                    <SelectItem value="kg">kg</SelectItem>
+                                    <SelectItem value="g">G</SelectItem>
+                                    <SelectItem value="mg">MG</SelectItem>
+                                    <SelectItem value="kg">KG</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </td>
@@ -4073,8 +4022,7 @@ export function ProductConsolePage({
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B44444]" />
                 <div className="space-y-1 text-sm text-[#8A2E2E]">
                   <p className="font-semibold">
-                    {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing.{" "}
-                    {mode === "view" ? "Use Edit to complete them." : "Complete them before publishing."}
+                    {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing. Review the list below. Required fields are checked on their own steps.
                   </p>
                   {([1, 2, 3, 4] as const).map((stepId) =>
                     reviewMissing[stepId].length ? (
@@ -4511,12 +4459,12 @@ export function ProductConsolePage({
               />
               <div className="grid gap-6 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
                 <div className="min-w-0 space-y-1">
-                  <ReviewRow label="Meta Title">{metaTitle.trim() || <ReviewMissing />}</ReviewRow>
+                  <ReviewRow label="Meta Title">{metaTitle.trim() || <span className="font-normal text-[#8A8A82]">Not added</span>}</ReviewRow>
                   <ReviewRow label="Meta Description">
                     {metaDescription.trim() ? (
                       <span className="font-normal leading-relaxed">{metaDescription}</span>
                     ) : (
-                      <ReviewMissing />
+                      <span className="font-normal text-[#8A8A82]">Not added</span>
                     )}
                   </ReviewRow>
                   <ReviewRow label="Product URL (Slug)">
@@ -4596,13 +4544,8 @@ export function ProductConsolePage({
               ) : (
                 <Button
                   type="button"
-                  disabled={saving || reviewMissingCount > 0 || uploadingThumbnails || uploadingGallery || uploadingIcon}
-                  title={reviewMissingCount > 0 ? "Complete the missing details before publishing" : undefined}
+                  disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon}
                   onClick={() => {
-                    if (reviewMissingCount > 0) {
-                      setError("Complete the missing details before publishing")
-                      return
-                    }
                     void onSubmit({ preventDefault() {} } as React.FormEvent, "published")
                   }}
                   className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white disabled:opacity-50"

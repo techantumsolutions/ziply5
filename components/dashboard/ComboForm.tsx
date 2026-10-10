@@ -43,6 +43,7 @@ type BundlePayload = {
   image?: string | null
   isActive: boolean
   productIds: string[]
+  productPrices: Array<{ productId: string; comboPrice: number }>
 }
 
 const MODAL_PAGE_SIZE = 15
@@ -69,6 +70,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState("")
+  const [removedProductNames, setRemovedProductNames] = useState<string[]>([])
   const [imageUploading, setImageUploading] = useState(false)
 
   // Product Selection Modal state
@@ -162,13 +164,27 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
           setComboPrice(bundleRes.comboPrice != null ? String(bundleRes.comboPrice) : "")
           setDescription(bundleRes.description ?? "")
           setImage(bundleRes.image ?? "")
-          setIsActive(bundleRes.isActive !== false)
+          const bundleProducts = Array.isArray(bundleRes.products) ? bundleRes.products : []
+          const publishedIds = new Set(lite.map((x) => x.id))
+          const kept = bundleProducts.filter((bp: any) => {
+            const id = String(bp.productId || bp.id || "")
+            const published = String(bp.status ?? "").toLowerCase() === "published"
+            return id && (published || publishedIds.has(id))
+          })
+          const removed = bundleProducts.filter((bp: any) => !kept.includes(bp))
+          setRemovedProductNames(removed.map((bp: any) => String(bp.name || "Unpublished product")))
+          setSelectedProductIds(kept.map((bp: any) => String(bp.productId || bp.id)))
+          const savedPrices: Record<string, string> = {}
+          for (const bp of kept) {
+            const id = String(bp.productId || bp.id)
+            if (bp.comboPrice != null && bp.comboPrice !== "") savedPrices[id] = String(bp.comboPrice)
+          }
+          setItemComboPrices(savedPrices)
+          setIsActive(kept.length >= 2 && bundleRes.isActive !== false)
 
-          if (Array.isArray(bundleRes.products)) {
-            const bundlePids = bundleRes.products.map((x: any) => String(x.productId || x.id))
-            setSelectedProductIds(bundlePids)
-            // Ensure products in bundle are also in products list so prices, names, and images are always available
-            const extraLites: ProductLite[] = bundleRes.products.map((bp: any) => ({
+          const extraLites: ProductLite[] = kept
+            .filter((bp: any) => !publishedIds.has(String(bp.productId || bp.id)))
+            .map((bp: any) => ({
               id: String(bp.productId || bp.id),
               name: String(bp.name),
               slug: String(bp.slug || ""),
@@ -176,11 +192,8 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
               basePrice: bp.basePrice != null ? Number(bp.basePrice) : Number(bp.price ?? 0),
               thumbnail: bp.thumbnail ?? null,
             }))
-            const existingIds = new Set(lite.map((x) => x.id))
-            const missing = extraLites.filter((x) => !existingIds.has(x.id))
-            if (missing.length > 0) {
-              setProducts([...lite, ...missing])
-            }
+          if (extraLites.length > 0) {
+            setProducts([...lite, ...extraLites])
           }
         }
       })
@@ -256,7 +269,6 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
   const validateForm = (): string | null => {
     if (name.trim().length < 2) return "Please enter a combo name (at least 2 characters)."
     if (!slug || !/^[a-z0-9_-]+$/.test(slug)) return "Please enter a valid URL slug (lowercase letters, numbers, and hyphens)."
-    if (selectedProductIds.length < 1) return "Please select at least 1 product."
     if (selectedProductIds.length > 3) return "You can select a maximum of 3 products."
 
     for (const id of selectedProductIds) {
@@ -298,11 +310,18 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
       name: name.trim(),
       slug: slug.trim(),
       pricingMode,
-      comboPrice: pricingMode === "fixed" ? Number(comboPrice) : null,
+      comboPrice: Number(sumOfSelectedPrices.toFixed(2)),
       description: description.trim() || null,
       image: image.trim() || null,
-      isActive,
+      isActive: selectedProductIds.length >= 2 ? isActive : false,
       productIds: selectedProductIds,
+      productPrices: selectedProductIds.map((id) => {
+        const prod = products.find((item) => item.id === id)
+        const maxPrice = prod?.basePrice != null && prod.basePrice > 0 ? prod.basePrice : (prod?.price ?? 0)
+        const custom = itemComboPrices[id]
+        const parsed = custom != null && custom.trim() !== "" ? Number(custom) : maxPrice
+        return { productId: id, comboPrice: Number((Number.isFinite(parsed) ? parsed : 0).toFixed(2)) }
+      }),
     }
     try {
       const result = bundleId
@@ -527,14 +546,25 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
             </div>
           )}
 
-          <label className="flex items-center gap-2 pt-1 text-sm font-medium text-[#4A1D1F] cursor-pointer">
+          {removedProductNames.length > 0 ? (
+            <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              Removed products that are not published: {removedProductNames.join(", ")}. The remaining products stay in this combo.
+              {selectedProductIds.length < 2 ? " The combo is deactivated because fewer than 2 products remain." : ""}
+            </p>
+          ) : null}
+
+          <label className={`flex items-center gap-2 pt-1 text-sm font-medium text-[#4A1D1F] ${selectedProductIds.length < 2 ? "cursor-not-allowed opacity-70" : "cursor-pointer"}`}>
             <input
               type="checkbox"
-              checked={isActive}
+              checked={selectedProductIds.length >= 2 && isActive}
+              disabled={selectedProductIds.length < 2}
               onChange={(e) => setIsActive(e.target.checked)}
-              className="h-4 w-4 rounded border-[#E8DCC8] text-[#7B3010] accent-[#7B3010]"
+              className="h-4 w-4 rounded border-[#E8DCC8] text-[#7B3010] accent-[#7B3010] disabled:cursor-not-allowed"
             />
             Active
+            {selectedProductIds.length < 2 ? (
+              <span className="text-xs font-normal text-[#7A7A7A]">A combo needs at least 2 published products to stay active.</span>
+            ) : null}
           </label>
         </div>
       </div>

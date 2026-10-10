@@ -17,6 +17,7 @@ import { logger } from "@/lib/logger"
 import { pgQuery, pgTx } from "@/src/server/db/pg"
 import crypto from "node:crypto"
 import { resolveProductFeaturesFromDefinitions } from "@/src/server/modules/feature-definitions/feature-definitions.service"
+import { syncCombosAfterProductUnpublished } from "@/src/server/modules/bundles/bundles.service"
 
 export type ListProductsScope = "public" | "admin"
 
@@ -1412,6 +1413,15 @@ export const updateProduct = async (
     hydrated = await updateProductFromPg(id, input, incomingSections, opts.userId)
   }
   if (!hydrated) throw new Error("Product not found")
+
+  if ("status" in input && input.status !== undefined && String(input.status).toLowerCase() !== "published") {
+    await syncCombosAfterProductUnpublished(id).catch((error) => {
+      logger.warn("products.update.combo_sync_failed", {
+        productId: id,
+        error: error instanceof Error ? error.message : "unknown",
+      })
+    })
+  }
 
   await logActivity({
     actorId: opts.userId,

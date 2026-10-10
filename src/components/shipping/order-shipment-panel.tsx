@@ -18,6 +18,10 @@ function formatDateTime(iso: string | null | undefined) {
   return d.toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
 }
 
+function prettyStatus(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
 function statusBadgeClass(label: string) {
   const s = label.toLowerCase()
   if (s.includes("delivered")) return "bg-emerald-50 text-emerald-800 ring-emerald-200"
@@ -91,6 +95,9 @@ export function OrderShipmentPanel(props: Props) {
   const courier = shipment?.courierName ?? tracking.orderSnapshot.courierName
   const trackUrl = shipment?.trackingUrl ?? tracking.orderSnapshot.trackingUrl
   const noShipmentYet = !tracking.shipment && !tracking.orderSnapshot.shipmentId && !awb
+  const orderStatusLabel = orderLifecycleStatus?.trim()
+    ? prettyStatus(orderLifecycleStatus.trim())
+    : tracking.uiStatusLabel
 
   return (
     <div className="space-y-4">
@@ -99,14 +106,14 @@ export function OrderShipmentPanel(props: Props) {
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Shipment summary</h2>
             <p className="mt-1 text-xs text-[#646464]">
-              Order status: <span className="font-semibold text-[#2A1810]">{orderLifecycleStatus ?? "—"}</span>
+              Order status: <span className="font-semibold text-[#2A1810]">{orderStatusLabel}</span>
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <span
-              className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-semibold uppercase ring-1 ring-inset ${statusBadgeClass(tracking.uiStatusLabel)}`}
+              className={`inline-flex items-center rounded-full px-3 py-1 text-[10px] font-semibold uppercase ring-1 ring-inset ${statusBadgeClass(orderStatusLabel)}`}
             >
-              {tracking.uiStatusLabel}
+              {orderStatusLabel}
             </span>
             {tracking.isDelayed ? (
               <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-semibold uppercase text-amber-900 ring-1 ring-amber-200">

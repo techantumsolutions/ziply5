@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server"
+import { ok } from "@/src/server/core/http/response"
 import { getNextProductSequenceId } from "@/src/lib/db/products"
 
 export const dynamic = "force-dynamic"
@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic"
 export async function GET() {
   try {
     const nextId = await getNextProductSequenceId()
-    return NextResponse.json({ data: { nextId } })
+    return ok({ nextId })
   } catch {
-    return NextResponse.json({ data: { nextId: "PRD-00024" } })
+    return ok({ nextId: "PRD-000001" })
   }
 }

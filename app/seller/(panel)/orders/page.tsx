@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { authedFetch } from "@/lib/dashboard-fetch";
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable";
+import { formatOrderDateTime } from "@/src/lib/datetime";
 
 type OrderRow = {
   id: string;
@@ -63,7 +64,7 @@ export default function SellerOrdersPage() {
                 <ConsoleTd>
                   <span className="font-mono text-[11px]">{o.id.slice(0, 12)}…</span>
                 </ConsoleTd>
-                <ConsoleTd className="text-[12px]">{new Date(o.createdAt).toLocaleString()}</ConsoleTd>
+                <ConsoleTd className="text-[12px]">{formatOrderDateTime(o.createdAt)}</ConsoleTd>
                 <ConsoleTd>
                   <ul className="max-w-[220px] space-y-0.5 text-[11px]">
                     {(o.items ?? []).map((l, i) => (
