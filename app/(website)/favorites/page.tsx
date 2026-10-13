@@ -66,7 +66,7 @@ export default function FavoritesPage() {
                   style={{ backgroundColor: "#3EA6CF" }}
                 >
                   <div className="relative mx-auto h-[240px] w-full max-w-[150px]">
-                    <Image src={product.image} alt={product.name} fill className="object-contain" />
+                    {product.image ? <Image src={product.image} alt={product.name} fill className="object-contain" /> : null}
                   </div>
                   <h3 className="mt-2 text-center text-[22px] font-black uppercase leading-tight text-white">{product.name}</h3>
                   <p className="mt-1 text-center text-[10px] font-semibold uppercase text-white/90">Home style meal | Net wt. {product.weight}</p>

@@ -5,8 +5,8 @@ import Image from "next/image"
 import { useParams, useRouter } from "next/navigation"
 import { ArrowLeft, ChevronLeft, ChevronRight, Play, X } from "lucide-react"
 import { getFavoriteSlugs, toggleFavoriteSlug } from "@/lib/favorites"
-import { addToCart, getCartItems, getCartQuantity, setCartItemQuantity } from "@/lib/cart"
-import { FALLBACK_PRODUCT_IMAGE, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
+import { getCartItems, getCartQuantity, setCartItemQuantity } from "@/lib/cart"
+import { productImageSrc, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
 import { isVideoUrl } from "@/lib/media-utils"
 import Link from "next/link"
 import { toast } from "@/lib/toast"
@@ -143,7 +143,11 @@ export default function ProductPage() {
   const currentOldPrice = (activeVariant ? activeVariant.mrp : product?.oldPrice) || 0
   const currentPrice = (activeVariant ? activeVariant.price : product?.price) || currentOldPrice
   const hasDiscount = currentOldPrice > currentPrice && currentPrice > 0
-  const sku = `SKU:${activeVariant?.sku ?? (product ? product.sku.toUpperCase() : "")}`
+  const stockCount = product
+    ? product.productKind === "simple"
+      ? product.stock ?? 0
+      : activeVariant?.stock ?? 0
+    : 0
 
   const salePercent = hasDiscount ? Math.round((1 - currentPrice / currentOldPrice) * 100) : null
 
@@ -358,10 +362,10 @@ export default function ProductPage() {
                       ) : null}
                     </div>
                   ) : (
-                    <Image src={displayImage || FALLBACK_PRODUCT_IMAGE} alt={product.name} fill className="object-contain" />
+                    <Image src={displayImage} alt={product.name} fill className="object-contain" />
                   )
                 ) : (
-                  <div className="flex h-full items-center justify-center text-xs text-[#666]">No image</div>
+                  <div className="h-full w-full" />
                 )}
               </div>
             </div>
@@ -395,9 +399,9 @@ export default function ProductPage() {
                             </span>
                           </span>
                         </>
-                      ) : (
-                        <Image src={thumb || FALLBACK_PRODUCT_IMAGE} alt={`${product.name} preview`} fill className="object-cover" />
-                      )}
+                      ) : thumb ? (
+                        <Image src={thumb} alt={`${product.name} preview`} fill className="object-cover" />
+                      ) : null}
                     </button>
                   )
                 })}
@@ -431,24 +435,11 @@ export default function ProductPage() {
             <h1 className="font-heading mt-3 text-4xl leading-none text-[#201A1A]">{product.name}</h1>
 
             <div className="mt-2 grid grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
-              <span className="rounded-full bg-[#F0ECE2] px-3 py-1 text-[12px] font-medium text-[#8D8D8D] text-center">{sku}</span>
-              <span className="rounded-full bg-[#DFE8D8] px-3 py-1 text-[12px] font-medium text-[#86917B] capitalize text-center">
-                {((product.productKind === "simple" ? (product.stock ?? 0) : (activeVariant?.stock ?? 0)) > 5) ? (
-                  product.stockStatus?.replace("_", " ") + ":"
-                ) : (
-                  (product.productKind === "simple" ? (product.stock ?? 0) : (activeVariant?.stock ?? 0)) <= 0 ? (
-                    product.stockStatus?.replace("_", " ")
-                  ) : null
-                )}
-                {product.productKind === "simple" && product.stock && product?.stock > 0 && (
-                  <span className="ml-1">
-                    {product.stock < 5 ? `Hurry up only ${product.stock} left` : `${product.stock} available`}
-                  </span>
-                )}
-                {activeVariant && activeVariant.stock > 0 && (
-                  <> {activeVariant.stock <= 5 ? "Hurry, only a few left!" : `${activeVariant.stock} available`}</>
-                )}
-              </span>
+              {stockCount > 0 && stockCount < 5 && (
+                <span className="rounded-full border border-[#C2410C] bg-[#FFF1E8] px-3 py-1 text-[12px] font-semibold text-[#C2410C] text-center">
+                  Only few items left
+                </span>
+              )}
               {salePercent && salePercent > 0 && (
                 <span className="rounded-md bg-[#2E84CF] px-2 py-1 text-[11px] font-semibold text-white text-center">SALE {salePercent}% Off</span>
               )}
@@ -563,20 +554,23 @@ export default function ProductPage() {
               <button
                 type="button"
                 onClick={() => {
-                  addToCart({
-                    productId: product.id,
-                    variantId: activeVariant?.id ?? null,
-                    slug: product.slug,
-                    name: product.name,
-                    variantLabel: selectedSize,
-                    variantOptions: selectedSize ? [selectedSize] : [],
-                    price: currentPrice,
-                    comparePrice: currentOldPrice,
-                    stock: activeVariant?.stock ?? product.stock ?? null,
-                    image: product.image,
-                    weight: selectedSize,
-                    sku: activeVariant?.sku,
-                  }, Math.max(1, quantity))
+                  const existingQty = getCartQuantity(product.id, activeVariant?.id ?? null)
+                  if (existingQty <= 0) {
+                    setCartItemQuantity({
+                      productId: product.id,
+                      variantId: activeVariant?.id ?? null,
+                      slug: product.slug,
+                      name: product.name,
+                      variantLabel: selectedSize,
+                      variantOptions: selectedSize ? [selectedSize] : [],
+                      price: currentPrice,
+                      comparePrice: currentOldPrice,
+                      stock: activeVariant?.stock ?? product.stock ?? null,
+                      image: product.image,
+                      weight: selectedSize,
+                      sku: activeVariant?.sku,
+                    }, 1)
+                  }
                   router.push("/cart")
                 }}
                 disabled={allVariantsOutOfStock}
@@ -769,7 +763,7 @@ export default function ProductPage() {
                   style={{ backgroundColor: "#3EA6CF" }}
                 >
                   <div className="relative mx-auto h-[220px] w-full max-w-[140px]">
-                    <Image src={item.image} alt={item.name} fill className="object-contain" />
+                    {productImageSrc(item.image) ? <Image src={productImageSrc(item.image)} alt={item.name} fill className="object-contain" /> : null}
                   </div>
                   <h3 className="mt-2 text-center text-[22px] font-black uppercase leading-tight text-white">{item.name}</h3>
                   <p className="mt-1 text-center text-[10px] font-semibold uppercase text-white/90">

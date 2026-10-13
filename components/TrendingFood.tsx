@@ -211,13 +211,15 @@ export default function TrendingFood({ cmsData }: { cmsData?: any }) {
                       )
                     }
                     <div className="relative h-full w-full transition-transform duration-300 hover:scale-90 ">
-                      <Image
-                        src={product.image}
-                        alt={product.name}
-                        fill
-                        className="object-contain p-4"
-                        sizes="(max-width: 768px) 100vw, 320px"
-                      />
+                      {product.image ? (
+                        <Image
+                          src={product.image}
+                          alt={product.name}
+                          fill
+                          className="object-contain p-4"
+                          sizes="(max-width: 768px) 100vw, 320px"
+                        />
+                      ) : null}
                     </div>
                   </div>
 
