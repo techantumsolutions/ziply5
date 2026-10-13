@@ -704,11 +704,15 @@ export const createOrderFromCheckout = async (input: {
 
   await reserveInventorySupabase(lines.map((line) => ({ productId: line.productId, variantId: line.variantId, quantity: line.quantity })))
 
+  const accountEmail = input.userId
+    ? (await getUserEmailSupabase(input.userId).catch(() => null))?.trim() || null
+    : null
+
   const orderData = {
     userId: input.userId ?? null,
     customerName: input.billingAddress?.fullName ?? null,
     customerPhone: input.billingAddress?.phone ?? null,
-    customerEmail: input.billingAddress?.email ?? null,
+    customerEmail: accountEmail || input.billingAddress?.email?.trim() || null,
     customerAddress: input.billingAddress
       ? `${input.billingAddress.line1}, ${input.billingAddress.city}, ${input.billingAddress.state}, ${input.billingAddress.postalCode}, ${input.billingAddress.country}`
       : null,
@@ -782,10 +786,11 @@ export const createOrderFromCheckout = async (input: {
   console.log("Activity logged for order creation", { orderId: order.id, userId: input.userId ?? null })
   console.log(`[Order Service] createOrderFromCheckout: order.status="${order.status}", order.paymentStatus="${order.paymentStatus}", phone="${order.customerPhone}"`)
   const normalizedStatus = String(order.status).toLowerCase()
-  let customerEmailRaw = (order as any).customerEmail || input.billingAddress?.email || (order as any).user?.email
+  let customerEmailRaw = accountEmail || (order as any).customerEmail || (order as any).user?.email
   if (!customerEmailRaw && input.userId) {
     customerEmailRaw = await getUserEmailSupabase(input.userId).catch(() => null)
   }
+  if (!customerEmailRaw) customerEmailRaw = input.billingAddress?.email
   const customerEmail = customerEmailRaw?.trim()
   const customerName = order.customerName || "Customer"
 

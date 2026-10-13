@@ -68,10 +68,14 @@ type ApiProduct = {
   categories?: Array<{ category: { slug: string } }>
 }
 
-/** Served from `public/fallback-product.png` — default when media is missing or fails. */
+/** Old placeholder path. Product cards must not display this when a thumbnail is missing. */
 export const FALLBACK_PRODUCT_IMAGE = "/fallback-product.png"
 
-const DEFAULT_IMAGE = FALLBACK_PRODUCT_IMAGE
+export const productImageSrc = (value: string | null | undefined) => {
+  const raw = (value ?? "").trim()
+  if (!raw || raw === FALLBACK_PRODUCT_IMAGE) return ""
+  return raw
+}
 
 const toLocalUploadsPath = (value: string) => {
   const clean = value.replace(/^\/+/, "")
@@ -157,8 +161,8 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
     finalPrice: p.finalPrice ? Number(p.finalPrice) : null,
     promotion: p.promotion ?? null,
     description: p.description ?? "Delicious ready meal.",
-    image: normalizedThumb ?? normalizedGallery[0] ?? DEFAULT_IMAGE,
-    gallery: normalizedGallery ?? [DEFAULT_IMAGE],
+    image: normalizedThumb ?? "",
+    gallery: normalizedGallery,
     videoUrl: p.videoUrl ?? null,
     weight: (p.type ?? (variants.length ? "variant" : "simple")) === "variant"
       ? (firstVariant?.weight ?? firstVariant?.name ?? "")

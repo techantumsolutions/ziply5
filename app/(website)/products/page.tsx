@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select"
 import { getCartItems, setCartItemQuantity, getCartQuantity } from "@/lib/cart"
 import { getFavoriteSlugs, toggleFavoriteSlug } from "@/lib/favorites"
-import { FALLBACK_PRODUCT_IMAGE, type StorefrontProduct } from "@/lib/storefront-products"
+import { productImageSrc, type StorefrontProduct } from "@/lib/storefront-products"
 import { useStorefrontProducts } from "@/hooks/useStorefrontProducts"
 import { X, Heart } from "lucide-react"
 import { toast } from "@/lib/toast"
@@ -629,9 +629,10 @@ function ProductsPageContent() {
               .map((x) => (x?.thumbnail ?? "").trim())
               .filter(Boolean)
               .slice(0, 3)
+            const productImage = productImageSrc(product.image)
             const showComboThumbStrip =
               Boolean((product as any).isCombo) &&
-              (product.image === FALLBACK_PRODUCT_IMAGE || !String(product.image ?? "").trim()) &&
+              !productImage &&
               comboThumbs.length > 0
 
             const vegNonVegTag = product.tags?.find((t: any) => t?.tag?.name === "veg" || t?.tag?.name === "non-veg")
@@ -672,9 +673,9 @@ function ProductsPageContent() {
                               </div>
                             ))}
                           </div>
-                        ) : (
-                          <Image src={product.image} alt={product.name} fill className="object-contain" />
-                        )}
+                        ) : productImage ? (
+                          <Image src={productImage} alt={product.name} fill className="object-contain" />
+                        ) : null}
                       </div>
 
                       <div className="mt-2 text-center tracking-wide font-light font-melon">

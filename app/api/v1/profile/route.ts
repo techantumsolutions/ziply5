@@ -42,6 +42,24 @@ export async function GET(request: NextRequest) {
   }
 }
 
+function nationalIndianNumber(raw: unknown) {
+  let digits = String(raw ?? "").replace(/\D/g, "")
+  if (digits.startsWith("91") && digits.length > 10) digits = digits.slice(2)
+  else if (digits.startsWith("0") && digits.length > 10) digits = digits.slice(1)
+  return digits.slice(0, 10)
+}
+
+function profileWriteErrorMessage(error: unknown) {
+  const pgError = error as { code?: string; constraint?: string; message?: string }
+  const constraint = String(pgError?.constraint ?? "")
+  const message = String(pgError?.message ?? "")
+  if (pgError?.code === "23505" || constraint.toLowerCase().includes("phone") || /already exists|duplicate key/i.test(message)) {
+    return "Contact number already existing"
+  }
+  if (error instanceof Error && error.message.trim()) return error.message
+  return "Failed to update profile"
+}
+
 export async function PATCH(request: NextRequest) {
   const authUserId = await getAuthenticatedUserId(request);
   if (!authUserId) return NextResponse.json({ success: false, message: "Unauthorized" }, { status: 401 });
@@ -64,6 +82,25 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: false, message: "User account not found" }, { status: 404 });
     }
 
+    const nationalPhone = nationalIndianNumber(phone)
+    if (!/^[6-9]\d{9}$/.test(nationalPhone)) {
+      return NextResponse.json({ success: false, message: "Wrong contact number" }, { status: 400 })
+    }
+    const storedPhone = `91-${nationalPhone}`
+    const duplicate = await pgQuery<Array<{ userId: string }>>(
+      `
+        SELECT "userId"
+        FROM "UserProfile"
+        WHERE "userId" <> $1
+          AND right(regexp_replace(COALESCE(phone, ''), '[^0-9]', '', 'g'), 10) = $2
+        LIMIT 1
+      `,
+      [userId, nationalPhone],
+    )
+    if (duplicate[0]) {
+      return NextResponse.json({ success: false, message: "Contact number already existing" }, { status: 409 })
+    }
+
     const updatedProfile = await pgTx(async (client) => {
       if (name !== undefined) {
         await client.query(`UPDATE "User" SET name = $2, "updatedAt" = now() WHERE id = $1`, [userId, name])
@@ -81,7 +118,7 @@ export async function PATCH(request: NextRequest) {
             "updatedAt" = now()
           RETURNING *
         `,
-        [randomUUID(), userId, bio ?? null, phone ?? null, avatarUrl ?? null],
+        [randomUUID(), userId, bio ?? null, storedPhone, avatarUrl ?? null],
       )
       return insertRows.rows[0]
     })
@@ -89,7 +126,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, data: updatedProfile, message: "Profile updated successfully" });
   } catch (error) {
     console.error("Profile Update Error:", error);
-    return NextResponse.json({ success: false, message: "Failed to update profile" }, { status: 500 });
+    return NextResponse.json({ success: false, message: profileWriteErrorMessage(error) }, { status: 400 });
   }
 }
 

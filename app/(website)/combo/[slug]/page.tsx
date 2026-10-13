@@ -4,7 +4,7 @@ import { use, useEffect, useMemo, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { addToCart, getCartItems, setCartItemQuantity } from "@/lib/cart"
-import { FALLBACK_PRODUCT_IMAGE } from "@/lib/storefront-products"
+import { productImageSrc } from "@/lib/storefront-products"
 import { toast } from "@/lib/toast"
 
 type BundleProduct = { productId: string; name: string; slug: string; price: number; thumbnail?: string | null }
@@ -72,7 +72,7 @@ export default function ComboDetailPage({ params }: { params: Promise<{ slug: st
         name: bundle.name,
         variantId: null,
         price: Number(bundle.effectivePrice || 0),
-        image: bundle.image || bundle.products[0]?.thumbnail || FALLBACK_PRODUCT_IMAGE,
+        image: productImageSrc(bundle.image) || productImageSrc(bundle.products[0]?.thumbnail),
         weight: `${bundle.products.length} items`,
       },
       1,
@@ -96,7 +96,7 @@ export default function ComboDetailPage({ params }: { params: Promise<{ slug: st
             <div className="flex h-full w-full items-center justify-center gap-4 p-4">
               {bundle.products.map((p) => (
                 <div key={p.productId} className="relative h-full w-full flex-1">
-                  <Image src={p.thumbnail || FALLBACK_PRODUCT_IMAGE} alt={p.name} fill className="object-contain drop-shadow-sm" />
+                  {productImageSrc(p.thumbnail) ? <Image src={productImageSrc(p.thumbnail)} alt={p.name} fill className="object-contain drop-shadow-sm" /> : null}
                 </div>
               ))}
             </div>
@@ -127,7 +127,7 @@ export default function ComboDetailPage({ params }: { params: Promise<{ slug: st
                     return
                   }
                   setCartItemQuantity(
-                    { slug: bundle.slug, name: bundle.name, variantId: null, price: Number(bundle.effectivePrice), image: bundle.image || FALLBACK_PRODUCT_IMAGE, weight: `${bundle.products.length} items` },
+                    { slug: bundle.slug, name: bundle.name, variantId: null, price: Number(bundle.effectivePrice), image: productImageSrc(bundle.image), weight: `${bundle.products.length} items` },
                     qty + 1,
                   )
                 }
@@ -146,7 +146,7 @@ export default function ComboDetailPage({ params }: { params: Promise<{ slug: st
           {bundle.products.map((p) => (
             <Link key={p.productId} href={`/product/${p.slug}`} className="rounded-lg border border-[#E8DCC8] p-3 hover:bg-[#FFFBF3] flex items-center gap-3">
               <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded bg-white border border-[#E8DCC8]">
-                <Image src={p.thumbnail || FALLBACK_PRODUCT_IMAGE} alt={p.name} fill className="object-contain p-1" />
+                {productImageSrc(p.thumbnail) ? <Image src={productImageSrc(p.thumbnail)} alt={p.name} fill className="object-contain p-1" /> : null}
               </div>
               <div>
                 <p className="font-semibold text-[#4A1D1F] line-clamp-1">{p.name}</p>

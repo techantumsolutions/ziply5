@@ -35,7 +35,7 @@ export default function Trending() {
                     <div className="w-1.5 h-1.5 bg-green-600 rounded-full"></div>
                   </div>
                 </div>
-                <Image src={product.image} alt={product.name} width={120} height={140} className="w-[100px] md:w-[120px] h-auto object-contain drop-shadow-lg group-hover:scale-105 transition-transform duration-300" />
+                {product.image ? <Image src={product.image} alt={product.name} width={120} height={140} className="w-[100px] md:w-[120px] h-auto object-contain drop-shadow-lg group-hover:scale-105 transition-transform duration-300" /> : null}
               </div>
 
               <div className="p-[14px] flex flex-col">

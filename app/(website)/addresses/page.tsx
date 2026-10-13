@@ -102,22 +102,34 @@ function AddressesContent() {
                 <div className="text-sm">
                   {(a.firstName || a.lastName) && (
                     <p className="font-semibold text-[#4A1D1F]">
-                      {a.firstName} {a.lastName} {a.email ? `(${a.email})` : ""}
+                      {a.firstName} {a.lastName}
                     </p>
                   )}
-                  {a.label && <p className="font-semibold text-[#4A1D1F]">{a.label}</p>}
+                  {a.label && (
+                    <p className="flex items-center gap-2 font-semibold text-[#4A1D1F]">
+                      <span>{a.label}</span>
+                      {a.isDefault && (
+                        <span className="inline-flex items-center rounded-full border border-[#7B3010] bg-[#F3D6C4] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-[#7B3010]">
+                          Default
+                        </span>
+                      )}
+                    </p>
+                  )}
                   <p className="text-[#333]">
                     {a.line1}
-                    {a.line2 ? `, ${a.line2}` : ""}
+                    {a.line2 ? `, ${a.line2.replace(" || ", ", ")}` : ""}
                   </p>
                   <p className="text-[#646464]">
                     {a.city}, {a.state} {a.postalCode}, {a.country}
                   </p>
-                  {a.phone && <p className="text-[#646464]">{a.phone}</p>}
-                  {a.isDefault && (
-                    <span className="mt-1 inline-block rounded-full bg-[#FFFBF3] px-2 py-0.5 text-[10px] font-semibold uppercase text-[#7B3010]">
-                      Default
-                    </span>
+                  {a.phone && (
+                    <p className="text-[#646464]">
+                      {(() => {
+                        const digits = a.phone.replace(/\D/g, "")
+                        const national = digits.startsWith("91") && digits.length > 10 ? digits.slice(2) : digits
+                        return /^\d{10}$/.test(national) ? `+91 ${national}` : a.phone
+                      })()}
+                    </p>
                   )}
                 </div>
                 <div className="flex gap-4">

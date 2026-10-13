@@ -254,11 +254,15 @@ export default function CartPage() {
                       >
                         <div className="col-span-2 flex items-center gap-4 text-start">
                           <div >
-                            <img
-                              src={item.image || "/placeholder.svg"}
-                              alt={item.name}
-                              className="h-16 w-16 rounded-lg object-contain"
-                            />
+                            {item.image && item.image !== "/placeholder.svg" && !item.image.endsWith("/fallback-product.png") ? (
+                              <img
+                                src={item.image}
+                                alt={item.name}
+                                className="h-16 w-16 rounded-lg object-contain"
+                              />
+                            ) : (
+                              <div className="h-16 w-16" />
+                            )}
                           </div>
                           <div>
                             <p className="font-melon font-medium tracking-wide text-black">

@@ -47,7 +47,9 @@ export default function CartDropdown({ items, total, open, onIncrement, onDecrem
                     <div key={item.id} className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-4">
                         <div className="relative h-16 w-16 shrink-0 rounded-lg">
-                          <Image src={item.image || "/placeholder.svg"} alt={item.name} fill className="object-contain p-2" />
+                          {item.image && item.image !== "/placeholder.svg" && !item.image.endsWith("/fallback-product.png") ? (
+                            <Image src={item.image} alt={item.name} fill className="object-contain p-2" />
+                          ) : null}
                         </div>
 
                         <div className="flex-1">

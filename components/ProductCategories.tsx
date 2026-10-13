@@ -67,13 +67,15 @@ export default function ProductCategories({ cmsData }: { cmsData?: any }) {
                   <div className="card-smooth bg-white rounded-full overflow-hidden h-75 flex flex-col items-center justify-center px-3 shadow-md hover:shadow-lg">
 
                     <div className="w-[100px] h-[100px] md:w-[120px] md:h-[120px] shrink-0 rounded-full overflow-hidden mb-4 bg-white flex items-center justify-center">
-                      <Image
-                        src={product.image}
-                        alt={product.name}
-                        width={120}
-                        height={120}
-                        className="object-contain p-2 w-full h-full max-h-full"
-                      />
+                      {product.image ? (
+                        <Image
+                          src={product.image}
+                          alt={product.name}
+                          width={120}
+                          height={120}
+                          className="object-contain p-2 w-full h-full max-h-full"
+                        />
+                      ) : null}
                     </div>
                     <div className="mb-0 flex flex-col items-center w-full px-2">
                       <h3 className="text-[#6F2C2A] text-center font-semibold text-sm line-clamp-2 min-h-[40px] leading-tight w-full">

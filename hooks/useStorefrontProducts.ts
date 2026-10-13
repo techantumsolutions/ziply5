@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { FALLBACK_PRODUCT_IMAGE, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
+import { productImageSrc, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
 
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 const storefrontProductsCache = new Map<number, { at: number; products: StorefrontProduct[] }>()
@@ -64,7 +64,7 @@ export function useStorefrontProducts(limit = 200) {
       const bundles = bundlesJson?.data?.items ?? []
       const mappedBundles = (Array.isArray(bundles) ? bundles : []).map((b: any) => {
         const effectivePrice = Number(b?.effectivePrice ?? b?.comboPrice ?? 0)
-        const image = String(b?.image ?? FALLBACK_PRODUCT_IMAGE)
+        const image = productImageSrc(b?.image)
         const maxPurchasableQty = Number(b?.maxPurchasableQty ?? 0)
         const isAvailable = Boolean(b?.isAvailable) && maxPurchasableQty > 0
         return {

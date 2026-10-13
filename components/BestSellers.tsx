@@ -163,7 +163,7 @@ export default function BestSellers({ cmsData }: { cmsData?: any }) {
                   </button>
 
                   <div className="relative h-full flex items-center justify-center py-4">
-                    <Image src={product.image} alt={product.name} width={180} height={220} className="w-auto h-full object-contain group-hover:scale-105 transition-transform duration-300 ease-out" />
+                    {product.image ? <Image src={product.image} alt={product.name} width={180} height={220} className="w-auto h-full object-contain group-hover:scale-105 transition-transform duration-300 ease-out" /> : null}
                   </div>
 
                   <div className="text-center pb-4">

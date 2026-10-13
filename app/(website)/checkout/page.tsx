@@ -232,14 +232,14 @@ export default function CheckoutPage() {
       if (initialAddr) {
         setSelectedAddressId(initialSelectedId);
         loadedPostalCodeRef.current = initialAddr.postalCode;
-        setBilling({
+        setBilling((prev) => ({
           firstName: initialAddr.firstName || "",
           lastName: initialAddr.lastName || "",
-          email: initialAddr.email || "",
+          email: prev.email || initialAddr.email || "",
           line1: initialAddr.line1,
           postalCode: initialAddr.postalCode,
           phone: initialAddr.phone || "",
-        });
+        }));
         setState(initialAddr.state);
         setCity(initialAddr.city);
         setOriginalAddress(initialAddr);
@@ -1033,7 +1033,7 @@ export default function CheckoutPage() {
                             {a.firstName} {a.lastName}
                           </p>
                           <p className="text-sm text-[#333] mt-1">{a.line1}</p>
-                          {a.line2 && <p className="text-sm text-[#333]">{a.line2}</p>}
+                          {a.line2 && <p className="text-sm text-[#333]">{a.line2.replace(" || ", ", ")}</p>}
                           <p className="text-sm text-[#646464] font-medium">
                             {a.city}, {a.state} {a.postalCode}
                           </p>

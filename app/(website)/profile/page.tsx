@@ -5,11 +5,11 @@ import Link from "next/link"
 import Image from "next/image"
 import { Facebook, Twitter, Linkedin, X, Heart, Camera } from "lucide-react"
 import { User, Star, Package } from "lucide-react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query"
 import { getFavoriteSlugs, toggleFavoriteSlug } from "@/lib/favorites"
 import { addToCart, getCartItems, setCartItemQuantity } from "@/lib/cart"
-import { FALLBACK_PRODUCT_IMAGE } from "@/lib/storefront-products"
+import { productImageSrc } from "@/lib/storefront-products"
 import { useStorefrontProducts } from "@/hooks/useStorefrontProducts"
 import { useRealtimeTables } from "@/hooks/useRealtimeTables"
 import { clearSession } from "@/lib/auth-session"
@@ -23,6 +23,18 @@ import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibili
 import { formatOrderDateTime } from "@/src/lib/datetime"
 
 const CUSTOMER_RETURN_WINDOW_DAYS = 7
+
+function nationalIndianNumber(raw: unknown) {
+  let digits = String(raw ?? "").replace(/\D/g, "")
+  if (digits.startsWith("91") && digits.length > 10) digits = digits.slice(2)
+  else if (digits.startsWith("0") && digits.length > 10) digits = digits.slice(1)
+  return digits.slice(0, 10)
+}
+
+function formatIndianContact(raw: unknown) {
+  const national = nationalIndianNumber(raw)
+  return /^\d{10}$/.test(national) ? `91-${national}` : ""
+}
 
 type ApiOrderRow = {
   id: string
@@ -89,9 +101,17 @@ const profileReturnEligibilityReason = (order: ApiOrderRow): string | null => {
 function ProfilePageContent() {
   const { products } = useStorefrontProducts(200)
   const searchParams = useSearchParams()
+  const pathname = usePathname()
   const router = useRouter()
   const initialTab = searchParams.get("tab")
   const [activeTab, setActiveTab] = useState("about")
+
+  const selectTab = (tab: "about" | "favorite" | "orders") => {
+    setActiveTab(tab)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("tab", tab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }
   const [favoriteSlugs, setFavoriteSlugs] = useState<string[]>([])
   const [cartQtyBySlug, setCartQtyBySlug] = useState<Record<string, number>>({})
   const [orders, setOrders] = useState<ApiOrderRow[]>([])
@@ -99,6 +119,7 @@ function ProfilePageContent() {
   const queryClient = useQueryClient()
   const [isManageModalOpen, setIsManageModalOpen] = useState(false)
   const [editForm, setEditForm] = useState({ name: "", bio: "", phone: "" })
+  const [phoneError, setPhoneError] = useState("")
   const [authSnapshot, setAuthSnapshot] = useState<{ token: string | null; role: string | null }>({
     token: null,
     role: null,
@@ -353,7 +374,7 @@ function ProfilePageContent() {
       setEditForm({
         name: profileQuery.data.name || "",
         bio: profileQuery.data.profile?.bio || "",
-        phone: profileQuery.data.profile?.phone || "",
+        phone: nationalIndianNumber(profileQuery.data.profile?.phone || ""),
       })
     }
   }, [profileQuery.data])
@@ -373,17 +394,22 @@ function ProfilePageContent() {
         },
         body: JSON.stringify(payload),
       })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || "Update failed")
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.success) {
+        throw new Error(typeof data?.message === "string" && data.message.trim() ? data.message : "Wrong contact number")
+      }
       return data
     },
     onSuccess: () => {
       toast.success("Profile Updated", "Your profile has been successfully updated.")
       void queryClient.invalidateQueries({ queryKey: ["user-profile"] })
+      setPhoneError("")
       setIsManageModalOpen(false)
     },
     onError: (error: Error) => {
-      toast.error("Update Failed", error.message)
+      const message = error.message?.trim() || "Wrong contact number"
+      setPhoneError(message)
+      toast.error(message)
     },
   })
 
@@ -662,7 +688,7 @@ function ProfilePageContent() {
 
               {/* TAB ITEM */}
               <div
-                onClick={() => setActiveTab("about")}
+                onClick={() => selectTab("about")}
                 className={`flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer text-sm font-medium transition-colors ${activeTab === "about" ? "bg-[#FDE2E7] text-[#7A1F2A]" : "text-[#374151] hover:bg-[#F3F4F6]"
                   }`}
               >
@@ -671,7 +697,7 @@ function ProfilePageContent() {
               </div>
 
               <div
-                onClick={() => setActiveTab("favorite")}
+                onClick={() => selectTab("favorite")}
                 className={`mt-1 flex items-center gap-3 rounded-xl cursor-pointer px-4 py-3 text-sm font-medium transition-colors ${activeTab === "favorite" ? "bg-[#FDE2E7] text-[#7A1F2A]" : "text-[#374151] hover:bg-[#F3F4F6]"
                   }`}
               >
@@ -680,7 +706,7 @@ function ProfilePageContent() {
               </div>
 
               <div
-                onClick={() => setActiveTab("orders")}
+                onClick={() => selectTab("orders")}
                 className={`mt-1 flex items-center gap-3 rounded-xl cursor-pointer px-4 py-3 text-sm font-medium transition-colors ${activeTab === "orders" ? "bg-[#FDE2E7] text-[#7A1F2A]" : "text-[#374151] hover:bg-[#F3F4F6]"
                   }`}
               >
@@ -726,7 +752,7 @@ function ProfilePageContent() {
 
                     <div className="flex">
                       <p className="w-24 font-bold text-gray-700">Contact</p>
-                      <p className="text-gray-600">{profileQuery.data?.profile?.phone || "Not provided"}</p>
+                      <p className="text-gray-600">{formatIndianContact(profileQuery.data?.profile?.phone) || "Not provided"}</p>
                     </div>
                     <div className="flex">
                       <p className="w-24 font-bold text-gray-700">Address</p>
@@ -817,7 +843,15 @@ function ProfilePageContent() {
 
                       <form className="p-6 space-y-4" onSubmit={(e) => {
                         e.preventDefault()
-                        updateProfileMutation.mutate(editForm)
+                        const national = nationalIndianNumber(editForm.phone)
+                        if (!/^[6-9]\d{9}$/.test(national)) {
+                          const message = "Wrong contact number"
+                          setPhoneError(message)
+                          toast.error(message)
+                          return
+                        }
+                        setPhoneError("")
+                        updateProfileMutation.mutate({ ...editForm, phone: `91-${national}` })
                       }}>
                         <div>
                           <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Full Name</label>
@@ -841,12 +875,24 @@ function ProfilePageContent() {
 
                         <div>
                           <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Contact Phone</label>
-                          <input
-                            type="text"
-                            value={editForm.phone}
-                            onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-                            className="w-full rounded-xl border border-gray-200 px-4 py-3 text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none transition-all"
-                          />
+                          <div className={`flex items-center overflow-hidden rounded-xl border bg-white ${phoneError ? "border-red-400" : "border-gray-200"} focus-within:border-orange-500 focus-within:ring-1 focus-within:ring-orange-500`}>
+                            <span className="pl-4 text-sm font-semibold text-[#111827]">91</span>
+                            <span className="px-2 text-sm text-gray-400">-</span>
+                            <input
+                              type="tel"
+                              inputMode="numeric"
+                              autoComplete="tel-national"
+                              maxLength={10}
+                              placeholder="10 digit number"
+                              value={editForm.phone}
+                              onChange={(e) => {
+                                setPhoneError("")
+                                setEditForm({ ...editForm, phone: e.target.value.replace(/\D/g, "").slice(0, 10) })
+                              }}
+                              className="w-full py-3 pr-4 text-sm outline-none"
+                            />
+                          </div>
+                          {phoneError ? <p className="mt-1 text-xs font-medium text-red-600">{phoneError}</p> : null}
                         </div>
 
                         <div className="flex gap-3 pt-2">
@@ -962,14 +1008,14 @@ function ProfilePageContent() {
                                             </div>
                                           ))}
                                         </div>
-                                      ) : (
+                                      ) : productImageSrc(product.image) ? (
                                         <Image
-                                          src={product.image}
+                                          src={productImageSrc(product.image)}
                                           alt={product.name}
                                           fill
                                           className="object-contain"
                                         />
-                                      )}
+                                      ) : null}
                                     </div>
                                   </Link>
                                 </div>

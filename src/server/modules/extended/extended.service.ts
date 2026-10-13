@@ -805,6 +805,31 @@ export const reportPlatformPerformance = async () => {
 // Backward-compatible export for /api/v1/reports/sellers route name.
 export const reportSellerPerformance = reportPlatformPerformance
 
+const enforceDefaultAddress = async (userId: string) => {
+  const rows = await pgQuery<Array<{ id: string; isDefault: boolean }>>(
+    `SELECT id, "isDefault" FROM "UserAddress" WHERE "userId" = $1 ORDER BY "createdAt" ASC`,
+    [userId],
+  )
+  if (rows.length === 0) return
+  if (rows.length === 1) {
+    if (!rows[0].isDefault) {
+      await pgQuery(`UPDATE "UserAddress" SET "isDefault" = true, "updatedAt" = now() WHERE id = $1`, [rows[0].id])
+    }
+    return
+  }
+  const defaults = rows.filter((row) => row.isDefault)
+  if (defaults.length === 0) {
+    await pgQuery(`UPDATE "UserAddress" SET "isDefault" = true, "updatedAt" = now() WHERE id = $1`, [rows[0].id])
+    return
+  }
+  if (defaults.length > 1) {
+    await pgQuery(
+      `UPDATE "UserAddress" SET "isDefault" = false, "updatedAt" = now() WHERE "userId" = $1 AND id <> $2`,
+      [userId, defaults[0].id],
+    )
+  }
+}
+
 export const listUserAddresses = (userId: string) =>
   listUserAddressesSupabase(userId).catch((error) => {
     logger.warn("addresses.list.supabase_pg_fallback", {
@@ -813,7 +838,7 @@ export const listUserAddresses = (userId: string) =>
     return pgQuery(`SELECT * FROM "UserAddress" WHERE "userId" = $1 ORDER BY "createdAt" DESC`, [userId])
   })
 
-export const createUserAddress = (
+export const createUserAddress = async (
   userId: string,
   data: {
     label?: string | null
@@ -829,36 +854,49 @@ export const createUserAddress = (
     phone?: string | null
     isDefault?: boolean
   },
-) =>
-  createUserAddressSupabase(userId, data).catch(async (error) => {
+) => {
+  const existing = await pgQuery<Array<{ count: number }>>(
+    `SELECT COUNT(*)::int AS count FROM "UserAddress" WHERE "userId" = $1`,
+    [userId],
+  ).catch(() => [{ count: 0 }])
+  const isFirst = Number(existing[0]?.count ?? 0) === 0
+  const payload = { ...data, isDefault: isFirst ? true : Boolean(data.isDefault) }
+  try {
+    const row = await createUserAddressSupabase(userId, payload)
+    await enforceDefaultAddress(userId).catch(() => null)
+    return row
+  } catch (error) {
     logger.warn("addresses.create.supabase_pg_fallback", {
       error: error instanceof Error ? error.message : "unknown",
     })
-    if (data.isDefault) {
+    if (payload.isDefault) {
       await pgQuery(`UPDATE "UserAddress" SET "isDefault" = false WHERE "userId" = $1`, [userId]).catch(() => null)
     }
-    return pgQuery(
+    const rows = await pgQuery(
       `INSERT INTO "UserAddress" (id, "userId", label, "firstName", "lastName", email, line1, line2, city, state, "postalCode", country, phone, "isDefault", "createdAt", "updatedAt")
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),now())
        RETURNING *`,
       [
         randomUUID(),
         userId,
-        data.label ?? null,
-        data.firstName ?? null,
-        data.lastName ?? null,
-        data.email ?? null,
-        data.line1,
-        data.line2 ?? null,
-        data.city,
-        data.state,
-        data.postalCode,
-        data.country ?? "IN",
-        data.phone ?? null,
-        data.isDefault ?? false,
+        payload.label ?? null,
+        payload.firstName ?? null,
+        payload.lastName ?? null,
+        payload.email ?? null,
+        payload.line1,
+        payload.line2 ?? null,
+        payload.city,
+        payload.state,
+        payload.postalCode,
+        payload.country ?? "IN",
+        payload.phone ?? null,
+        payload.isDefault,
       ],
-    ).then((rows) => rows[0])
-  })
+    )
+    await enforceDefaultAddress(userId).catch(() => null)
+    return rows[0]
+  }
+}
 
 export const updateUserAddress = async (
   id: string,
@@ -878,9 +916,17 @@ export const updateUserAddress = async (
     isDefault?: boolean
   }>,
 ) => {
+  const owned = await pgQuery<Array<{ count: number }>>(
+    `SELECT COUNT(*)::int AS count FROM "UserAddress" WHERE "userId" = $1`,
+    [userId],
+  ).catch(() => [{ count: 0 }])
+  if (Number(owned[0]?.count ?? 0) <= 1) data.isDefault = true
   try {
     const result = await updateUserAddressSupabase(id, userId, data)
-    if (result.count > 0) return result
+    if (result.count > 0) {
+      await enforceDefaultAddress(userId).catch(() => null)
+      return result
+    }
   } catch (error) {
     logger.warn("addresses.update.supabase_pg_fallback", {
       error: error instanceof Error ? error.message : "unknown",
@@ -911,16 +957,20 @@ export const updateUserAddress = async (
   sets.push(`"updatedAt" = now()`)
   values.push(id, userId)
   await pgQuery(`UPDATE "UserAddress" SET ${sets.join(", ")} WHERE id=$${values.length - 1} AND "userId"=$${values.length}`, values)
+  await enforceDefaultAddress(userId).catch(() => null)
   return { count: 1 }
 }
 
-export const deleteUserAddress = (id: string, userId: string) =>
-  deleteUserAddressSupabase(id, userId).catch((error) => {
+export const deleteUserAddress = async (id: string, userId: string) => {
+  const res = await deleteUserAddressSupabase(id, userId).catch((error) => {
     logger.warn("addresses.delete.supabase_pg_fallback", {
       error: error instanceof Error ? error.message : "unknown",
     })
     return pgQuery(`DELETE FROM "UserAddress" WHERE id=$1 AND "userId"=$2`, [id, userId]).then(() => ({ count: 1 }))
   })
+  await enforceDefaultAddress(userId).catch(() => null)
+  return res
+}
 
 export const listSavedPaymentMethods = (userId: string) =>
   pgQuery(`SELECT * FROM "SavedPaymentMethod" WHERE "userId"=$1 ORDER BY "createdAt" DESC`, [userId])
