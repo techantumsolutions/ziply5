@@ -9,6 +9,7 @@ import {
   readCheckoutStorage,
 } from "@/lib/ecommerce-order";
 import { toast } from "@/lib/toast";
+import { lookupIndianPincode } from "@/lib/india-pincode";
 import {
   calculateShippingCharge,
   validateShippingRules,
@@ -197,6 +198,19 @@ function PaymentPageInner() {
           : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
       const sessionKey = window.localStorage.getItem("ziply5_session_key") || undefined;
       window.localStorage.setItem("ziply5_checkout_ref", checkoutRef);
+
+      await lookupIndianPincode(billingAddress.postalCode)
+      const pin = billingAddress.postalCode.trim()
+      await fetch("/api/shipping/check-serviceability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          delivery_postcode: pin,
+          cod: gateway === "cod",
+          subtotal: items.reduce((sum, item) => sum + item.price * item.quantity, 0),
+          totalItems: totalPacksFromCheckoutLines(items),
+        }),
+      }).catch(() => null)
 
       const snap = readCheckoutStorage();
       const packTotalInner = totalPacksFromCheckoutLines(items);

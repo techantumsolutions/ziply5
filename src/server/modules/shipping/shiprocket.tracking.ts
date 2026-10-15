@@ -3,6 +3,9 @@ import { pgQuery, pgTx } from "@/src/server/db/pg"
 import { getShiprocketToken } from "@/lib/integrations/shiprocket"
 import { upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
 import { logger } from "@/lib/logger"
+import { getOrderById, latestLifecycleStatus, updateOrderStatus } from "@/src/server/modules/orders/orders.service"
+import { manualOrderStatusSteps } from "@/src/lib/orders/manual-order-status"
+import { rankOfStoredStatus, shipmentStageRank, stageFromShiprocket, stageToShipmentStatus, type ZiplyShipmentStage } from "@/src/server/modules/shipping/shiprocket-status"
 
 const trackingConsole = (step: string, details?: unknown) => {
   if (details === undefined) {
@@ -188,11 +191,50 @@ const isTerminalCombined = (shippingStatus: string | null, shipmentStatus: strin
   return false
 }
 
+const advanceOrderFromTracking = async (orderId: string, stage: ZiplyShipmentStage) => {
+  const target =
+    stage === "cancelled" ? "cancelled" :
+    stage === "delivered" ? "delivered" :
+    stage === "out_for_delivery" ? "out_for_delivery" :
+    stage === "in_transit" ? "in_transit" :
+    stage === "shipped" ? "shipped" : null
+  if (!target) return
+  const order = await getOrderById(orderId)
+  if (!order) return
+  const status = latestLifecycleStatus(order)
+  const note = "Updated from Shiprocket tracking"
+  let applied = status === target
+  if (target === "cancelled") {
+    if (!["cancelled", "rejected", "delivered", "returned"].includes(status)) {
+      await updateOrderStatus(orderId, "cancelled", undefined, { reasonCode: "shiprocket_tracking", note }).catch(() => null)
+      applied = true
+    }
+  } else {
+    try {
+      const steps = manualOrderStatusSteps(status, target)
+      for (const step of steps) {
+        await updateOrderStatus(orderId, step, undefined, { reasonCode: "shiprocket_tracking", note }).catch(() => null)
+      }
+      applied = true
+    } catch {
+      applied = false
+    }
+  }
+  if (!applied) return
+  await pgQuery(
+    `UPDATE "Shipment"
+     SET "shipmentStatus" = $2, "shippingStatus" = $2, "updatedAt" = now()
+     WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL`,
+    [orderId, target],
+  )
+  await upsertOrderShipmentSnapshotSupabase(orderId, { shipmentStatus: target, shippingStatus: target }).catch(() => null)
+}
+
 export const syncShipmentTrackingByAwb = async (awbCode: string) => {
   trackingConsole("tracking.sync_by_awb.start", { awbCode })
   logger.info("shiprocket.sync.start", { awbCode, mode: "tracking_by_awb" })
-  const shipmentRows = await pgQuery<Array<{ id: string; orderId: string; shipmentNo: string | null }>>(
-    `SELECT id, "orderId", "shipmentNo" FROM "Shipment" WHERE "trackingNo" = $1 OR "awbCode" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
+  const shipmentRows = await pgQuery<Array<{ id: string; orderId: string; shipmentNo: string | null; shipmentStatus: string | null; shippingStatus: string | null }>>(
+    `SELECT id, "orderId", "shipmentNo", "shipmentStatus", "shippingStatus" FROM "Shipment" WHERE "trackingNo" = $1 OR "awbCode" = $1 ORDER BY "createdAt" DESC LIMIT 1`,
     [awbCode],
   )
   const shipment = shipmentRows[0]
@@ -200,7 +242,16 @@ export const syncShipmentTrackingByAwb = async (awbCode: string) => {
   trackingConsole("tracking.sync_by_awb.shipment_lookup", { awbCode, shipment })
   const rawTracking = await fetchTrackingByAwb(awbCode)
   const parsed = parseTrackingResponse(rawTracking)
-  const internalStatus = mapShiprocketToInternalStatus(parsed.shiprocketStatus)
+  const stage = stageFromShiprocket(parsed.statusCode, parsed.shiprocketStatus)
+  const canonicalStatus = stageToShipmentStatus(stage)
+  const storedRank = Math.max(rankOfStoredStatus(shipment.shipmentStatus), rankOfStoredStatus(shipment.shippingStatus))
+  const incomingRank = shipmentStageRank(stage)
+  const correctsPickupState = stage === "pickup_exception" || stage === "pickup_error"
+  const applyStatus = Boolean(canonicalStatus) && (correctsPickupState || incomingRank >= storedRank)
+  const internalStatus = applyStatus && canonicalStatus ? canonicalStatus : (shipment.shipmentStatus || mapShiprocketToInternalStatus(parsed.shiprocketStatus))
+  const statusToStore = applyStatus && canonicalStatus
+    ? canonicalStatus
+    : (shipment.shipmentStatus || shipment.shippingStatus || internalStatus)
   const etdDate = parsed.etd ? new Date(parsed.etd) : null
   const etdValid = etdDate && !Number.isNaN(etdDate.getTime()) ? etdDate : null
   trackingConsole("tracking.sync_by_awb.mapped_status", { awbCode, shiprocketStatus: parsed.shiprocketStatus, internalStatus })
@@ -229,14 +280,15 @@ export const syncShipmentTrackingByAwb = async (awbCode: string) => {
           "rawShiprocketResponse"=$10::jsonb,
           "lastTrackingSyncAt"=now(),
           "estimatedDeliveryDate"=COALESCE($11,"estimatedDeliveryDate"),
-          "deliveredAt"=CASE WHEN $2='DELIVERED' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
+          "deliveredAt"=CASE WHEN $2='delivered' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
+          "shippedAt"=CASE WHEN $2 IN ('shipped','in_transit','out_for_delivery','delivered') THEN COALESCE("shippedAt", now()) ELSE "shippedAt" END,
           "updatedAt"=now()
       WHERE id=$1
       `,
         [
           shipment.id,
-          internalStatus,
-          parsed.shiprocketStatus,
+          statusToStore,
+          statusToStore,
           parsed.statusCode,
           parsed.currentStatus,
           parsed.trackUrl,
@@ -281,16 +333,21 @@ export const syncShipmentTrackingByAwb = async (awbCode: string) => {
     courierName: parsed.courierName ?? null,
     trackingUrl: parsed.trackUrl,
     estimatedDeliveryDate: etdValid,
-    shippingStatus: internalStatus,
-    shipmentStatus: parsed.shiprocketStatus || internalStatus,
+    shippingStatus: statusToStore,
+    shipmentStatus: statusToStore,
     pickupStatus: parsed.pickupStatus,
     lastTrackingSyncAt: new Date(),
     trackingData: parsed.trackSection,
     shiprocketRawResponse: parsed.raw,
     shippingStatusCode: parsed.statusCode,
   }
-  if (internalStatus === "DELIVERED") {
+  if (statusToStore === "delivered") {
     orderPatch.shipmentDeliveredAt = new Date()
+    await pgQuery(
+      `UPDATE "Order" SET "paymentStatus" = 'SUCCESS', "paymentMethod" = 'cod', "updatedAt" = now()
+       WHERE id = $1 AND lower(COALESCE("paymentMethod", '')) = 'cod'`,
+      [shipment.orderId],
+    ).catch(() => null)
   }
   await upsertOrderShipmentSnapshotSupabase(shipment.orderId, orderPatch)
   logger.info("shiprocket.snapshot.persisted", {
@@ -319,6 +376,7 @@ export const syncShipmentTrackingByAwb = async (awbCode: string) => {
     awbCode,
     shippingStatus: internalStatus,
   })
+  if (applyStatus) await advanceOrderFromTracking(shipment.orderId, stage)
   return {
     success: true,
     orderId: shipment.orderId,

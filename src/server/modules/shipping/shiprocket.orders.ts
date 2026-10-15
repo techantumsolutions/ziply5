@@ -3,8 +3,10 @@ import {
   checkOrderServiceability,
   createShiprocketShipmentForOrder,
   debugSingleShipment,
+  generateLabelForOrderShipment,
   generatePickupForOrderShipment,
   syncOrderToShiprocket,
+  type ShipmentPackageInput,
 } from "@/src/server/modules/integrations/shiprocket-order.service"
 import { getOrderByIdSupabaseBasic, getOrderWithOpsRelationsSupabase, upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
 import { normalizeShiprocketErrorMessage } from "@/src/server/modules/shipping/shiprocket.utils"
@@ -127,14 +129,20 @@ export const getCourierOptions = async (orderId: string) => {
     orderId,
     availableCouriers: result.response.available_couriers,
     weight: result.weight,
+    lengthCm: result.lengthCm,
+    widthCm: result.widthCm,
+    heightCm: result.heightCm,
     deliveryPostcode: result.deliveryPostcode,
     pickupPostcode: result.pickupPostcode,
   }
 }
 
-export const createShiprocketShipment = async (orderId: string, actorId: string) => {
+export const createShiprocketShipment = async (orderId: string, actorId: string, packageDetails?: ShipmentPackageInput) => {
   shipmentConsole("service.create_shipment.start", { orderId, actorId })
-  const created = await createShiprocketShipmentForOrder(orderId, actorId)
+  const created = await withShiprocketOrderSyncLock(orderId, SHIPROCKET_SYNC_LOCK_TTL_MS, () =>
+    createShiprocketShipmentForOrder(orderId, actorId, { package: packageDetails }),
+  )
+  if (!created) throw new Error("Shipment request already in progress")
   await persistAndValidateSnapshot(orderId, {
     shiprocketOrderId: created.extracted?.shiprocketOrderId ?? (created.shiprocket?.order_id ? String(created.shiprocket.order_id) : null),
     shipmentId: created.extracted?.shipmentId ?? (created.shiprocket?.shipment_id ? String(created.shiprocket.shipment_id) : null),
@@ -158,9 +166,9 @@ export const createShiprocketShipment = async (orderId: string, actorId: string)
   return created
 }
 
-export const assignShipmentAwb = async (orderId: string, actorId: string) => {
-  shipmentConsole("service.assign_awb.start", { orderId, actorId })
-  const awb = await assignAwbForOrderShipment(orderId, actorId)
+export const assignShipmentAwb = async (orderId: string, actorId: string, courierId?: number) => {
+  shipmentConsole("service.assign_awb.start", { orderId, actorId, courierId: courierId ?? null })
+  const awb = await assignAwbForOrderShipment(orderId, actorId, courierId)
   const awbCode = awb.parsedAwb?.awbCode ?? awb.awb?.awb_code ?? awb.shipment?.trackingNo ?? null
   const estimatedDeliveryDate = awb.parsedAwb?.estimatedDeliveryDate ? new Date(awb.parsedAwb.estimatedDeliveryDate) : null
 
@@ -189,14 +197,28 @@ export const assignShipmentAwb = async (orderId: string, actorId: string) => {
   return awb
 }
 
+export const generateShipmentLabel = async (orderId: string, actorId: string) => {
+  const label = await withShiprocketOrderSyncLock(orderId, SHIPROCKET_SYNC_LOCK_TTL_MS, () => generateLabelForOrderShipment(orderId, actorId))
+  if (!label) throw new Error("Label request already in progress")
+  await persistAndValidateSnapshot(orderId, {
+    labelUrl: label.labelUrl,
+    isLabelGenerated: true,
+    shipmentSyncedAt: new Date(),
+    isShipmentCreated: true,
+  }, "generateShipmentLabel").catch(() => null)
+  return label
+}
+
 export const generateShipmentPickup = async (orderId: string, actorId: string) => {
   shipmentConsole("service.generate_pickup.start", { orderId, actorId })
-  const pickup = await generatePickupForOrderShipment(orderId, actorId)
+  const pickup = await withShiprocketOrderSyncLock(orderId, SHIPROCKET_SYNC_LOCK_TTL_MS, () => generatePickupForOrderShipment(orderId, actorId))
+  if (!pickup) throw new Error("Pickup request already in progress")
+  const pickupStatus = String(pickup.pickup?.pickup_status ?? "pickup_requested")
   await persistAndValidateSnapshot(orderId, {
-    pickupStatus: pickup.pickup?.pickup_status ?? "scheduled",
-    pickupGeneratedAt: (pickup.shipment as any)?.pickupGeneratedAt ?? null,
-    shipmentStatus: pickup.pickup?.pickup_status ?? "pickup_generated",
-    shippingStatus: pickup.pickup?.pickup_status ?? "pickup_generated",
+    pickupStatus,
+    pickupGeneratedAt: (pickup.shipment as any)?.pickupGeneratedAt ?? new Date(),
+    shipmentStatus: "pickup_requested",
+    shippingStatus: "pickup_requested",
     shipmentSyncedAt: new Date(),
     isPickupGenerated: true,
     shiprocketRawResponse: pickup.pickup ?? null,
@@ -213,7 +235,7 @@ export const retryShiprocketShipmentSync = async (orderId: string, actorId: stri
 export const syncOrderShipmentToShiprocket = async (
   orderId: string,
   actorId: string,
-  options?: { generatePickup?: boolean; forceResync?: boolean },
+  options?: { generatePickup?: boolean; forceResync?: boolean; panelSync?: boolean },
 ) => {
   shipmentConsole("service.sync_order.start", { orderId, actorId, options })
   const order = await getOrderByIdSupabaseBasic(orderId)
@@ -226,7 +248,7 @@ export const syncOrderShipmentToShiprocket = async (
     logger.warn("shiprocket.shipment.snapshot_rebuild_triggered", { orderId, recovered })
   }
   const refreshed = await getOrderByIdSupabaseBasic(orderId)
-  if (refreshed && isShipmentFullySynced(refreshed as ShipmentSnapshotOrder) && options?.forceResync !== true) {
+  if (refreshed && isShipmentFullySynced(refreshed as ShipmentSnapshotOrder) && options?.forceResync !== true && options?.panelSync !== true) {
     logger.info("shiprocket.sync.skipped", { orderId, skippedReason: "already_fully_synced" })
     return { status: "skipped" as const, orderId, reason: "shipment already exists", skippedReason: "already_fully_synced" }
   }
@@ -235,9 +257,9 @@ export const syncOrderShipmentToShiprocket = async (
     logger.warn("shiprocket.sync.force_resync_enabled", { orderId })
   }
 
-  const result = await syncOrderToShiprocket(orderId, actorId, { generatePickup: options?.generatePickup })
+  const result = await syncOrderToShiprocket(orderId, actorId, { generatePickup: options?.generatePickup, panelSync: options?.panelSync })
   shipmentConsole("service.sync_order.raw_result", { orderId, result })
-  if (result.status === "synced") {
+  if (result.status === "synced" && options?.panelSync !== true) {
     const createdRecord = (result as { created?: { extracted?: { shipmentId?: string | null; shiprocketOrderId?: string | null } } }).created
     const awbRecord = (result as { awb?: { parsedAwb?: { awbCode?: string | null; courierName?: string | null; trackingUrl?: string | null } } }).awb
     await persistAndValidateSnapshot(
@@ -341,7 +363,7 @@ const hydrateTrackingAfterLifecycleSync = async (orderId: string) => {
 export const safeSyncOrderShipmentToShiprocket = async (
   orderId: string,
   actorId: string,
-  options?: { generatePickup?: boolean; forceResync?: boolean },
+  options?: { generatePickup?: boolean; forceResync?: boolean; panelSync?: boolean },
 ) => {
   const ran = await withShiprocketOrderSyncLock(orderId, SHIPROCKET_SYNC_LOCK_TTL_MS, async () => {
     logger.info("shiprocket.sync.start", { orderId, actorId, options: options ?? {} })
@@ -349,6 +371,7 @@ export const safeSyncOrderShipmentToShiprocket = async (
       const result = await syncOrderShipmentToShiprocket(orderId, actorId, {
         generatePickup: options?.generatePickup !== false,
         forceResync: options?.forceResync === true,
+        panelSync: options?.panelSync === true,
       })
       if (result.status === "failed") {
         logger.error("shiprocket.sync.failed", { orderId, result })

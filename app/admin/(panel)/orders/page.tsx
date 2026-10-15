@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch";
 import { useRealtimeTables } from "@/hooks/useRealtimeTables";
-import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search, ShoppingCart, Clock, XCircle } from "lucide-react";
+import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from "@/src/lib/datetime";
+import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status";
+import { assessPackageMeasures, awbQuoteWarning } from "@/src/server/modules/shipping/package-measures";
+import { isManualShipment, MANUAL_ORDER_STATUSES, orderStatusLabel } from "@/src/lib/orders/manual-order-status";
 import {
   Select,
   SelectContent,
@@ -29,11 +32,20 @@ type OrderRow = {
   customerPhone?: string | null;
   items: Array<{ quantity: number; product: { name: string; slug: string } }>;
   transactions?: Array<{ id?: string; status?: string; gateway?: string; paymentMethod?: string; transactionId?: string; refNo?: string }>;
-  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; shippedAt?: string | null }>;
+  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; shipmentNo?: string | null; shippedAt?: string | null }>;
   courierName?: string | null;
   awbCode?: string | null;
+  trackingNumber?: string | null;
   trackingUrl?: string | null;
+  labelUrl?: string | null;
+  shipmentId?: string | null;
   shipmentStatus?: string | null;
+  shipmentNo?: string | null;
+  shippingMethod?: string | null;
+  pickupStatus?: string | null;
+  isShipmentCreated?: boolean | null;
+  isLabelGenerated?: boolean | null;
+  isPickupGenerated?: boolean | null;
   fulfillment?: { fulfillmentStatus: string; deliveredAt?: string | null; shippedAt?: string | null } | null;
   statusHistory?: Array<{ toStatus: string; reasonCode?: string | null; notes?: string | null; changedAt: string }>;
   user?: { id: string; name: string; email: string };
@@ -46,7 +58,7 @@ export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [canFetch, setCanFetch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "shipped" | "in_transit" | "delivered" | "rejected">("all");
+  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "shipped" | "in_transit" | "delivered" | "rejected" | "cancelled">("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [orderFilter, setOrderFilter] = useState("all");
   const [shipmentFilter, setShipmentFilter] = useState("all");
@@ -63,6 +75,31 @@ export default function AdminOrdersPage() {
   const [copiedTxId, setCopiedTxId] = useState<string | null>(null);
   const [rejectModalOrderId, setRejectModalOrderId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [serviceableIds, setServiceableIds] = useState<Record<string, true>>({});
+  const [unserviceableIds, setUnserviceableIds] = useState<Record<string, true>>({});
+  const [manualModal, setManualModal] = useState<{ orderId: string; courier: string; trackingId: string; trackingUrl: string } | null>(null);
+  const [courierModal, setCourierModal] = useState<{
+    orderId: string;
+    packageWeightKg: number | null;
+    lengthCm: number | null;
+    widthCm: number | null;
+    heightCm: number | null;
+    couriers: Array<{
+      name: string;
+      rate: number;
+      eta_days: number;
+      etd?: string;
+      courier_company_id?: number;
+      cod_available?: boolean;
+      charge_weight_kg?: number;
+      min_weight_kg?: number;
+    }>;
+    selectedId: number | null;
+    confirmed: boolean;
+  } | null>(null);
+  const [packageConfirmed, setPackageConfirmed] = useState(false);
+  const [unserviceable, setUnserviceable] = useState<{ orderId: string; reason: string } | null>(null);
+  const [packageModal, setPackageModal] = useState<{ orderId: string; weightKg: string; lengthCm: string; widthCm: string; heightCm: string } | null>(null);
 
   const resetFilters = useCallback(() => {
     setSearchTerm("");
@@ -149,7 +186,16 @@ export default function AdminOrdersPage() {
       );
     }
 
-    if (s === "confirmed" || s === "packed" || s === "processing") {
+    if (s === "confirmed") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
+          Accepted
+        </span>
+      );
+    }
+
+    if (s === "packed" || s === "processing") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
@@ -266,17 +312,22 @@ export default function AdminOrdersPage() {
       in_transit: 0,
       delivered: 0,
       rejected: 0,
+      cancelled: 0,
     };
     rows.forEach((o) => {
       const lc = lifecycleStatus(o);
       const sh = latestShipmentStatus(o);
+      if (sh === "cancelled") {
+        counts.cancelled++;
+        return;
+      }
       if (["pending", "pending_payment", "payment_success", "admin_approval_pending", "new"].includes(lc)) {
         counts.new++;
       }
       if (["confirmed", "packed"].includes(lc)) {
         counts.confirmed++;
       }
-      if (lc === "shipped" || sh === "shipped") {
+      if ((lc === "shipped" || sh === "shipped") && !["in_transit", "out_for_delivery", "delivered"].includes(sh) && lc !== "in_transit" && lc !== "delivered") {
         counts.shipped++;
       }
       if (lc === "in_transit" || ["in_transit", "out_for_delivery"].includes(sh)) {
@@ -287,6 +338,9 @@ export default function AdminOrdersPage() {
       }
       if (lc === "rejected") {
         counts.rejected++;
+      }
+      if (lc === "cancelled") {
+        counts.cancelled++;
       }
     });
     return counts;
@@ -300,14 +354,16 @@ export default function AdminOrdersPage() {
       const ship = latestShipmentStatus(o);
       const date = new Date(toUtcIso(o.createdAt) ?? o.createdAt);
 
-      // Status Tab filter
-      if (statusTab !== "all") {
+      if (ship === "cancelled") {
+        if (statusTab !== "all" && statusTab !== "cancelled") return false;
+      } else if (statusTab !== "all") {
         if (statusTab === "new" && !["pending", "pending_payment", "payment_success", "admin_approval_pending", "new"].includes(lifecycle)) return false;
         if (statusTab === "confirmed" && !["confirmed", "packed"].includes(lifecycle)) return false;
-        if (statusTab === "shipped" && lifecycle !== "shipped" && ship !== "shipped") return false;
+        if (statusTab === "shipped" && (lifecycle !== "shipped" && ship !== "shipped" || ["in_transit", "out_for_delivery", "delivered"].includes(ship) || ["in_transit", "delivered"].includes(lifecycle))) return false;
         if (statusTab === "in_transit" && lifecycle !== "in_transit" && !["in_transit", "out_for_delivery"].includes(ship)) return false;
         if (statusTab === "delivered" && lifecycle !== "delivered" && ship !== "delivered" && !o.fulfillment?.deliveredAt) return false;
         if (statusTab === "rejected" && lifecycle !== "rejected") return false;
+        if (statusTab === "cancelled" && lifecycle !== "cancelled") return false;
       }
 
       if (paymentFilter !== "all" && payment !== paymentFilter) return false;
@@ -339,10 +395,6 @@ export default function AdminOrdersPage() {
   const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
 
   const paidOrdersCount = useMemo(() => rows.filter((o) => toPaymentStatus(o) === "success").length, [rows, toPaymentStatus]);
-  const pendingApprovalsCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "admin_approval_pending").length, [rows, lifecycleStatus]);
-  const pendingOrdersCount = useMemo(() => rows.filter((o) => ["pending", "pending_payment", "payment_success", "admin_approval_pending", "confirmed", "packed"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
-  const completedOrdersCount = useMemo(() => rows.filter((o) => lifecycleStatus(o) === "delivered").length, [rows, lifecycleStatus]);
-  const cancelledOrdersCount = useMemo(() => rows.filter((o) => ["cancelled", "returned", "rejected"].includes(lifecycleStatus(o))).length, [rows, lifecycleStatus]);
 
   const load = useCallback(() => {
     if (!canFetch) {
@@ -408,7 +460,7 @@ export default function AdminOrdersPage() {
         skipped: number
       }>("/api/v1/orders/shiprocket/sync", {
         orderIds,
-        generatePickup: true,
+        generatePickup: false,
         retryFailedOnly,
       });
       setSyncProgress({ total: data.total, synced: data.synced, failed: data.failed, skipped: data.skipped });
@@ -452,6 +504,234 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const runRow = async (orderId: string, key: string, task: () => Promise<void>) => {
+    if (rowActionBusy[orderId]) return;
+    setRowActionBusy((prev) => ({ ...prev, [orderId]: key }));
+    setRowActionError((prev) => ({ ...prev, [orderId]: "" }));
+    try {
+      await task();
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Action failed";
+      setRowActionError((prev) => ({ ...prev, [orderId]: msg }));
+      await load();
+    } finally {
+      setRowActionBusy((prev) => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
+  };
+
+  const awbOf = (o: OrderRow) => o.awbCode || o.trackingNumber || o.shipments?.[0]?.trackingNo || "";
+  const hasShipment = (o: OrderRow) => Boolean(o.isShipmentCreated || o.shipmentId) && latestShipmentStatus(o) !== "cancelled";
+  const hasLabel = (o: OrderRow) => Boolean(o.labelUrl || o.isLabelGenerated);
+  const hasPickup = (o: OrderRow) => Boolean(o.isPickupGenerated) && isConfirmedPickupRequest(o.pickupStatus || o.shipmentStatus);
+  const displayShipmentStatus = (o: OrderRow) => {
+    const status = latestShipmentStatus(o);
+    if (/pickup generated/i.test(status) && !hasPickup(o)) return "not_picked_up";
+    return status;
+  };
+
+  const checkServiceability = (orderId: string) =>
+    runRow(orderId, "serviceability", async () => {
+      try {
+        const data = await authedPost<{ availableCouriers?: unknown[] }>(`/api/v1/orders/${orderId}/shiprocket`, { action: "serviceability" });
+        const count = data.availableCouriers?.length ?? 0;
+        if (count > 0) {
+          setServiceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setUnserviceableIds((prev) => {
+            const next = { ...prev };
+            delete next[orderId];
+            return next;
+          });
+          setUnserviceable(null);
+          toast.success("Serviceable", `${count} courier${count === 1 ? "" : "s"} can deliver this order.`);
+        } else {
+          setServiceableIds((prev) => {
+            const next = { ...prev };
+            delete next[orderId];
+            return next;
+          });
+          setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setUnserviceable({ orderId, reason: "No courier can deliver this pincode for the current payment type and package." });
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Serviceability check failed";
+        setServiceableIds((prev) => {
+          const next = { ...prev };
+          delete next[orderId];
+          return next;
+        });
+        setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+        setUnserviceable({ orderId, reason: msg });
+      }
+    });
+
+  const submitPackage = () => {
+    if (!packageModal) return;
+    const weightKg = Number(packageModal.weightKg);
+    const lengthCm = Number(packageModal.lengthCm);
+    const widthCm = Number(packageModal.widthCm);
+    const heightCm = Number(packageModal.heightCm);
+    if (![weightKg, lengthCm, widthCm, heightCm].every((value) => Number.isFinite(value) && value > 0)) {
+      toast.error("Package details", "Enter a positive weight and dimensions.");
+      return;
+    }
+    if (weightKg > 30 || lengthCm > 200 || widthCm > 200 || heightCm > 200) {
+      toast.error("Package details", "Weight must be at most 30 kg and each side at most 200 cm.");
+      return;
+    }
+    const review = assessPackageMeasures({ weightKg, lengthCm, widthCm, heightCm });
+    if (!review.ok) {
+      toast.error("Package details", review.reason ?? "Enter the package weight and dimensions.");
+      return;
+    }
+    if (review.requiresConfirmation && !packageConfirmed) {
+      toast.error("Confirm dimensions", review.reason ?? "Confirm these centimetre measurements.");
+      return;
+    }
+    const { orderId } = packageModal;
+    setPackageModal(null);
+    setPackageConfirmed(false);
+    setCourierModal(null);
+    setServiceableIds((prev) => {
+      const next = { ...prev };
+      delete next[orderId];
+      return next;
+    });
+    void runRow(orderId, "ship_now", async () => {
+      try {
+        await authedPost(`/api/v1/orders/${orderId}/shiprocket`, {
+          action: "create_shipment",
+          package: { weightKg, lengthCm, widthCm, heightCm },
+          confirmLargePackage: review.requiresConfirmation,
+        });
+        toast.success("Shipment created", "Assign an AWB when you are ready to choose a courier.");
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "";
+        if (!/already exists|duplicate/i.test(msg)) throw error;
+        toast.success("Shipment exists", "This order already has a Shiprocket shipment. Assign an AWB next.");
+      }
+    });
+  };
+
+  const openAwbPopup = (orderId: string) =>
+    runRow(orderId, "assign_awb", async () => {
+      const data = await authedPost<{
+        availableCouriers?: Array<{
+          name: string;
+          rate: number;
+          eta_days: number;
+          etd?: string;
+          courier_company_id?: number;
+          cod_available?: boolean;
+          charge_weight_kg?: number;
+          min_weight_kg?: number;
+        }>;
+        weight?: number | null;
+        lengthCm?: number | null;
+        widthCm?: number | null;
+        heightCm?: number | null;
+      }>(
+        `/api/v1/orders/${orderId}/shiprocket`,
+        { action: "serviceability" },
+      );
+      const couriers = (data.availableCouriers ?? []).filter((courier) => courier.courier_company_id);
+      if (!couriers.length) throw new Error("No couriers are available for this shipment.");
+      setCourierModal({
+        orderId,
+        couriers,
+        selectedId: couriers[0]?.courier_company_id ?? null,
+        packageWeightKg: data.weight ?? null,
+        lengthCm: data.lengthCm ?? null,
+        widthCm: data.widthCm ?? null,
+        heightCm: data.heightCm ?? null,
+        confirmed: false,
+      });
+    });
+
+  const confirmAwb = () => {
+    if (!courierModal?.selectedId) return;
+    const warning = awbQuoteWarning({
+      weightKg: courierModal.packageWeightKg,
+      lengthCm: courierModal.lengthCm,
+      widthCm: courierModal.widthCm,
+      heightCm: courierModal.heightCm,
+      chargeableKg: courierModal.couriers.find((courier) => courier.courier_company_id === courierModal.selectedId)?.charge_weight_kg ?? null,
+    });
+    if (warning.block) {
+      toast.error("Package details", warning.message ?? "Package details are incomplete.");
+      return;
+    }
+    if (warning.confirm && !courierModal.confirmed) {
+      toast.error("Confirm package", warning.message ?? "Confirm the saved package before assigning an AWB.");
+      return;
+    }
+    const { orderId, selectedId } = courierModal;
+    setCourierModal(null);
+    void runRow(orderId, "assign_awb", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "assign_awb", courierId: selectedId });
+      toast.success("AWB assigned", "Download the shipping label next.");
+    });
+  };
+
+  const downloadLabel = (orderId: string) =>
+    runRow(orderId, "label", async () => {
+      const data = await authedPost<{ labelUrl?: string }>(`/api/v1/orders/${orderId}/shiprocket`, { action: "generate_label" });
+      if (!data.labelUrl) throw new Error("Shiprocket did not return a label.");
+      window.open(data.labelUrl, "_blank", "noopener,noreferrer");
+      toast.success("Label ready", "The shipping label opened in a new tab.");
+    });
+
+  const requestPickup = (orderId: string) =>
+    runRow(orderId, "generate_pickup", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "generate_pickup" });
+      toast.success("Pickup requested", "Shiprocket has the pickup request. Tracking will move the order when the courier ships it.");
+    });
+
+  const refreshTracking = (orderId: string) =>
+    runRow(orderId, "tracking", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "refresh_tracking" });
+      toast.success("Tracking refreshed", "Shipment status was synced from Shiprocket.");
+    });
+
+  const syncFromShiprocket = (orderId: string) =>
+    runRow(orderId, "sync", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "sync_order", panelSync: true, generatePickup: false });
+      toast.success("Synced from Shiprocket", "Order status and shipment status now match Shiprocket. Finish AWB, pickup, and label in the Shiprocket panel, then sync again.");
+    });
+
+  const saveManualShipment = () => {
+    if (!manualModal) return;
+    const courier = manualModal.courier.trim();
+    const trackingId = manualModal.trackingId.trim();
+    const trackingUrl = manualModal.trackingUrl.trim();
+    if (!courier || !trackingId) {
+      toast.error("Manual shipment", "Courier name and tracking id are required.");
+      return;
+    }
+    const orderId = manualModal.orderId;
+    void runRow(orderId, "manual", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/fulfillment`, {
+        action: "manual_shipment",
+        courierName: courier,
+        trackingId,
+        trackingUrl,
+      });
+      setManualModal(null);
+      setUnserviceable(null);
+      toast.success("Manual shipment saved", "Update the order status as the parcel moves.");
+    });
+  };
+
+  const changeOrderStatus = (orderId: string, orderStatus: string) =>
+    runRow(orderId, "order_status", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/fulfillment`, { action: "set_order_status", orderStatus });
+      toast.success("Order updated", `Status set to ${orderStatusLabel(orderStatus)}.`);
+    });
+
   const confirmRejectOrder = async () => {
     if (!rejectModalOrderId) return;
     const targetId = rejectModalOrderId;
@@ -489,52 +769,6 @@ export default function AdminOrdersPage() {
 
   return (
     <section className="w-full space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {/* Card 1: Total Orders */}
-        <article className="flex items-center gap-3.5 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFF0F2]">
-            <ShoppingCart className="h-5 w-5 text-[#C84B5F]" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">TOTAL ORDERS</p>
-            <p className="mt-0.5 text-2xl font-bold text-[#2A1810]">{rows.length.toLocaleString()}</p>
-          </div>
-        </article>
-
-        {/* Card 2: Pending Approval */}
-        <article className="flex items-center gap-3.5 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FFF8E7]">
-            <Clock className="h-5 w-5 text-[#B87D1E]" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">PENDING APPROVAL</p>
-            <p className="mt-0.5 text-2xl font-bold text-[#2A1810]">{pendingApprovalsCount.toLocaleString()}</p>
-          </div>
-        </article>
-
-        {/* Card 3: Orders Completed */}
-        <article className="flex items-center gap-3.5 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#E8F8F0]">
-            <Check className="h-5 w-5 text-[#2DA66D]" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">ORDERS COMPLETED</p>
-            <p className="mt-0.5 text-2xl font-bold text-[#2A1810]">{completedOrdersCount.toLocaleString()}</p>
-          </div>
-        </article>
-
-        {/* Card 4: Orders Cancelled */}
-        <article className="flex items-center gap-3.5 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FDE8E8]">
-            <XCircle className="h-5 w-5 text-[#A32A2A]" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">ORDERS CANCELLED</p>
-            <p className="mt-0.5 text-2xl font-bold text-[#2A1810]">{cancelledOrdersCount.toLocaleString()}</p>
-          </div>
-        </article>
-      </div>
-
       <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -543,7 +777,7 @@ export default function AdminOrdersPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => load()} disabled={!canFetch} className="rounded-full bg-[#2DA66D] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:brightness-95 disabled:opacity-50">REFRESH</button>
-            <button type="button" onClick={() => void runBulkSync(filteredRows.map((row) => row.id))} disabled={bulkSyncBusy || filteredRows.length === 0} className="rounded-full bg-[#7B3010] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:brightness-95 disabled:opacity-50">
+            <button type="button" onClick={() => void runBulkSync(filteredRows.filter((row) => row.isShipmentCreated || row.awbCode).map((row) => row.id))} disabled={bulkSyncBusy || filteredRows.length === 0} className="rounded-full bg-[#7B3010] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:brightness-95 disabled:opacity-50">
               {bulkSyncBusy ? "SYNCING..." : "SYNC ORDERS TO SHIPROCKET"}
             </button>
             <button type="button" onClick={exportCsv} className="inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#7B3010] hover:bg-[#FFFBF3]">
@@ -562,6 +796,7 @@ export default function AdminOrdersPage() {
             { id: "in_transit" as const, label: "In Transit", count: statusTabCounts.in_transit },
             { id: "delivered" as const, label: "Delivered", count: statusTabCounts.delivered },
             { id: "rejected" as const, label: "Rejected", count: statusTabCounts.rejected },
+            { id: "cancelled" as const, label: "Cancelled", count: statusTabCounts.cancelled },
           ].map((tab) => {
             const active = statusTab === tab.id;
             return (
@@ -849,10 +1084,47 @@ export default function AdminOrdersPage() {
                       </div>
                     </td>
                     <td className="px-2 py-2">
-                      {getOrderStatusBadge(lifecycleStatus(o))}
+                      {(() => {
+                        const shipmentCancelled = latestShipmentStatus(o) === "cancelled";
+                        const status = shipmentCancelled ? "cancelled" : lifecycleStatus(o);
+                        if (!shipmentCancelled && isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && (MANUAL_ORDER_STATUSES as readonly string[]).includes(status)) {
+                          return (
+                            <select
+                              value={status}
+                              disabled={Boolean(rowActionBusy[o.id])}
+                              onChange={(e) => void changeOrderStatus(o.id, e.target.value)}
+                              className="w-full cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2 py-1 text-[11px] font-semibold text-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {MANUAL_ORDER_STATUSES.map((value) => (
+                                <option key={value} value={value}>{orderStatusLabel(value)}</option>
+                              ))}
+                            </select>
+                          );
+                        }
+                        return getOrderStatusBadge(status);
+                      })()}
                     </td>
                     <td className="px-2 py-2">
-                      {getShipmentStatusBadge(latestShipmentStatus(o))}
+                      {(() => {
+                        const shipmentCancelled = latestShipmentStatus(o) === "cancelled";
+                        const status = shipmentCancelled ? "cancelled" : lifecycleStatus(o);
+                        const manual = isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod });
+                        if (!shipmentCancelled && manual && (MANUAL_ORDER_STATUSES as readonly string[]).includes(status)) {
+                          return (
+                            <select
+                              value={status}
+                              disabled={Boolean(rowActionBusy[o.id])}
+                              onChange={(e) => void changeOrderStatus(o.id, e.target.value)}
+                              className="w-full cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2 py-1 text-[11px] font-semibold text-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {MANUAL_ORDER_STATUSES.map((value) => (
+                                <option key={value} value={value}>{orderStatusLabel(value)}</option>
+                              ))}
+                            </select>
+                          );
+                        }
+                        return getShipmentStatusBadge((MANUAL_ORDER_STATUSES as readonly string[]).includes(status) && manual ? status : displayShipmentStatus(o));
+                      })()}
                       <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
                       <p className="text-[11px] text-[#646464]">AWB: {o.awbCode ?? o.shipments?.[0]?.trackingNo ?? "Pending"}</p>
                     </td>
@@ -868,6 +1140,23 @@ export default function AdminOrdersPage() {
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </button>
+                        {latestShipmentStatus(o) !== "cancelled" && (
+                          <>
+                        {["confirmed", "packed"].includes(lifecycleStatus(o)) && !isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && !hasShipment(o) && !serviceableIds[o.id] && !unserviceableIds[o.id] && (
+                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => void checkServiceability(o.id)} className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+                            {rowActionBusy[o.id] === "serviceability" ? "Checking..." : "Check serviceability"}
+                          </button>
+                        )}
+                        {["confirmed", "packed", "shipped", "in_transit", "out_for_delivery"].includes(lifecycleStatus(o)) && !isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && (Boolean(serviceableIds[o.id]) || hasShipment(o)) && (
+                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => void syncFromShiprocket(o.id)} className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50">
+                            {rowActionBusy[o.id] === "sync" ? "Syncing..." : "Sync"}
+                          </button>
+                        )}
+                        {["confirmed", "packed"].includes(lifecycleStatus(o)) && !hasShipment(o) && Boolean(unserviceableIds[o.id]) && (
+                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "" })} className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
+                            Manual shipment
+                          </button>
+                        )}
                         {lifecycleStatus(o) === "admin_approval_pending" && (
                           <>
                             <button
@@ -901,6 +1190,8 @@ export default function AdminOrdersPage() {
                             </button>
                           </>
                         )}
+                          </>
+                        )}
                       </div>
                       {rowActionError[o.id] && (
                         <p className="mt-1 text-[10px] text-red-600">{rowActionError[o.id]}</p>
@@ -919,6 +1210,153 @@ export default function AdminOrdersPage() {
         <p className="text-xs text-[#646464]">Page {page} / {pageCount}</p>
         <button type="button" onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))} disabled={page >= pageCount} className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40">Next</button>
       </div>
+
+      {unserviceable && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
+            <h2 className="font-melon text-lg font-bold text-[#4A1D1F]">Not serviceable</h2>
+            <p className="text-sm text-[#646464]">{unserviceable.reason}</p>
+            <p className="text-sm text-[#646464]">Ship this order yourself, or recheck serviceability later.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setUnserviceable(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Close</button>
+              <button type="button" onClick={() => { const id = unserviceable.orderId; setUnserviceable(null); void checkServiceability(id); }} className="cursor-pointer rounded-full border border-[#7B3010] px-4 py-2 text-xs font-semibold text-[#7B3010]">Recheck</button>
+              <button type="button" onClick={() => { setManualModal({ orderId: unserviceable.orderId, courier: "", trackingId: "", trackingUrl: "" }); setUnserviceable(null); }} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white">Manual shipment</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
+            <h2 className="font-melon text-lg font-bold text-[#4A1D1F]">Manual shipment</h2>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Courier
+              <input value={manualModal.courier} onChange={(e) => setManualModal({ ...manualModal, courier: e.target.value })} className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm" />
+            </label>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Tracking id
+              <input value={manualModal.trackingId} onChange={(e) => setManualModal({ ...manualModal, trackingId: e.target.value })} className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm" />
+            </label>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Tracking URL
+              <input value={manualModal.trackingUrl} onChange={(e) => setManualModal({ ...manualModal, trackingUrl: e.target.value })} className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm" />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setManualModal(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Cancel</button>
+              <button type="button" disabled={Boolean(rowActionBusy[manualModal.orderId])} onClick={saveManualShipment} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+                {rowActionBusy[manualModal.orderId] === "manual" ? "Saving..." : "Save shipment"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {packageModal && (() => {
+        const review = assessPackageMeasures({
+          weightKg: Number(packageModal.weightKg),
+          lengthCm: Number(packageModal.lengthCm),
+          widthCm: Number(packageModal.widthCm),
+          heightCm: Number(packageModal.heightCm),
+        });
+        const editPackage = (field: "weightKg" | "lengthCm" | "widthCm" | "heightCm", value: string) => {
+          setPackageConfirmed(false);
+          setCourierModal(null);
+          setServiceableIds((prev) => {
+            const next = { ...prev };
+            delete next[packageModal.orderId];
+            return next;
+          });
+          setPackageModal({ ...packageModal, [field]: value });
+        };
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-3">
+            <h2 className="text-base font-semibold text-[#111827]">Package details</h2>
+            <p className="text-sm text-[#646464]">Enter the packed shipment size in kilograms and centimetres. These values are sent to Shiprocket when the shipment is created.</p>
+            <label className="block text-xs font-semibold text-[#646464]">Weight (kg)
+              <input inputMode="decimal" value={packageModal.weightKg} onChange={(e) => editPackage("weightKg", e.target.value)} className="mt-1 w-full rounded-full border px-3 py-2 text-sm" />
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              <label className="block text-xs font-semibold text-[#646464]">Length (cm)
+                <input inputMode="decimal" value={packageModal.lengthCm} onChange={(e) => editPackage("lengthCm", e.target.value)} className="mt-1 w-full rounded-full border px-3 py-2 text-sm" />
+              </label>
+              <label className="block text-xs font-semibold text-[#646464]">Width (cm)
+                <input inputMode="decimal" value={packageModal.widthCm} onChange={(e) => editPackage("widthCm", e.target.value)} className="mt-1 w-full rounded-full border px-3 py-2 text-sm" />
+              </label>
+              <label className="block text-xs font-semibold text-[#646464]">Height (cm)
+                <input inputMode="decimal" value={packageModal.heightCm} onChange={(e) => editPackage("heightCm", e.target.value)} className="mt-1 w-full rounded-full border px-3 py-2 text-sm" />
+              </label>
+            </div>
+            {review.requiresConfirmation && review.reason ? (
+              <label className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <input type="checkbox" className="mt-0.5 cursor-pointer" checked={packageConfirmed} onChange={(e) => setPackageConfirmed(e.target.checked)} />
+                <span>{review.reason}</span>
+              </label>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => { setPackageModal(null); setPackageConfirmed(false); }} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Cancel</button>
+              <button type="button" onClick={submitPackage} className="cursor-pointer rounded-full bg-[#16803C] px-4 py-2 text-xs font-semibold text-white">{review.requiresConfirmation ? "Confirm and create shipment" : "Create shipment"}</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {courierModal && (() => {
+        const selected = courierModal.couriers.find((courier) => courier.courier_company_id === courierModal.selectedId);
+        const warning = awbQuoteWarning({
+          weightKg: courierModal.packageWeightKg,
+          lengthCm: courierModal.lengthCm,
+          widthCm: courierModal.widthCm,
+          heightCm: courierModal.heightCm,
+          chargeableKg: selected?.charge_weight_kg ?? courierModal.couriers.find((courier) => courier.charge_weight_kg != null)?.charge_weight_kg ?? null,
+        });
+        return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-lg rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-3">
+            <h2 className="text-base font-semibold text-[#111827]">Assign AWB</h2>
+            <p className="text-sm text-[#646464]">
+              {courierModal.packageWeightKg != null ? `Package weight ${courierModal.packageWeightKg} kg. ` : ""}
+              {courierModal.lengthCm && courierModal.widthCm && courierModal.heightCm
+                ? `Dimensions ${courierModal.lengthCm} × ${courierModal.widthCm} × ${courierModal.heightCm} cm. `
+                : ""}
+              Courier name, minimum weight, chargeable weight, and rate are the values Shiprocket returned for this package.
+            </p>
+            {warning.message ? (
+              <label className="flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {warning.confirm ? (
+                  <input type="checkbox" className="mt-0.5 cursor-pointer" checked={courierModal.confirmed} onChange={(e) => setCourierModal({ ...courierModal, confirmed: e.target.checked })} />
+                ) : null}
+                <span>{warning.message}</span>
+              </label>
+            ) : null}
+            <div className="max-h-72 space-y-2 overflow-y-auto">
+              {courierModal.couriers.map((courier) => {
+                const eta = courier.eta_days > 0 ? `${courier.eta_days} days` : courier.etd || "";
+                return (
+                <label key={`${courier.courier_company_id}-${courier.name}`} className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border px-3 py-2 text-sm hover:bg-[#FFFBF3]">
+                  <span className="flex items-start gap-2">
+                    <input type="radio" className="mt-1 cursor-pointer" checked={courierModal.selectedId === courier.courier_company_id} onChange={() => setCourierModal({ ...courierModal, selectedId: courier.courier_company_id ?? null, confirmed: false })} />
+                    <span>
+                      <span className="block">{courier.name}</span>
+                      {courier.min_weight_kg != null ? <span className="block text-xs text-[#646464]">Courier minimum weight {courier.min_weight_kg} kg</span> : null}
+                      {courier.charge_weight_kg != null ? <span className="block text-xs text-[#646464]">Chargeable weight {courier.charge_weight_kg} kg</span> : null}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-xs text-[#646464]">₹{Number(courier.rate).toFixed(2)}{eta ? ` · ${eta}` : ""}{courier.cod_available ? " · COD" : ""}</span>
+                </label>
+                );
+              })}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setCourierModal(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Cancel</button>
+              <button type="button" disabled={!courierModal.selectedId || warning.block || (warning.confirm && !courierModal.confirmed)} onClick={confirmAwb} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Assign AWB</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {/* Reject Order Modal Popup */}
       {rejectModalOrderId && (

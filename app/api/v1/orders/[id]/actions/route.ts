@@ -7,7 +7,6 @@ import {
   releaseOrderInventory,
   setOrderCancelReason,
   setOrderReturnReason,
-  triggerShiprocketAutoSync,
   updateOrderStatus,
 } from "@/src/server/modules/orders/orders.service"
 import {
@@ -207,16 +206,6 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         note: parsed.data.reason ?? "Admin approved order",
       })
 
-      const paymentMethod = String(order.paymentMethod ?? "").toLowerCase()
-      const paymentStatus = normalizePaymentStatus(order.paymentStatus)
-      const isEligibleForSync = paymentMethod === "cod" || paymentStatus === "SUCCESS"
-      if (isEligibleForSync) {
-        void triggerShiprocketAutoSync({
-          orderId: order.id,
-          actorId: auth.user.sub,
-          source: "status_confirmed",
-        })
-      }
       return ok(updated, "Order approved")
     }
 

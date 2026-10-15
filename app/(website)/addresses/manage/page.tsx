@@ -1,11 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MapPin } from "lucide-react";
 import { authedFetch, authedPost, authedPatch } from "@/lib/dashboard-fetch";
-import { useLocations } from "@/hooks/useLocations";
 import { toast } from "@/lib/toast";
+import { lookupIndianPincode } from "@/lib/india-pincode";
 
 type Addr = {
   id: string;
@@ -80,6 +79,22 @@ function titleCase(value: string) {
     .join(" ");
 }
 
+function matchIndianState(value: string) {
+  const key = value.toLowerCase().replace(/[^a-z]/g, "");
+  const aliases: Record<string, string> = {
+    nctofdelhi: "Delhi",
+    orissa: "Odisha",
+    pondicherry: "Puducherry",
+    uttaranchal: "Uttarakhand",
+    andamannicobar: "Andaman and Nicobar Islands",
+    andamanandnicobar: "Andaman and Nicobar Islands",
+    dadraandnagarhaveli: "Dadra and Nagar Haveli and Daman and Diu",
+    damananddiu: "Dadra and Nagar Haveli and Daman and Diu",
+  };
+  if (aliases[key]) return aliases[key];
+  return INDIAN_STATES.find((name) => name.toLowerCase().replace(/[^a-z]/g, "") === key) ?? titleCase(value);
+}
+
 function unpackLine2(line2: string | null) {
   const raw = (line2 ?? "").trim();
   if (!raw) return { building: "", area: "" };
@@ -128,20 +143,17 @@ function ManageAddressContent() {
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [isDefault, setIsDefault] = useState(false);
-  const [checkingPin, setCheckingPin] = useState(false);
+  const [readingPin, setReadingPin] = useState(false);
   const [pinMessage, setPinMessage] = useState("");
   const [pinOk, setPinOk] = useState(false);
   const [checkedPin, setCheckedPin] = useState("");
+  const pinRequest = useRef(0);
 
-  const { data: locationStates } = useLocations("state");
   const stateOptions = useMemo(() => {
     const labels = new Set<string>(INDIAN_STATES);
-    for (const row of locationStates ?? []) {
-      if (row.label) labels.add(row.label);
-    }
     if (state) labels.add(state);
     return Array.from(labels);
-  }, [locationStates, state]);
+  }, [state]);
 
   const onlyAddress = id ? addressCount <= 1 : addressCount === 0;
 
@@ -214,71 +226,58 @@ function ManageAddressContent() {
     router.push(next && next.startsWith("/") ? next : "/addresses");
   };
 
-  const checkPincode = async () => {
+  useEffect(() => {
     const pin = postalCode.trim();
     if (!/^[1-9][0-9]{5}$/.test(pin)) {
-      const message = "Enter a valid 6-digit pincode.";
+      setReadingPin(false);
       setPinOk(false);
       setCheckedPin("");
-      setPinMessage(message);
-      toast.error(message);
+      setPinMessage(pin.length === 6 ? "Enter a correct Indian pincode." : "");
       return;
     }
-    setCheckingPin(true);
-    setPinMessage("");
-    setError("");
-    try {
-      const serviceRes = await fetch("/api/shipping/check-serviceability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ delivery_postcode: pin, cod: false }),
-      });
-      const servicePayload = await serviceRes.json().catch(() => null);
-      const serviceData = servicePayload?.data ?? servicePayload ?? {};
-      const notServiceable = !serviceRes.ok || serviceData.deliverable === false || serviceData.status === "not_deliverable";
-      if (notServiceable) {
-        const message = serviceData.message || "This pincode is not serviceable for delivery.";
-        setPinOk(false);
-        setCheckedPin("");
-        setCity("");
-        setState("");
-        setPinMessage(message);
-        toast.error(message);
-        return;
-      }
 
-      const pinRes = await fetch(`/api/v1/pincode/${pin}`);
-      const pinPayload = await pinRes.json().catch(() => null);
-      if (!pinRes.ok || !pinPayload?.success || !pinPayload.data) {
-        const message = "Pincode is serviceable, but city and state could not be found. Enter them manually.";
-        setPinOk(true);
-        setCheckedPin(pin);
-        setPinMessage(message);
-        toast.error(message);
-        return;
-      }
+    const request = ++pinRequest.current;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setReadingPin(true);
+        setPinMessage("");
+        try {
+          const details = await lookupIndianPincode(pin);
+          if (request !== pinRequest.current) return;
+          const fetchedState = matchIndianState(String(details.state || ""));
+          const fetchedCity = titleCase(String(details.district || details.city || ""));
+          if (!fetchedState || !fetchedCity) {
+            setPinOk(false);
+            setCheckedPin("");
+            setPinMessage("Enter a correct Indian pincode.");
+            return;
+          }
+          setState(fetchedState);
+          setCity(fetchedCity);
+          setArea((current) => {
+            if (current.trim() || !Array.isArray(details.names)) return current;
+            const locality = details.names.find((name) => name && name.toLowerCase() !== fetchedCity.toLowerCase());
+            return locality ? titleCase(String(locality)) : current;
+          });
+          setPinOk(true);
+          setCheckedPin(pin);
+          setPinMessage("");
+        } catch (err) {
+          if (request !== pinRequest.current) return;
+          setPinOk(false);
+          setCheckedPin("");
+          setPinMessage(err instanceof Error ? err.message : "Enter a correct Indian pincode.");
+        } finally {
+          if (request === pinRequest.current) setReadingPin(false);
+        }
+      })();
+    }, 250);
 
-      const fetchedState = titleCase(String(pinPayload.data.state || ""));
-      const fetchedCity = titleCase(String(pinPayload.data.district || pinPayload.data.city || ""));
-      if (fetchedState) setState(fetchedState);
-      if (fetchedCity) setCity(fetchedCity);
-      if (!area.trim() && Array.isArray(pinPayload.data.names)) {
-        const locality = pinPayload.data.names.find((name: string) => name && name.toLowerCase() !== fetchedCity.toLowerCase());
-        if (locality) setArea(titleCase(String(locality)));
-      }
-      setPinOk(true);
-      setCheckedPin(pin);
-      setPinMessage("This pincode is serviceable. City and state have been filled.");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not check this pincode.";
-      setPinOk(false);
-      setCheckedPin("");
-      setPinMessage(message);
-      toast.error(message);
-    } finally {
-      setCheckingPin(false);
-    }
-  };
+    return () => {
+      window.clearTimeout(timer);
+      pinRequest.current += 1;
+    };
+  }, [postalCode]);
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -303,8 +302,14 @@ function ManageAddressContent() {
       toast.error(message);
       return;
     }
+    if (readingPin) {
+      const message = "Reading the pincode. Please wait.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
     if (!pinOk || checkedPin !== pin) {
-      const message = "Check the pincode before saving.";
+      const message = "Enter a correct Indian pincode.";
       setError(message);
       toast.error(message);
       return;
@@ -439,38 +444,29 @@ function ManageAddressContent() {
               ) : null}
             </div>
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="text-sm font-medium text-[#374151]">
-                Pincode <span className="text-red-500">*</span>
-                <input
-                  required
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={postalCode}
-                  onChange={(e) => {
-                    const nextPin = e.target.value.replace(/\D/g, "").slice(0, 6);
-                    setPostalCode(nextPin);
-                    if (nextPin !== checkedPin) {
-                      setPinOk(false);
-                      setPinMessage("");
-                    }
-                  }}
-                  className={fieldClass}
-                  placeholder="Enter pincode"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => void checkPincode()}
-                disabled={checkingPin}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#2563EB] px-4 text-sm font-semibold text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50"
-              >
-                <MapPin className="h-4 w-4" />
-                {checkingPin ? "Checking…" : "Check"}
-              </button>
-            </div>
-            {pinMessage ? (
-              <p className={`mt-2 text-sm ${pinOk ? "text-green-700" : "text-red-600"}`}>{pinMessage}</p>
+            <label className="mt-4 block max-w-sm text-sm font-medium text-[#374151]">
+              Pincode <span className="text-red-500">*</span>
+              <input
+                required
+                inputMode="numeric"
+                maxLength={6}
+                value={postalCode}
+                onChange={(e) => {
+                  const nextPin = e.target.value.replace(/\D/g, "").slice(0, 6);
+                  setPostalCode(nextPin);
+                  if (nextPin !== checkedPin) {
+                    setPinOk(false);
+                    setPinMessage("");
+                  }
+                }}
+                className={fieldClass}
+                placeholder="Enter pincode"
+              />
+            </label>
+            {readingPin ? (
+              <p className="mt-2 text-sm text-[#6B7280]">Reading city and state…</p>
+            ) : pinMessage ? (
+              <p className="mt-2 text-sm text-red-600">{pinMessage}</p>
             ) : null}
 
             <label className="mt-4 block text-sm font-medium text-[#374151]">

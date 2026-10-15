@@ -7,6 +7,7 @@ import {
   assignShipmentAwb,
   createShiprocketShipment,
   debugSingleOrderShipment,
+  generateShipmentLabel,
   generateShipmentPickup,
   getCourierOptions,
   retryShiprocketShipmentSync,
@@ -15,12 +16,14 @@ import {
 } from "@/src/server/modules/shipping/shiprocket.orders"
 import { syncShipmentTracking } from "@/src/server/modules/shipping/shiprocket.tracking"
 import { getShiprocketClientConfig } from "@/src/server/modules/shipping/shiprocket.service"
+import { assessPackageMeasures } from "@/src/server/modules/shipping/package-measures"
 
 const schema = z.object({
   action: z.enum([
     "serviceability",
     "create_shipment",
     "assign_awb",
+    "generate_label",
     "generate_pickup",
     "sync_order",
     "resync_order",
@@ -32,7 +35,16 @@ const schema = z.object({
     "fetch_invoice",
   ]),
   generatePickup: z.boolean().optional(),
+  panelSync: z.boolean().optional(),
   forceResync: z.boolean().optional(),
+  courierId: z.number().int().positive().optional(),
+  confirmLargePackage: z.boolean().optional(),
+  package: z.object({
+    weightKg: z.number().positive().max(30),
+    lengthCm: z.number().positive().max(200),
+    widthCm: z.number().positive().max(200),
+    heightCm: z.number().positive().max(200),
+  }).optional(),
 })
 
 export async function GET(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {
@@ -49,6 +61,9 @@ export async function GET(request: NextRequest, ctx: { params: Promise<{ id: str
         mode: getShiprocketClientConfig().mode,
         availableCouriers: serviceability.availableCouriers,
         weight: serviceability.weight,
+        lengthCm: serviceability.lengthCm,
+        widthCm: serviceability.widthCm,
+        heightCm: serviceability.heightCm,
       },
       "Serviceability fetched",
     )
@@ -75,27 +90,41 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
           mode: getShiprocketClientConfig().mode,
           availableCouriers: data.availableCouriers,
           weight: data.weight,
+          lengthCm: data.lengthCm,
+          widthCm: data.widthCm,
+          heightCm: data.heightCm,
         },
         "Serviceability checked",
       )
     }
     if (parsed.data.action === "create_shipment") {
-      const data = await createShiprocketShipment(id, auth.user.sub)
+      if (!parsed.data.package) return fail("Package weight and dimensions are required", 422)
+      const review = assessPackageMeasures(parsed.data.package)
+      if (!review.ok) return fail(review.reason ?? "Package details are invalid", 422)
+      if (review.requiresConfirmation && parsed.data.confirmLargePackage !== true) {
+        return fail(review.reason ?? "Confirm the package dimensions before creating the shipment.", 422)
+      }
+      const data = await createShiprocketShipment(id, auth.user.sub, parsed.data.package)
       return ok(data, "Shipment created")
     }
     if (parsed.data.action === "assign_awb") {
-      const data = await assignShipmentAwb(id, auth.user.sub)
+      const data = await assignShipmentAwb(id, auth.user.sub, parsed.data.courierId)
       if (!data.shipmentUpdated) return fail(data.reason || "AWB was not assigned", 400)
       const awbCode = data.parsedAwb?.awbCode ?? data.shipment?.trackingNo ?? ""
       return ok(data, awbCode ? `AWB ${awbCode} assigned` : "AWB assigned")
+    }
+    if (parsed.data.action === "generate_label") {
+      const data = await generateShipmentLabel(id, auth.user.sub)
+      return ok(data, "Shipping label ready")
     }
     if (parsed.data.action === "sync_order" || parsed.data.action === "resync_order" || parsed.data.action === "retry_shipment_sync") {
       const data =
         parsed.data.action === "retry_shipment_sync"
           ? await retryShiprocketShipmentSync(id, auth.user.sub)
           : await safeSyncOrderShipmentToShiprocket(id, auth.user.sub, {
-              generatePickup: parsed.data.generatePickup !== false,
+              generatePickup: parsed.data.panelSync === true ? false : parsed.data.generatePickup !== false,
               forceResync: parsed.data.forceResync === true || parsed.data.action === "resync_order",
+              panelSync: parsed.data.panelSync === true,
             })
       const normalized = {
         success: data.status !== "failed",
@@ -158,7 +187,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
       return ok({ invoiceUrl }, "Shiprocket invoice generated successfully")
     }
     const pickup = await generateShipmentPickup(id, auth.user.sub)
-    return ok(pickup, "Pickup generated")
+    return ok(pickup, pickup.alreadyRequested ? "Pickup was already requested. The saved status now matches Shiprocket." : "Pickup requested")
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Shiprocket action failed", 400)
   }

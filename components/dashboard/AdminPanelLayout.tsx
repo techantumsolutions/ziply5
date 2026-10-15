@@ -10,15 +10,12 @@ import {
   Users,
   BarChart3,
   Settings,
-  Award,
-  Hash,
   Sparkles,
   Star,
   RotateCcw,
   ShoppingBag,
   Wallet,
   TrendingUp,
-  Database,
   TicketPercent,
   BadgePercent,
   Box,
@@ -27,7 +24,6 @@ import {
   Gift,
 } from "lucide-react"
 import { DashboardChrome, type DashboardNavItem } from "./DashboardChrome"
-import { useEffect, useMemo, useState } from "react"
 import { PageTransition } from "@/components/animations/PageTransition"
 
 const adminNav: DashboardNavItem[] = [
@@ -68,26 +64,14 @@ const adminNav: DashboardNavItem[] = [
     subItems: [
       { href: "/admin/settings", label: "General", icon: Settings },
       { href: "/admin/categories", label: "Categories", icon: FolderTree },
-      { href: "/admin/tags", label: "Tags", icon: Hash },
       { href: "/admin/product-features", label: "Product Features", icon: Sparkles },
       { href: "/admin/hsn-barcode", label: "HSN & Barcodes", icon: FileText },
     ],
   },
-  { href: "/admin/master", label: "Master data", icon: Database },
 ]
 
 export function AdminPanelLayout({ children }: { children: React.ReactNode }) {
-  const [role, setRole] = useState<string | null>(null)
-  useEffect(() => {
-    setRole(window.localStorage.getItem("ziply5_user_role"))
-  }, [])
-  const navItems = useMemo(
-    () =>
-      adminNav.filter((item) =>
-        item.href === "/admin/master" ? role === "super_admin" : true,
-      ),
-    [role],
-  )
+  const navItems = adminNav
 
   return (
     <DashboardChrome
@@ -95,6 +79,7 @@ export function AdminPanelLayout({ children }: { children: React.ReactNode }) {
       loginPath="/admin/login"
       websiteHref="/"
       navItems={navItems}
+      showAdminNotifications
     >
       <PageTransition>{children}</PageTransition>
     </DashboardChrome>

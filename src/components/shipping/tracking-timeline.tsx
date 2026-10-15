@@ -1,5 +1,7 @@
 "use client"
 
+import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
+
 type TrackingStep = {
   key: string
   label: string
@@ -19,7 +21,7 @@ export function TrackingTimeline(props: {
   const shipmentStatus = String(props.shipmentStatus ?? "").toLowerCase()
   const orderStatus = String(props.orderStatus ?? "").toLowerCase()
 
-  const pickupGenerated = shipmentStatus.includes("pickup")
+  const pickupGenerated = isConfirmedPickupRequest(props.shipmentStatus)
   const shipped = ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(orderStatus) || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(shipmentStatus)
   const steps: TrackingStep[] = [
     { key: "confirmed", label: "Order Confirmed", reached: reached.has("confirmed") || orderStatus === "confirmed" },
@@ -29,8 +31,8 @@ export function TrackingTimeline(props: {
       reached: pickupGenerated,
     },
     { key: "shipped", label: "Shipped", reached: shipped || reached.has("shipped") },
-    { key: "in_transit", label: "In Transit", reached: shipmentStatus.includes("transit") },
-    { key: "out_for_delivery", label: "Out For Delivery", reached: shipmentStatus.includes("out_for_delivery") || shipmentStatus.includes("out for delivery") },
+    { key: "in_transit", label: "In Transit", reached: shipmentStatus.includes("transit") || orderStatus === "in_transit" || reached.has("in_transit") },
+    { key: "out_for_delivery", label: "Out For Delivery", reached: shipmentStatus.includes("out_for_delivery") || shipmentStatus.includes("out for delivery") || orderStatus === "out_for_delivery" || reached.has("out_for_delivery") },
     { key: "delivered", label: "Delivered", reached: reached.has("delivered") || orderStatus === "delivered" || shipmentStatus.includes("delivered") },
   ]
 

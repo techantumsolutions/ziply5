@@ -5,6 +5,10 @@ import { logger } from "@/lib/logger"
 import { upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
 import { formatIstSqlDateTime, pgTimestampToUtcIso } from "@/src/lib/datetime"
 import { buildShiprocketLineItems, parseOrderPostalCode, parseShiprocketAddress, weightToKg } from "@/src/server/modules/shipping/shiprocket.utils"
+import { classifyShiprocketPickup, isPickupAlreadyQueued, orderStatusFromShiprocketPanel, stageFromStatusText } from "@/src/server/modules/shipping/shiprocket-status"
+import { shiprocketPackagePayload } from "@/src/server/modules/shipping/package-measures"
+import { fetchTrackingByAwb, syncShipmentTrackingByAwb } from "@/src/server/modules/shipping/shiprocket.tracking"
+import { manualOrderStatusSteps } from "@/src/lib/orders/manual-order-status"
 
 const parsePostalCode = parseOrderPostalCode
 
@@ -544,6 +548,9 @@ const persistExtendedShipmentFields = async (
     transporterName: string
     transporterId: string
     appliedWeight: number
+    packageLengthCm: number
+    packageBreadthCm: number
+    packageHeightCm: number
     assignedDateTime: Date
     trackingNo: string
     shipmentStatus: string
@@ -587,6 +594,9 @@ const persistExtendedShipmentFields = async (
   add("transporterName", data.transporterName)
   add("transporterId", data.transporterId)
   add("appliedWeight", data.appliedWeight)
+  add("packageLengthCm", data.packageLengthCm)
+  add("packageBreadthCm", data.packageBreadthCm)
+  add("packageHeightCm", data.packageHeightCm)
   add("assignedDateTime", data.assignedDateTime)
   add("trackingNo", data.trackingNo)
   add("shipmentStatus", data.shipmentStatus)
@@ -642,7 +652,14 @@ const persistExtendedShipmentFields = async (
   })
 }
 
-export const checkOrderServiceability = async (orderId: string) => {
+export type ShipmentPackageInput = {
+  weightKg: number
+  lengthCm: number
+  widthCm: number
+  heightCm: number
+}
+
+export const checkOrderServiceability = async (orderId: string, packageOverride?: Partial<ShipmentPackageInput>) => {
   shipmentConsole("serviceability.start", { orderId })
   shipmentLog("info", "serviceability.started", { orderId })
   const orderRows = await pgQuery<
@@ -726,12 +743,33 @@ export const checkOrderServiceability = async (orderId: string) => {
 
   const codRequired = (order.paymentMethod ?? "").toLowerCase() === "cod"
 
+  const storedPackage = packageOverride?.weightKg
+    ? null
+    : await pgQuery<Array<{ appliedWeight: string | null; packageLengthCm: string | null; packageBreadthCm: string | null; packageHeightCm: string | null }>>(
+        `SELECT "appliedWeight", "packageLengthCm", "packageBreadthCm", "packageHeightCm"
+         FROM "Shipment"
+         WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL
+         ORDER BY "createdAt" DESC LIMIT 1`,
+        [orderId],
+      ).catch(() => [])
+  const stored = storedPackage?.[0]
+  const packageWeight = packageOverride?.weightKg && packageOverride.weightKg > 0
+    ? packageOverride.weightKg
+    : stored?.appliedWeight && Number(stored.appliedWeight) > 0
+      ? Number(stored.appliedWeight)
+      : weight
+  const lengthCm = packageOverride?.lengthCm ?? (stored?.packageLengthCm ? Number(stored.packageLengthCm) : undefined)
+  const widthCm = packageOverride?.widthCm ?? (stored?.packageBreadthCm ? Number(stored.packageBreadthCm) : undefined)
+  const heightCm = packageOverride?.heightCm ?? (stored?.packageHeightCm ? Number(stored.packageHeightCm) : undefined)
   const response = await shiprocketClient.checkServiceability({
     pickup_postcode: pickupPostcode,
     delivery_postcode: deliveryPostcode,
     cod: codRequired ? 1 : 0,
-    weight,
+    weight: packageWeight,
     declared_value: Number(order.total),
+    length: lengthCm && lengthCm > 0 ? lengthCm : undefined,
+    breadth: widthCm && widthCm > 0 ? widthCm : undefined,
+    height: heightCm && heightCm > 0 ? heightCm : undefined,
   })
   if (!response.available_couriers?.length) {
     shipmentConsole("serviceability.no_couriers", { orderId, deliveryPostcode, pickupPostcode, codRequired })
@@ -750,22 +788,41 @@ export const checkOrderServiceability = async (orderId: string) => {
     deliveryPostcode,
     pickupPostcode,
     codRequired,
-    weight,
+    weight: packageWeight,
+    lengthCm: lengthCm && lengthCm > 0 ? lengthCm : null,
+    widthCm: widthCm && widthCm > 0 ? widthCm : null,
+    heightCm: heightCm && heightCm > 0 ? heightCm : null,
   })
   shipmentConsole("serviceability.success", {
     orderId,
     courierCount: response.available_couriers.length,
     deliveryPostcode,
     pickupPostcode,
-    weight,
+    weight: packageWeight,
+    lengthCm: lengthCm && lengthCm > 0 ? lengthCm : null,
+    widthCm: widthCm && widthCm > 0 ? widthCm : null,
+    heightCm: heightCm && heightCm > 0 ? heightCm : null,
   })
-  return { order, response, deliveryPostcode, pickupPostcode, weight }
+  return {
+    order,
+    response,
+    deliveryPostcode,
+    pickupPostcode,
+    weight: packageWeight,
+    lengthCm: lengthCm && lengthCm > 0 ? lengthCm : null,
+    widthCm: widthCm && widthCm > 0 ? widthCm : null,
+    heightCm: heightCm && heightCm > 0 ? heightCm : null,
+  }
 }
 
-export const createShiprocketShipmentForOrder = async (orderId: string, actorId: string) => {
+export const createShiprocketShipmentForOrder = async (
+  orderId: string,
+  actorId: string,
+  options?: { replaceLocalShipmentId?: string; package?: ShipmentPackageInput; panelDefaults?: boolean },
+) => {
   shipmentConsole("shipment.create.start", { orderId, actorId })
   shipmentLog("info", "shipment.started", { orderId, actorId })
-  const { order, response, deliveryPostcode, pickupPostcode, weight } = await checkOrderServiceability(orderId)
+  const { order, response, deliveryPostcode, pickupPostcode, weight } = await checkOrderServiceability(orderId, options?.package)
   const pickupLocation = process.env.SHIPROCKET_PICKUP_LOCATION?.trim() || ""
   if (!pickupLocation) {
     shipmentConsole("shipment.create.pickup_location_missing", { orderId })
@@ -779,7 +836,9 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   }
   const bestCourier = [...response.available_couriers].sort((a, b) => a.rate - b.rate)[0]
   const parsedAddress = parseAddressParts(order.customerAddress)
-  const orderItems: ShiprocketOrderItem[] = buildShiprocketLineItems(Array.isArray(order.items) ? order.items : [])
+  const orderItems: ShiprocketOrderItem[] = buildShiprocketLineItems(Array.isArray(order.items) ? order.items : []).flatMap((item) =>
+    item.orderItemId ? [{ ...item, orderItemId: item.orderItemId }] : [],
+  )
   if (!orderItems.length) {
     shipmentConsole("shipment.create.no_items", { orderId })
     shipmentLog("warn", "shipment.skipped", { orderId, skippedReason: "no_order_items" })
@@ -790,7 +849,8 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
     `SELECT id FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
-  if (shipmentExists.length > 0) {
+  const replacingLocalId = options?.replaceLocalShipmentId ?? null
+  if (shipmentExists.length > 0 && shipmentExists[0]?.id !== replacingLocalId) {
     shipmentConsole("shipment.create.already_exists", { orderId, existingShipmentId: shipmentExists[0]?.id ?? null })
     shipmentLog("warn", "shipment.skipped", { orderId, skippedReason: "shipment_already_exists", existingShipmentId: shipmentExists[0]?.id })
     throw new Error("Shipment already exists")
@@ -799,6 +859,22 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   const channelOrderId = order.shiprocketOrderId
     ? `${order.id}-r${String(order.shiprocketOrderId).slice(-4)}`
     : order.id
+  const packageLengthCm = options?.package?.lengthCm ?? (options?.panelDefaults ? 10 : undefined)
+  const packageWidthCm = options?.package?.widthCm ?? (options?.panelDefaults ? 10 : undefined)
+  const packageHeightCm = options?.package?.heightCm ?? (options?.panelDefaults ? 10 : undefined)
+  const packageWeightKg = options?.package?.weightKg ?? weight
+  if (
+    packageLengthCm == null || packageWidthCm == null || packageHeightCm == null ||
+    packageLengthCm <= 0 || packageWidthCm <= 0 || packageHeightCm <= 0
+  ) {
+    throw new Error("Package dimensions are required in centimetres before a shipment can be created.")
+  }
+  const packageFields = shiprocketPackagePayload({
+    weightKg: packageWeightKg,
+    lengthCm: packageLengthCm,
+    widthCm: packageWidthCm,
+    heightCm: packageHeightCm,
+  })
   const createPayload = {
     order_id: channelOrderId,
     order_date: formatIstSqlDateTime(
@@ -823,10 +899,10 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
     })),
     payment_method: (order.paymentMethod ?? "").toLowerCase() === "cod" ? "COD" : "Prepaid",
     sub_total: Number(order.total),
-    length: 10,
-    breadth: 10,
-    height: 10,
-    weight,
+    length: packageFields.length,
+    breadth: packageFields.breadth,
+    height: packageFields.height,
+    weight: packageFields.weight,
   }
   shipmentLog("info", "shipment.payload", {
     orderId,
@@ -964,6 +1040,12 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
     return shipmentRows.rows[0]
   })
   shipmentConsole("shipment.create.db_inserted", { orderId, shipmentDbId: shipment.id, shiprocketShipmentId: extracted.shipmentId })
+  if (replacingLocalId && replacingLocalId !== shipment.id) {
+    await pgQuery(
+      `UPDATE "Shipment" SET "shipmentStatus"='cancelled', "cancelledAt"=now(), "updatedAt"=now() WHERE id=$1`,
+      [replacingLocalId],
+    )
+  }
 
   const statusHistory = Array.isArray(order.statusHistory) ? (order.statusHistory as any[]) : []
   const fromStatus = statusHistory[0]?.toStatus ?? order.status
@@ -974,10 +1056,14 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
     `,
     [orderId, fromStatus, `Shipment Created via Shiprocket, order_id=${extracted.shiprocketOrderId ?? "na"}, shipment_id=${extracted.shipmentId ?? "na"}`, actorId],
   ).catch(() => null)
-  await addOrderNote(orderId, `Shiprocket shipment created (shipment_id=${extracted.shipmentId}, pickup=${pickupPostcode})`, actorId)
+  await addOrderNote(orderId, `Shiprocket shipment created (shipment_id=${extracted.shipmentId}, warehouse_pincode=${pickupPostcode})`, actorId)
   await persistExtendedShipmentFields(shipment.id, {
     shiprocketOrderId: extracted.shiprocketOrderId ?? undefined,
     shiprocketShipmentId: extracted.shipmentId ? String(extracted.shipmentId) : undefined,
+    appliedWeight: options?.package?.weightKg,
+    packageLengthCm: options?.package?.lengthCm,
+    packageBreadthCm: options?.package?.widthCm,
+    packageHeightCm: options?.package?.heightCm,
     awbCode: extracted.awbCode ?? undefined,
     trackingNo: extracted.awbCode ?? undefined,
     trackingUrl: extracted.trackingUrl ?? undefined,
@@ -1005,18 +1091,70 @@ export const createShiprocketShipmentForOrder = async (orderId: string, actorId:
   return { shipment, shiprocket: created, courier: bestCourier, extracted, partial: false }
 }
 
-export const assignAwbForOrderShipment = async (orderId: string, actorId: string) => {
+export const assignAwbForOrderShipment = async (orderId: string, actorId: string, courierId?: number) => {
   shipmentConsole("awb.assign.start", { orderId, actorId })
-  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; trackingNo: string | null; carrier: string | null; courierId: string | null }>>(
-    `SELECT id, "shipmentNo", "trackingNo", carrier, "courierId" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
-    [orderId],
-  )
+  const loadShipment = () =>
+    pgQuery<Array<{ id: string; shipmentNo: string | null; trackingNo: string | null; carrier: string | null; courierId: string | null; shiprocketOrderId: string | null }>>(
+      `SELECT id, "shipmentNo", "trackingNo", carrier, "courierId", "shiprocketOrderId" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
+      [orderId],
+    )
+  const rows = await loadShipment()
   const shipment = rows[0]
   if (!shipment) throw new Error("Shipment not found")
-  if (shipment.trackingNo) return { shipmentUpdated: false, reason: "AWB already assigned", shipment }
+  if (shipment.trackingNo) {
+    return {
+      shipmentUpdated: true,
+      alreadyAssigned: true,
+      reason: "AWB already assigned",
+      shipment,
+      parsedAwb: {
+        awbCode: shipment.trackingNo,
+        courierName: shipment.carrier,
+        courierCompanyId: shipment.courierId,
+        trackingUrl: null,
+        estimatedDeliveryDate: null,
+        shipmentId: shipment.shipmentNo,
+        orderId: shipment.shiprocketOrderId,
+        extractionPath: "existing",
+        normalized: {},
+        awbAssignStatus: "already_assigned",
+        isAssigned: true,
+      },
+    }
+  }
+  const remoteOrderId = Number(shipment.shiprocketOrderId ?? 0)
+  if (Number.isFinite(remoteOrderId) && remoteOrderId > 0) {
+    const remoteOrder = await shiprocketClient.showOrder(remoteOrderId)
+    if (!remoteOrder) {
+      shipmentConsole("awb.assign.remote_order_missing", {
+        orderId,
+        shiprocketOrderId: remoteOrderId,
+        shipmentNo: shipment.shipmentNo,
+      })
+      await pgQuery(
+        `UPDATE "Shipment" SET "shipmentStatus"='cancelled', "cancelledAt"=now(), "updatedAt"=now() WHERE id=$1`,
+        [shipment.id],
+      )
+      await upsertOrderShipmentSnapshotSupabase(orderId, {
+        isShipmentCreated: false,
+        shipmentId: null,
+        shipmentStatus: "cancelled",
+        shippingStatus: "cancelled",
+      }).catch(() => null)
+      await addOrderNote(
+        orderId,
+        "Stored Shiprocket shipment is not on the connected account. It was closed locally so a new shipment can be created with package details.",
+        actorId,
+      )
+      throw new Error("This Shiprocket shipment is not on the connected account. Use Ship Now and enter the package weight and dimensions.")
+    }
+  }
   const shipmentId = Number(shipment.shipmentNo ?? 0)
   if (!Number.isFinite(shipmentId) || shipmentId <= 0) throw new Error("Invalid shipment id for AWB assignment")
-  const courierIdNumber = Number(shipment.courierId ?? 0)
+  const courierIdNumber = Number(courierId ?? shipment.courierId ?? 0)
+  if (Number.isFinite(courierIdNumber) && courierIdNumber > 0) {
+    await pgQuery(`UPDATE "Shipment" SET "courierId" = $2, "updatedAt" = now() WHERE id = $1`, [shipment.id, String(courierIdNumber)]).catch(() => null)
+  }
   const awb = await shiprocketClient.assignAwb({
     shipment_id: shipmentId,
     courier_id: Number.isFinite(courierIdNumber) && courierIdNumber > 0 ? courierIdNumber : undefined,
@@ -1094,10 +1232,9 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
          "rtoRoutingCode"=$9,
          "transporterName"=$10,
          "transporterId"=$11,
-         "appliedWeight"=$12,
-         "assignedDateTime"=$13,
+         "assignedDateTime"=$12,
          "awbAssignedAt"=now(),
-         "rawShiprocketResponse"=$14::jsonb,
+         "rawShiprocketResponse"=$13::jsonb,
          "updatedAt"=now()
      WHERE id=$1
      RETURNING *`
@@ -1113,7 +1250,6 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
     normalizeNullableSqlValue(parsedAwb.rtoRoutingCode),
     normalizeNullableSqlValue(parsedAwb.transporterName),
     normalizeNullableSqlValue(parsedAwb.transporterId),
-    normalizeNullableSqlValue(parsedAwb.appliedWeight ? Number(parsedAwb.appliedWeight) : null),
     normalizeNullableSqlValue(parsedAwb.assignedDateTime ? new Date(parsedAwb.assignedDateTime) : null),
     normalizeNullableSqlValue(JSON.stringify(awb ?? {})),
   ]
@@ -1156,7 +1292,6 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
     rtoRoutingCode: parsedAwb.rtoRoutingCode ?? undefined,
     transporterName: parsedAwb.transporterName ?? undefined,
     transporterId: parsedAwb.transporterId ?? undefined,
-    appliedWeight: parsedAwb.appliedWeight ? Number(parsedAwb.appliedWeight) : undefined,
     assignedDateTime: parsedAwb.assignedDateTime ? new Date(parsedAwb.assignedDateTime) : undefined,
     lastSyncAt: new Date(),
   })
@@ -1184,25 +1319,148 @@ export const assignAwbForOrderShipment = async (orderId: string, actorId: string
   }
 }
 
-export const generatePickupForOrderShipment = async (orderId: string, actorId: string) => {
-  shipmentConsole("pickup.generate.start", { orderId, actorId })
-  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; shipmentStatus: string | null }>>(
-    `SELECT id, "shipmentNo", "shipmentStatus" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
+const shiprocketDocumentUrl = (payload: Record<string, unknown> | null, keys: string[]) => {
+  if (!payload) return null
+  for (const key of keys) {
+    const value = getByPath(payload, key)
+    if (typeof value === "string" && /^https?:\/\//i.test(value)) return value
+  }
+  return null
+}
+
+export const generateLabelForOrderShipment = async (orderId: string, actorId: string) => {
+  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; trackingNo: string | null; labelUrl: string | null }>>(
+    `SELECT id, "shipmentNo", "trackingNo", "labelUrl" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
   const shipment = rows[0]
   if (!shipment) throw new Error("Shipment not found")
+  if (!shipment.trackingNo) throw new Error("Assign an AWB before downloading the label")
+  if (shipment.labelUrl) return { labelUrl: shipment.labelUrl, alreadyGenerated: true, shipment }
   const shipmentId = Number(shipment.shipmentNo ?? 0)
-  console.log(`[shiprocket][pickup.debug] Attempting pickup for shipmentId=${shipmentId}, DB id=${shipment.id}`)
-  if (!Number.isFinite(shipmentId) || shipmentId <= 0) {
-    console.error(`[shiprocket][pickup.error] Invalid shipment id: "${shipment.shipmentNo}"`)
-    throw new Error("Invalid shipment id for pickup")
+  if (!Number.isFinite(shipmentId) || shipmentId <= 0) throw new Error("Invalid shipment id for label")
+  const label = await shiprocketClient.generateLabel(shipmentId)
+  const labelUrl = shiprocketDocumentUrl(label, ["label_url", "response.label_url", "data.label_url"])
+  if (!labelUrl) throw new Error("Shiprocket did not return a label URL")
+  await persistExtendedShipmentFields(shipment.id, { labelUrl, shippingLabelUrl: labelUrl, lastSyncAt: new Date() })
+  await addOrderNote(orderId, "Shipping label generated", actorId)
+  return { labelUrl, alreadyGenerated: false, shipment }
+}
+
+const sameText = (left?: string | null, right?: string | null) =>
+  String(left ?? "").trim().toLowerCase() === String(right ?? "").trim().toLowerCase()
+
+const readShowShipment = (show: Record<string, unknown> | null) => {
+  const data = (show?.data && typeof show.data === "object" ? show.data : show) as Record<string, unknown> | null
+  const raw = data?.shipments
+  const shipment = Array.isArray(raw) ? (raw[0] as Record<string, unknown> | undefined) : raw && typeof raw === "object" ? raw as Record<string, unknown> : null
+  const statusCode = Number(data?.status_code ?? 0)
+  return {
+    statusText: asText(data?.status),
+    statusCode: Number.isFinite(statusCode) && statusCode > 0 ? statusCode : null,
+    shipmentId: asText(shipment?.id),
+    awb: asText(shipment?.awb ?? shipment?.awb_code),
+    courier: asText(shipment?.courier ?? shipment?.courier_name),
   }
-  const pickup = await shiprocketClient.generatePickup({ shipment_id: shipmentId }).catch(err => {
-    console.error(`[shiprocket][pickup.error] Shiprocket API failed:`, err)
+}
+
+export const generatePickupForOrderShipment = async (orderId: string, actorId: string) => {
+  shipmentConsole("pickup.generate.start", { orderId, actorId })
+  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; shiprocketOrderId: string | null; shipmentStatus: string | null; trackingNo: string | null; awbCode: string | null; courierName: string | null; isPickupGenerated: boolean | null; pickupStatus: string | null }>>(
+    `SELECT id, "shipmentNo", "shiprocketOrderId", "shipmentStatus", "trackingNo", "awbCode", "courierName", "isPickupGenerated", "pickupStatus" FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL ORDER BY "createdAt" DESC LIMIT 1`,
+    [orderId],
+  )
+  const shipment = rows[0]
+  if (!shipment) throw new Error("Shipment not found")
+  const awb = shipment.awbCode || shipment.trackingNo
+  if (!awb) throw new Error("Assign an AWB before requesting pickup")
+  const shipmentId = Number(shipment.shipmentNo ?? 0)
+  if (!Number.isFinite(shipmentId) || shipmentId <= 0) throw new Error("Invalid shipment id for pickup")
+
+  const remoteOrderId = Number(shipment.shiprocketOrderId ?? 0)
+  const show = remoteOrderId > 0 ? await shiprocketClient.showOrder(remoteOrderId) : null
+  let remote = readShowShipment(show)
+  if (!remote.awb || !remote.statusText) {
+    const tracked = await fetchTrackingByAwb(awb).catch(() => null) as Record<string, unknown> | null
+    const trackRoot = tracked?.tracking_data && typeof tracked.tracking_data === "object" ? tracked.tracking_data as Record<string, unknown> : tracked
+    const latest = Array.isArray(trackRoot?.shipment_track) ? trackRoot.shipment_track[0] as Record<string, unknown> : null
+    remote = {
+      ...remote,
+      awb: remote.awb ?? asText(latest?.awb_code),
+      courier: remote.courier ?? asText(latest?.courier_name),
+      statusText: remote.statusText ?? asText(latest?.current_status),
+    }
+  }
+  if (remote.shipmentId && remote.shipmentId !== String(shipment.shipmentNo)) {
+    throw new Error(`Shiprocket shipment ${remote.shipmentId} does not match stored shipment ${shipment.shipmentNo}. Pickup was not requested.`)
+  }
+  if (remote.awb && remote.awb !== awb) {
+    throw new Error("Shiprocket AWB does not match the AWB stored for this shipment. Pickup was not requested.")
+  }
+  if (remote.courier && shipment.courierName && !sameText(remote.courier, shipment.courierName)) {
+    throw new Error(`Shiprocket courier ${remote.courier} does not match stored courier ${shipment.courierName}. Pickup was not requested.`)
+  }
+
+  const decision = classifyShiprocketPickup(remote.statusCode, remote.statusText)
+  if (decision.decision === "already_requested") {
+    await persistExtendedShipmentFields(shipment.id, {
+      pickupStatus: remote.statusText ?? "Pickup Queue",
+      isPickupGenerated: true,
+      shipmentStatus: "pickup_requested",
+      lastSyncAt: new Date(),
+    })
+    await upsertOrderShipmentSnapshotSupabase(orderId, {
+      pickupStatus: remote.statusText ?? "Pickup Queue",
+      isPickupGenerated: true,
+      shipmentStatus: "pickup_requested",
+      shippingStatus: "pickup_requested",
+    }).catch(() => null)
+    await addOrderNote(orderId, `${decision.reason} ${decision.nextAction}`, actorId)
+    return {
+      shipment,
+      pickup: { pickup_status: remote.statusText ?? "Already in Pickup Queue" },
+      alreadyRequested: true,
+    }
+  }
+  if (decision.decision === "ineligible") {
+    const storedStatus = stageFromStatusText(remote.statusText) === "pickup_error" ? "pickup_error" : "pickup_exception"
+    await persistExtendedShipmentFields(shipment.id, {
+      pickupStatus: remote.statusText ?? "Pickup Exception",
+      isPickupGenerated: false,
+      shipmentStatus: storedStatus,
+      lastSyncAt: new Date(),
+    })
+    await pgQuery(`UPDATE "Shipment" SET "shipmentStatus"=$2, "updatedAt"=now() WHERE id=$1`, [shipment.id, storedStatus])
+    await upsertOrderShipmentSnapshotSupabase(orderId, {
+      pickupStatus: remote.statusText ?? "Pickup Exception",
+      isPickupGenerated: false,
+      shipmentStatus: storedStatus,
+      shippingStatus: storedStatus,
+    }).catch(() => null)
+    throw new Error(`${decision.reason} ${decision.nextAction}`)
+  }
+
+  const pickup = await shiprocketClient.generatePickup({ shipment_id: shipmentId }).catch((err) => {
+    const body = err instanceof ShiprocketApiError ? err.body : ""
+    const message = err instanceof Error ? err.message : ""
+    if (isPickupAlreadyQueued(`${message} ${body}`)) {
+      return { pickup_status: "Already in Pickup Queue" }
+    }
+    if (/invalid status for pickup/i.test(`${message} ${body}`)) {
+      throw new Error("Shiprocket refused pickup: Invalid Status for pickup generation. Refresh tracking for the current shipment state. A new AWB or shipment was not created.")
+    }
+    console.error(`[shiprocket][pickup.error] Shiprocket API failed:`, err instanceof Error ? err.message : "unknown")
     throw err
   })
-  console.log(`[shiprocket][pickup.success] Raw Response:`, JSON.stringify(pickup, null, 2))
+  const pickupMessage = asText(getByPath(pickup, "message")) ?? asText(getByPath(pickup, "response.data")) ?? ""
+  if (!pickup.pickup_status && isPickupAlreadyQueued(pickupMessage)) {
+    pickup.pickup_status = "Already in Pickup Queue"
+  }
+  const manifest = isPickupAlreadyQueued(String(pickup.pickup_status ?? "")) ? null : await shiprocketClient.generateManifest(shipmentId).catch((err) => {
+    shipmentConsole("manifest.generate.failed", { orderId, shipmentId, reason: err instanceof Error ? err.message : "unknown" })
+    return null
+  })
+  const manifestUrl = shiprocketDocumentUrl(manifest, ["manifest_url", "response.manifest_url", "data.manifest_url"])
   shipmentConsole("pickup.generate.raw_response", { orderId, shipmentId: shipment.id, response: pickup })
 
   const pickupDateRaw =
@@ -1215,7 +1473,7 @@ export const generatePickupForOrderShipment = async (orderId: string, actorId: s
 
   const updatedRows = await pgQuery(
     `UPDATE "Shipment" SET "shipmentStatus"=$2, "pickupGeneratedAt"=$3, "updatedAt"=now() WHERE id=$1 RETURNING *`,
-    [shipment.id, pickup.pickup_status ?? "pickup_requested", pickupDate],
+    [shipment.id, "pickup_requested", pickupDate],
   )
   const updated = updatedRows[0]
   shipmentConsole("pickup.generate.db_updated", {
@@ -1225,17 +1483,23 @@ export const generatePickupForOrderShipment = async (orderId: string, actorId: s
     pickupGeneratedAt: pickupDate,
   })
   await persistExtendedShipmentFields(updated.id, {
-    pickupStatus: pickup.pickup_status ?? "scheduled",
+    pickupStatus: String(pickup.pickup_status ?? "pickup_requested"),
     pickupGeneratedAt: pickupDate ?? undefined,
+    isPickupGenerated: true,
+    manifestUrl: manifestUrl ?? undefined,
     lastSyncAt: new Date(),
   })
-  await addOrderNote(orderId, `Pickup generated (${pickup.pickup_status ?? "scheduled"})`, actorId)
+  await addOrderNote(
+    orderId,
+    `Pickup requested (${pickup.pickup_status ?? "pickup_requested"})${manifestUrl ? ", manifest ready" : ""}`,
+    actorId,
+  )
   logger.info("shiprocket.pickup.generated", {
     orderId,
     shipmentId: updated?.id ?? shipment.id,
     pickupStatus: pickup.pickup_status ?? "scheduled",
   })
-  return { shipment: updated, pickup }
+  return { shipment: updated, pickup, alreadyRequested: isPickupAlreadyQueued(String(pickup.pickup_status ?? "")) }
 }
 
 const getOrderSyncEligibility = async (orderId: string) => {
@@ -1345,7 +1609,9 @@ const getOrderSyncEligibility = async (orderId: string) => {
     },
   })
 
-  if (["cancelled", "delivered", "returned"].includes(latest)) return { eligible: false as const, reason: "Order already closed" }
+  if (!["confirmed", "packed", "shipped"].includes(latest)) {
+    return { eligible: false as const, reason: "Order is not confirmed" }
+  }
   if (isShipmentFullySynced(order)) {
     return { eligible: false as const, reason: "shipment already exists" }
   }
@@ -1396,11 +1662,94 @@ const getOrderSyncEligibility = async (orderId: string) => {
   return { eligible: true as const, order }
 }
 
-export const syncOrderToShiprocket = async (orderId: string, actorId: string, options?: { generatePickup?: boolean }) => {
+export const pullShiprocketPanelStatus = async (orderId: string, actorId: string) => {
+  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; shiprocketOrderId: string | null; trackingNo: string | null; awbCode: string | null }>>(
+    `SELECT id, "shipmentNo", "shiprocketOrderId", "trackingNo", "awbCode"
+     FROM "Shipment"
+     WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL
+     ORDER BY "createdAt" DESC LIMIT 1`,
+    [orderId],
+  )
+  const shipment = rows[0]
+  if (!shipment) return { shipmentStatus: null, orderStatus: null }
+  const remoteOrderId = Number(shipment.shiprocketOrderId ?? 0)
+  const show = remoteOrderId > 0 ? await shiprocketClient.showOrder(remoteOrderId) : null
+  const remote = readShowShipment(show)
+  const awb = remote.awb || shipment.awbCode || shipment.trackingNo
+  const target = orderStatusFromShiprocketPanel(remote.statusText, remote.statusCode)
+  const shipmentStatus = target ?? "shipment_created"
+  await pgQuery(
+    `UPDATE "Shipment"
+     SET "shipmentStatus" = $2,
+         "shippingStatus" = $2,
+         "trackingNo" = COALESCE($3, "trackingNo"),
+         "awbCode" = COALESCE($3, "awbCode"),
+         carrier = COALESCE($4, carrier),
+         "courierName" = COALESCE($4, "courierName"),
+         "updatedAt" = now()
+     WHERE id = $1`,
+    [shipment.id, shipmentStatus, awb, remote.courier],
+  )
+  await upsertOrderShipmentSnapshotSupabase(orderId, {
+    shipmentStatus,
+    shippingStatus: shipmentStatus,
+    awbCode: awb,
+    trackingNumber: awb,
+    courierName: remote.courier,
+    isShipmentCreated: true,
+  }).catch(() => null)
+  if (awb) {
+    await syncShipmentTrackingByAwb(awb).catch(() => null)
+  } else if (target) {
+    const { getOrderById, latestLifecycleStatus, updateOrderStatus } = await import("@/src/server/modules/orders/orders.service")
+    const order = await getOrderById(orderId)
+    if (order) {
+      const from = latestLifecycleStatus(order)
+      if (target === "cancelled" && from !== "cancelled") {
+        await updateOrderStatus(orderId, "cancelled", actorId, {
+          reasonCode: "shiprocket_panel_sync",
+          note: "Order cancelled from the Shiprocket shipment status",
+        }).catch(() => null)
+      } else if (target !== "cancelled") {
+        const steps = (() => {
+          try {
+            return manualOrderStatusSteps(from, target)
+          } catch {
+            return []
+          }
+        })()
+        for (const step of steps) {
+          await updateOrderStatus(orderId, step, actorId, {
+            reasonCode: "shiprocket_panel_sync",
+            note: `Updated from Shiprocket (${remote.statusText || shipmentStatus})`,
+          })
+        }
+      }
+    }
+  }
+  return { shipmentStatus, orderStatus: target, awb }
+}
+
+export const syncOrderToShiprocket = async (orderId: string, actorId: string, options?: { generatePickup?: boolean; panelSync?: boolean }) => {
   shipmentConsole("sync.start", { orderId, actorId, generatePickup: options?.generatePickup !== false })
   shipmentLog("info", "sync.started", { orderId, actorId, generatePickup: options?.generatePickup !== false })
   const eligibility = await getOrderSyncEligibility(orderId)
   if (!eligibility.eligible) {
+    const panelRefresh =
+      options?.panelSync === true &&
+      (eligibility.reason === "shipment already exists" || eligibility.reason === "Order is not confirmed")
+    if (panelRefresh) {
+      const pulled = await pullShiprocketPanelStatus(orderId, actorId)
+      if (pulled.shipmentStatus) {
+        return {
+          status: "synced" as const,
+          orderId,
+          pulled,
+          reason: "Shipment and order status were updated from Shiprocket.",
+          syncTime: new Date().toISOString(),
+        }
+      }
+    }
     shipmentConsole("sync.skipped", { orderId, reason: eligibility.reason, skippedReason: resolveSkippedReason(eligibility.reason) })
     shipmentLog("warn", "sync.skipped", {
       orderId,
@@ -1442,6 +1791,21 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
     let created: Awaited<ReturnType<typeof createShiprocketShipmentForOrder>> | null = null
     let awb: Awaited<ReturnType<typeof assignAwbForOrderShipment>> | null = null
     let pickup: Awaited<ReturnType<typeof generatePickupForOrderShipment>> | null = null
+
+    if (options?.panelSync) {
+      if (current.stage === "NO_SHIPMENT") {
+        created = await runWithTransientRetry(() => createShiprocketShipmentForOrder(orderId, actorId, { panelDefaults: true }), 1)
+      }
+      const pulled = await pullShiprocketPanelStatus(orderId, actorId)
+      return {
+        status: "synced" as const,
+        orderId,
+        created,
+        pulled,
+        reason: "Order is on Shiprocket. Shipment and order status were updated from Shiprocket.",
+        syncTime: new Date().toISOString(),
+      }
+    }
 
     if (current.stage === "NO_SHIPMENT") {
       stageTrace.push({ stage: current.stage, action: "create_shipment" })

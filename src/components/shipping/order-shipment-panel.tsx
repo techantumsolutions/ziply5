@@ -19,6 +19,7 @@ function formatDateTime(iso: string | null | undefined) {
 }
 
 function prettyStatus(value: string) {
+  if (value.toLowerCase() === "confirmed") return "Accepted"
   return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())
 }
 

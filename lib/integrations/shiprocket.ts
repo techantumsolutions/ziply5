@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { env } from "@/src/server/core/config/env"
+import { mapShiprocketCourierQuote } from "@/src/server/modules/shipping/shiprocket-quote"
 
 type ShiprocketMode = "mock" | "staging" | "live"
 type HttpMethod = "GET" | "POST"
@@ -20,16 +21,26 @@ export type ServiceabilityInput = {
   cod: 0 | 1
   weight: number
   declared_value: number
+  length?: number
+  breadth?: number
+  height?: number
 }
 
 export type ServiceabilityCourier = {
   name: string
+  /** From `estimated_delivery_days`. `0` when Shiprocket did not send a day count. */
   eta_days: number
-  /** Present for internal diagnostics only — never use for customer shipping price. */
+  /** Shiprocket `etd` date text, when present. */
+  etd?: string
+  /** Shiprocket `rate` (falls back to `freight_charge`, then `shipping_rate`). */
   rate: number
   courier_company_id?: number
-  /** Shiprocket courier row: COD supported for this option when true / 1. */
+  /** True only when the courier row says COD is available. */
   cod_available?: boolean
+  /** Shiprocket `charge_weight` in kilograms. Separate from the package weight. */
+  charge_weight_kg?: number
+  /** Shiprocket `min_weight` in kilograms. A courier slab, not the package weight. */
+  min_weight_kg?: number
 }
 
 export type ServiceabilityResponse = {
@@ -223,8 +234,15 @@ const requestWithAuth = async <T>(
     }
     const raw = await res.text()
     console.error(`[shiprocket] ${method} ${endpoint} failed ${res.status}`, raw.slice(0, 300))
+    let apiMessage = ""
+    try {
+      const parsed = JSON.parse(raw) as { message?: unknown }
+      if (typeof parsed.message === "string") apiMessage = parsed.message.trim().slice(0, 180)
+    } catch {
+      apiMessage = ""
+    }
     throw new ShiprocketApiError({
-      message: `Shiprocket API error (${res.status})`,
+      message: apiMessage ? `Shiprocket API error (${res.status}): ${apiMessage}` : `Shiprocket API error (${res.status})`,
       status: res.status,
       body: raw,
       endpoint,
@@ -258,37 +276,47 @@ export const shiprocketClient = {
       weight: String(input.weight),
       declared_value: String(input.declared_value),
     })
+    if (input.length) query.set("length", String(input.length))
+    if (input.breadth) query.set("breadth", String(input.breadth))
+    if (input.height) query.set("height", String(input.height))
     const payload = await request<Record<string, unknown>>(`/courier/serviceability?${query.toString()}`, "GET")
     if ("available_couriers" in payload) return payload as ServiceabilityResponse
     const data = payload.data as Record<string, unknown> | undefined
     const available = (data?.available_courier_companies ?? data?.available_couriers ?? []) as Array<Record<string, unknown>>
-    const normalized: ServiceabilityCourier[] = available.map((item) => {
-      const rawCod = item.cod ?? item.cod_available ?? item.is_cod_available
-      const cod_available =
-        rawCod === undefined || rawCod === null
-          ? true
-          : rawCod === 1 ||
-            rawCod === true ||
-            String(rawCod).toLowerCase() === "true" ||
-            String(rawCod).toLowerCase() === "yes"
-      return {
-        name: String(item.courier_name ?? item.name ?? "Courier"),
-        eta_days: Number(item.estimated_delivery_days ?? item.eta_days ?? item.etd_hours ?? 3),
-        rate: Number(item.rate ?? item.freight_charge ?? item.shipping_rate ?? 0),
-        courier_company_id: item.courier_company_id ? Number(item.courier_company_id) : undefined,
-        cod_available,
-      }
-    })
+    const normalized: ServiceabilityCourier[] = available.map((item) => mapShiprocketCourierQuote(item))
     return { available_couriers: normalized }
   },
   async createOrder(input: CreateOrderInput): Promise<CreateOrderResponse> {
     return request<CreateOrderResponse>("/orders/create/adhoc", "POST", input)
   },
+  async showOrder(orderId: number): Promise<Record<string, unknown> | null> {
+    try {
+      return await request<Record<string, unknown>>(`/orders/show/${orderId}`, "GET")
+    } catch (error) {
+      if (error instanceof ShiprocketApiError && error.status === 404) return null
+      throw error
+    }
+  },
   async assignAwb(input: AssignAwbInput): Promise<AssignAwbResponse> {
-    return request<AssignAwbResponse>("/courier/assign/awb", "POST", input)
+    return request<AssignAwbResponse>("/courier/assign/awb", "POST", {
+      shipment_id: input.shipment_id,
+      ...(input.courier_id ? { courier_id: input.courier_id } : {}),
+    })
   },
   async generatePickup(input: GeneratePickupInput): Promise<GeneratePickupResponse> {
-    return request<GeneratePickupResponse>("/courier/generate/pickup", "POST", input)
+    return request<GeneratePickupResponse>("/courier/generate/pickup", "POST", {
+      shipment_id: [input.shipment_id],
+    })
+  },
+  async generateLabel(shipmentId: number): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/courier/generate/label", "POST", {
+      shipment_id: [shipmentId],
+    })
+  },
+  async generateManifest(shipmentId: number): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/manifests/generate", "POST", {
+      shipment_id: [shipmentId],
+    })
   },
   async cancelOrders(input: CancelOrdersInput): Promise<CancelOrdersResponse> {
     return request<CancelOrdersResponse>("/orders/cancel", "POST", input)

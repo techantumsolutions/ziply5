@@ -39,6 +39,8 @@ export default function AdminUsersPage() {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState("");
@@ -60,12 +62,24 @@ export default function AdminUsersPage() {
     setLoading(true);
     setError("");
 
-    authedFetch<{ items: UserRow[]; total: number }>(
-      "/api/v1/users?page=1&limit=100"
-    )
-      .then((d) => {
-        setRows(d.items);
-        setTotal(d.total);
+    const fetchPage = (pageNo: number) =>
+      authedFetch<{ items: UserRow[]; total: number }>(
+        `/api/v1/users?page=${pageNo}&limit=100`
+      );
+
+    fetchPage(1)
+      .then(async (first) => {
+        const collected = [...(first.items ?? [])];
+        const overall = first.total ?? collected.length;
+        let pageNo = 2;
+        while (collected.length < overall && pageNo <= 50) {
+          const next = await fetchPage(pageNo);
+          if (!next.items?.length) break;
+          collected.push(...next.items);
+          pageNo += 1;
+        }
+        setRows(collected);
+        setTotal(overall);
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -157,6 +171,17 @@ export default function AdminUsersPage() {
     });
   }, [rows, searchTerm, statusFilter]);
 
+  const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, currentPage, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, statusFilter, pageSize]);
+
   return (
     <section className="w-full space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -199,6 +224,16 @@ export default function AdminUsersPage() {
             <SelectItem value="suspended">Suspended</SelectItem>
           </SelectContent>
         </Select>
+        <Select value={String(pageSize)} onValueChange={(value) => setPageSize(Number(value))}>
+          <SelectTrigger className="h-auto w-full rounded-full border border-[#E3E3DA] bg-white px-4 py-2.5 text-sm text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
+            <SelectValue placeholder="Per page" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10 / page</SelectItem>
+            <SelectItem value="20">20 / page</SelectItem>
+            <SelectItem value="50">50 / page</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {error && (
@@ -213,23 +248,27 @@ export default function AdminUsersPage() {
 
       {!loading && (
         <ConsoleTable
-          headers={["Name", "Email", "Roles", "Status", "Joined","Edit"]}
+          headers={["S. NO.", "Name", "Email", "Roles", "Status", "Joined","Edit"]}
         >
-          {filteredRows.length === 0 ? (
+          {pagedRows.length === 0 ? (
             <tr>
               <ConsoleTd
-                colSpan={6}
+                colSpan={7}
                 className="py-8 text-center text-[#646464]"
               >
                 No users found.
               </ConsoleTd>
             </tr>
           ) : (
-            filteredRows.map((u) => (
+            pagedRows.map((u, index) => (
               <tr
                 key={u.id}
                 className="hover:bg-[#FFFBF3]/80"
               >
+                <ConsoleTd className="text-[12px] text-[#646464]">
+                  {(currentPage - 1) * pageSize + index + 1}
+                </ConsoleTd>
+
                 <ConsoleTd className="font-medium">
                   {u.name}
                 </ConsoleTd>
@@ -301,6 +340,30 @@ export default function AdminUsersPage() {
             ))
           )}
         </ConsoleTable>
+      )}
+
+      {!loading && (
+        <div className="flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+            disabled={currentPage <= 1}
+            className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+          >
+            Previous
+          </button>
+          <p className="text-xs text-[#646464]">
+            Page {currentPage} / {pageCount}
+          </p>
+          <button
+            type="button"
+            onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))}
+            disabled={currentPage >= pageCount}
+            className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+          >
+            Next
+          </button>
+        </div>
       )}
 
       {/* Add User Modal */}

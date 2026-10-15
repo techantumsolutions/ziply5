@@ -19,6 +19,7 @@ import {
   orderHistoryHasCancelRequested,
   shouldRenderCustomerCancelOrderButton,
 } from "@/src/lib/orders/order-cancel-policy"
+import { orderStatusLabel } from "@/src/lib/orders/manual-order-status"
 import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibility"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 
@@ -162,7 +163,10 @@ function ProfilePageContent() {
         })
         const payload = await res.json()
         if (payload.success && Array.isArray(payload.data)) {
-          const group = payload.data.find((g: any) => g.key === "RETURN_REASONS")
+          const group = payload.data.find((g: any) => g.key === "RETURN_REASONS" && g.values?.length)
+            ?? payload.data.find((g: any) => g.key === "RETURN_REASON" && g.values?.length)
+            ?? payload.data.find((g: any) => g.key === "RETURN_REASONS")
+            ?? payload.data.find((g: any) => g.key === "RETURN_REASON")
           if (group && Array.isArray(group.values)) {
             setReturnReasons(group.values)
           }
@@ -1121,7 +1125,7 @@ function ProfilePageContent() {
                               </>
                             ) : (
                               <span className="rounded-full bg-[#FDF0E6] px-2.5 py-1 text-[10px] font-semibold uppercase text-[#7B3010]">
-                                Order Status: {order.status}
+                                Order Status: {orderStatusLabel(latestLifecycle || order.status)}
                               </span>
                             )}
                           </div>

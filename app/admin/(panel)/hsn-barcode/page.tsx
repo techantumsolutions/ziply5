@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation"
 import { useQueryClient } from "@tanstack/react-query"
 import { useMasterValues } from "@/hooks/useMasterData"
 import { authedFetch } from "@/lib/dashboard-fetch"
-import { Download, Upload, Plus, FileSpreadsheet, CheckCircle2, AlertCircle, Trash2, Search, FileText, X, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
+import { Download, Upload, Plus, FileSpreadsheet, CheckCircle2, AlertCircle, Trash2, Search, X, Loader2, ChevronLeft, ChevronRight } from "lucide-react"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { toast } from "@/lib/toast"
 
 type MasterValue = {
@@ -45,6 +51,7 @@ export default function HsnBarcodePage() {
   // Search & Pagination filter
   const [searchQuery, setSearchQuery] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
+  const [openPanel, setOpenPanel] = useState<"add" | "bulk" | null>(null)
 
   // Fetch master values
   const { data: items = [], isLoading, refetch } = useMasterValues(activeTab, true, false)
@@ -101,6 +108,7 @@ export default function HsnBarcodePage() {
       } else {
         setSingleCode("")
         setSingleName("")
+        setOpenPanel(null)
         await queryClient.invalidateQueries({ queryKey: ["master-values"] })
         await queryClient.refetchQueries({ queryKey: ["master-values"] })
         await refetch()
@@ -280,6 +288,8 @@ export default function HsnBarcodePage() {
             onClick={() => {
               setActiveTab("HSN_CODE")
               setCurrentPage(1)
+              setSearchQuery("")
+              setOpenPanel(null)
               setSingleError("")
               setBulkError("")
               setBulkResult(null)
@@ -297,6 +307,8 @@ export default function HsnBarcodePage() {
             onClick={() => {
               setActiveTab("BARCODE_NUMBER")
               setCurrentPage(1)
+              setSearchQuery("")
+              setOpenPanel(null)
               setSingleError("")
               setBulkError("")
               setBulkResult(null)
@@ -312,15 +324,34 @@ export default function HsnBarcodePage() {
         </div>
       </div>
 
-      {/* Grid for Single Add & Bulk Upload */}
-      <div className="grid gap-6 md:grid-cols-2">
-        {/* Single Add Form */}
-        <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 text-[#4A1D1F]">
-            <Plus className="h-5 w-5 text-[#7B3010]" />
-            <h2 className="font-semibold text-base">Add Single {codeLabel}</h2>
-          </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setOpenPanel("add")}
+          className="inline-flex items-center gap-2 rounded-full bg-[#7B3010] px-4 py-2 text-xs font-bold uppercase tracking-wide text-white hover:bg-[#5E240C]"
+        >
+          <Plus className="h-4 w-4" />
+          Add code
+        </button>
+        <button
+          type="button"
+          onClick={() => setOpenPanel("bulk")}
+          className="inline-flex items-center gap-2 rounded-full border border-[#7B3010] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wide text-[#7B3010] hover:bg-[#FFF7ED]"
+        >
+          <Upload className="h-4 w-4" />
+          Bulk upload
+        </button>
+      </div>
 
+      <Dialog open={openPanel === "add"} onOpenChange={(open) => setOpenPanel(open ? "add" : null)}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[#4A1D1F]">
+              <Plus className="h-5 w-5 text-[#7B3010]" />
+              Add Single {codeLabel}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
           {singleError && (
             <div className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-xs text-red-800 border border-red-200">
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -363,15 +394,20 @@ export default function HsnBarcodePage() {
               {savingSingle ? "Saving..." : `Add ${codeLabel}`}
             </button>
           </form>
-        </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
-        {/* Bulk Upload CSV */}
-        <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-[#4A1D1F]">
+      <Dialog open={openPanel === "bulk"} onOpenChange={(open) => setOpenPanel(open ? "bulk" : null)}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-[#4A1D1F]">
               <FileSpreadsheet className="h-5 w-5 text-[#7B3010]" />
-              <h2 className="font-semibold text-base">Bulk CSV Upload</h2>
-            </div>
+              Bulk CSV Upload
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+          <div className="flex items-center justify-end">
             <button
               type="button"
               onClick={handleDownloadCsvTemplate}
@@ -490,8 +526,9 @@ export default function HsnBarcodePage() {
               </div>
             )}
           </div>
-        </div>
-      </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Existing Items Table */}
       <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-4">
@@ -505,7 +542,7 @@ export default function HsnBarcodePage() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A8A82]" />
             <input
               type="text"
-              placeholder={`Search ${codeLabel}...`}
+              placeholder="Search by code or name"
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
@@ -520,7 +557,7 @@ export default function HsnBarcodePage() {
           <div className="p-8 text-center text-xs text-[#8A8A82]">Loading entries...</div>
         ) : filteredItems.length === 0 ? (
           <div className="p-8 text-center text-xs text-[#8A8A82]">
-            {searchQuery ? "No matching entries found." : `No ${codeLabel} entries added yet. Add one above or upload CSV.`}
+            {searchQuery ? "No matching entries found." : `No ${codeLabel} entries added yet. Use Add code or Bulk upload.`}
           </div>
         ) : (
           <>
@@ -528,7 +565,7 @@ export default function HsnBarcodePage() {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#E8DCC8] bg-[#FFFBF5] text-[#4A1D1F] font-semibold uppercase tracking-wider">
-                    <th className="px-4 py-3">#</th>
+                    <th className="px-4 py-3">S. NO.</th>
                     <th className="px-4 py-3">{codeLabel}</th>
                     <th className="px-4 py-3">{nameLabel}</th>
                     <th className="px-4 py-3 text-right">Actions</th>
