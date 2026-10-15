@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useMasterValues, useMasterGroups } from "@/hooks/useMasterData";
 import { authedFetch } from "@/lib/dashboard-fetch";
-import { Edit2, Check, X } from "lucide-react";
+import { Edit2, Check, X, Trash2 } from "lucide-react";
 
 type Props = {
   groupKey: string;
@@ -118,6 +118,16 @@ export default function MasterDataCreatorForm({ groupKey, groupName }: Props) {
     setEditLabel("");
   };
 
+  const removeValue = async (id: string) => {
+    setError("");
+    try {
+      await authedFetch(`/api/master/value/${id}`, { method: "DELETE" });
+      await refetch();
+    } catch (err: any) {
+      setError(err.message || "Failed to delete item");
+    }
+  };
+
   const saveEdit = async (id: string) => {
     if (!editLabel) return;
     try {
@@ -174,6 +184,9 @@ export default function MasterDataCreatorForm({ groupKey, groupName }: Props) {
                 <div className="flex items-center gap-3">
                   <button type="button" onClick={() => startEdit(v.id, v.label)} className="cursor-pointer text-gray-400 hover:text-[#7B3010] transition-colors">
                     <Edit2 size={14} />
+                  </button>
+                  <button type="button" onClick={() => void removeValue(v.id)} className="cursor-pointer text-gray-400 hover:text-red-600 transition-colors" title="Delete">
+                    <Trash2 size={14} />
                   </button>
                   <button
                     type="button"

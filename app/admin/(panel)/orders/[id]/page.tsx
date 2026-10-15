@@ -8,6 +8,7 @@ import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
 import { AlertTriangle, Ban, Check, Download, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
+import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
 import { toast } from "@/lib/toast"
 
 type OrderDetail = {
@@ -138,6 +139,7 @@ export default function AdminOrderDetailPage() {
   const [savingNote, setSavingNote] = useState(false)
   const [shiprocketBusy, setShiprocketBusy] = useState<string | null>(null)
   const [serviceabilitySummary, setServiceabilitySummary] = useState<string>("")
+  const [serviceable, setServiceable] = useState(false)
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
   const [syncingOrder, setSyncingOrder] = useState(false)
   const [showCancelModal, setShowCancelModal] = useState(false)
@@ -276,6 +278,7 @@ export default function AdminOrderDetailPage() {
       | "create_shipment"
       | "assign_awb"
       | "generate_pickup"
+      | "sync_order"
       | "retry_shipment_sync"
       | "refresh_tracking"
       | "regenerate_tracking_data"
@@ -286,18 +289,32 @@ export default function AdminOrderDetailPage() {
     setError("")
     try {
       const result = await authedPost<{
-        availableCouriers?: Array<{ name: string; eta_days: number; rate: number }>
+        availableCouriers?: Array<{ name: string; eta_days: number; rate: number; charge_weight_kg?: number; min_weight_kg?: number }>
+        weight?: number | null
+        lengthCm?: number | null
+        widthCm?: number | null
+        heightCm?: number | null
         shipmentId?: string | null
         awbCode?: string | null
         courierName?: string | null
         pickup?: { pickup_status?: string | null }
-      }>(`/api/v1/orders/${params.id}/shiprocket`, { action })
+      }>(`/api/v1/orders/${params.id}/shiprocket`, action === "sync_order" ? { action, panelSync: true, generatePickup: false } : { action })
       if (action === "serviceability") {
         const top = (result.availableCouriers ?? []).slice(0, 2)
+        const packageLine = [
+          result.weight != null ? `package ${result.weight} kg` : null,
+          result.lengthCm && result.widthCm && result.heightCm ? `${result.lengthCm}×${result.widthCm}×${result.heightCm} cm` : null,
+        ].filter(Boolean).join(", ")
         const summary = top.length
-          ? top.map((courier) => `${courier.name} (${courier.eta_days}d • Rs.${courier.rate})`).join(" | ")
+          ? `${packageLine ? `${packageLine}: ` : ""}${top.map((courier) => {
+              const eta = courier.eta_days > 0 ? `${courier.eta_days}d` : "eta unavailable"
+              const charge = courier.charge_weight_kg != null ? `, chargeable ${courier.charge_weight_kg} kg` : ""
+              const minimum = courier.min_weight_kg != null ? `, courier minimum ${courier.min_weight_kg} kg` : ""
+              return `${courier.name} (${eta}${charge}${minimum} • Rs.${courier.rate})`
+            }).join(" | ")}`
           : "No courier can deliver this pincode"
         setServiceabilitySummary(summary)
+        setServiceable(top.length > 0)
         toast.success("Serviceability", summary)
         return
       }
@@ -307,6 +324,7 @@ export default function AdminOrderDetailPage() {
         generate_pickup: "Pickup requested",
         refresh_tracking: "Tracking refreshed",
         retry_shipment_sync: "Shiprocket sync completed",
+        sync_order: "Order and shipment status updated from Shiprocket",
         regenerate_tracking_data: "Tracking data regenerated",
         repair_shipment_state: "Shipment state repaired",
       }
@@ -457,7 +475,7 @@ export default function AdminOrderDetailPage() {
             {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
             Sync order
           </Button>
-          <Button variant="outline" onClick={() => void handleDownloadInvoice()} disabled={!order || downloadingInvoice}>
+          <Button variant="outline" onClick={() => void handleDownloadInvoice()} disabled={!order || downloadingInvoice || !["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered", "completed"].includes(lifecycleStatus)}>
             {downloadingInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
             Ziply5 invoice
           </Button>
@@ -498,6 +516,57 @@ export default function AdminOrderDetailPage() {
           <OrderProgress status={lifecycleStatus} createdAt={order.createdAt} history={order.statusHistory} />
 
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.85fr)]">
+            <div className="space-y-4">
+            <div className="grid items-stretch gap-4 md:grid-cols-2">
+            <div className="flex h-full flex-col rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-[#111827]">Payment summary</h2>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${String(order.paymentStatus).toLowerCase() === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
+                  {order.paymentStatus ?? "Pending"}
+                </span>
+              </div>
+              <div className="space-y-2 text-sm text-[#374151]">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Payment method</span>
+                  <span className="font-medium capitalize">{(order.paymentMethod || "—").replaceAll("_", " ")}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Transaction ID</span>
+                  <span className="max-w-[180px] truncate font-mono text-xs" title={order.paymentId ?? ""}>{order.paymentId || "—"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Payment date</span>
+                  <span>{order.transactions?.[0]?.createdAt ? formatOrderDateTime(order.transactions[0].createdAt) : "—"}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#6B7280]">Amount paid</span>
+                  <span className="text-base font-semibold text-[#111827]">{formatInr(Number(order.total))}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex h-full flex-col rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Customer details</h2>
+              <div className="flex items-start gap-3">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ECFDF3] text-sm font-semibold text-[#166534]">
+                  {initials(order.customerName ?? order.user?.name)}
+                </span>
+                <div className="min-w-0 space-y-1 text-sm">
+                  <p className="font-semibold text-[#111827]">{order.customerName ?? order.user?.name ?? "Guest customer"}</p>
+                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Mail className="h-3.5 w-3.5" />{order.customerEmail ?? order.user?.email ?? "No email"}</p>
+                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Phone className="h-3.5 w-3.5" />{order.customerPhone ?? "No phone"}</p>
+                </div>
+              </div>
+              <div className="mt-4 border-t border-[#F3F4F6] pt-3">
+                <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
+                  <MapPin className="h-3.5 w-3.5" /> Shipping address
+                </p>
+                <p className="text-sm leading-relaxed text-[#111827]">{order.customerName ?? order.user?.name ?? "Customer"}</p>
+                <p className="text-sm leading-relaxed text-[#4B5563]">{order.customerAddress ?? "No shipping address saved"}</p>
+              </div>
+            </div>
+            </div>
+
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-sm font-semibold text-[#111827]">Product details ({order.items?.length ?? 0} items)</h2>
               {(order.items ?? []).length === 0 ? (
@@ -580,71 +649,42 @@ export default function AdminOrderDetailPage() {
                 </div>
               </div>
             </div>
+            </div>
 
             <div className="space-y-4">
-            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-[#111827]">Payment summary</h2>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${String(order.paymentStatus).toLowerCase() === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                  {order.paymentStatus ?? "Pending"}
-                </span>
-              </div>
-              <div className="space-y-2 text-sm text-[#374151]">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Payment method</span>
-                  <span className="font-medium capitalize">{(order.paymentMethod || "—").replaceAll("_", " ")}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Transaction ID</span>
-                  <span className="max-w-[180px] truncate font-mono text-xs" title={order.paymentId ?? ""}>{order.paymentId || "—"}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Payment date</span>
-                  <span>{order.transactions?.[0]?.createdAt ? formatOrderDateTime(order.transactions[0].createdAt) : "—"}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Amount paid</span>
-                  <span className="text-base font-semibold text-[#111827]">{formatInr(Number(order.total))}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-semibold text-[#111827]">Customer details</h2>
-              <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#ECFDF3] text-sm font-semibold text-[#166534]">
-                  {initials(order.customerName ?? order.user?.name)}
-                </span>
-                <div className="min-w-0 space-y-1 text-sm">
-                  <p className="font-semibold text-[#111827]">{order.customerName ?? order.user?.name ?? "Guest customer"}</p>
-                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Mail className="h-3.5 w-3.5" />{order.customerEmail ?? order.user?.email ?? "No email"}</p>
-                  <p className="flex items-center gap-1.5 text-[#4B5563]"><Phone className="h-3.5 w-3.5" />{order.customerPhone ?? "No phone"}</p>
-                </div>
-              </div>
-              <div className="mt-4 border-t border-[#F3F4F6] pt-3">
-                <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-[#6B7280]">
-                  <MapPin className="h-3.5 w-3.5" /> Shipping address
-                </p>
-                <p className="text-sm leading-relaxed text-[#111827]">{order.customerName ?? order.user?.name ?? "Customer"}</p>
-                <p className="text-sm leading-relaxed text-[#4B5563]">{order.customerAddress ?? "No shipping address saved"}</p>
-              </div>
-            </div>
-
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               {(() => {
                 const activeShipment = (order.shipments ?? []).find((shipment) => String(shipment.shipmentStatus ?? "").toLowerCase() !== "cancelled" && !shipment.cancelledAt) ?? null
                 const courier = order.courierName || activeShipment?.courierName || activeShipment?.carrier || null
                 const trackingNumber = order.awbCode || order.trackingNumber || activeShipment?.awbCode || activeShipment?.trackingNo || null
                 const trackingUrl = order.trackingUrl || activeShipment?.trackingUrl || null
-                const hasShipment = Boolean(activeShipment)
-                const hasAwb = Boolean(trackingNumber)
-                const pickupDone = Boolean(order.isPickupGenerated) || String(order.pickupStatus ?? activeShipment?.pickupStatus ?? "").toLowerCase().includes("pickup")
+                const linkedShipment = Boolean(activeShipment)
+                const pickupStatusText = order.pickupStatus || activeShipment?.pickupStatus || activeShipment?.shipmentStatus || order.shipmentStatus || ""
+                const pickupDone = Boolean(order.isPickupGenerated) && isConfirmedPickupRequest(pickupStatusText)
                 const busy = (action: string) => shiprocketBusy === action
-                const buttonClass = "rounded-lg border border-[#E5E7EB] px-2.5 py-1 text-[11px] font-semibold text-[#374151] hover:bg-[#F9FAFB] disabled:cursor-not-allowed disabled:opacity-40"
+                const buttonClass = "cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1.5 text-[11px] font-semibold text-[#7B3010] shadow-sm transition hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#FFF7ED] disabled:hover:text-[#7B3010]"
                 return (
                   <>
                     <h2 className="mb-3 text-sm font-semibold text-[#111827]">Delivery details</h2>
-                    <div className="space-y-3 text-sm">
+                    <div className="flex flex-wrap gap-2">
+                      {shipmentState === "cancelled" ? null : (
+                        <>
+                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
+                      {(linkedShipment || serviceable) && (
+                        <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("sync_order")} className={buttonClass}>{busy("sync_order") ? "Syncing..." : "Sync"}</button>
+                      )}
+                        </>
+                      )}
+                    </div>
+                    {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
+                    <div className="mt-3">
+                      <TrackingTimeline
+                        orderStatus={lifecycleStatus}
+                        shipmentStatus={pickupDone ? (order.pickupStatus || activeShipment?.pickupStatus || "pickup_generated") : (activeShipment?.shipmentStatus ?? order.shipmentStatus ?? null)}
+                        statusHistory={order.statusHistory}
+                      />
+                    </div>
+                    <div className="mt-4 space-y-3 border-t border-[#F3F4F6] pt-3 text-sm">
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-[#6B7280]">Delivery method</span>
                         <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
@@ -663,7 +703,7 @@ export default function AdminOrderDetailPage() {
                       <div className="flex items-start justify-between gap-3">
                         <span className="text-[#6B7280]">Tracking link</span>
                         {trackingUrl ? (
-                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="font-medium text-[#166534] hover:underline">Open tracking</a>
+                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="cursor-pointer font-medium text-[#166534] hover:underline">Open tracking</a>
                         ) : (
                           <span className="text-[#111827]">—</span>
                         )}
@@ -672,22 +712,6 @@ export default function AdminOrderDetailPage() {
                         <span className="text-[#6B7280]">Shipment</span>
                         <span className="font-medium text-[#111827]">{activeShipment?.shipmentNo || activeShipment?.id || "Not created"}</span>
                       </div>
-                    </div>
-                    <div className="mt-4 flex flex-wrap gap-2 border-t border-[#F3F4F6] pt-3">
-                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
-                      <button type="button" disabled={Boolean(shiprocketBusy) || hasShipment} title={hasShipment ? "A shipment already exists" : "Create the Shiprocket shipment"} onClick={() => void runShiprocketAction("create_shipment")} className={buttonClass}>{busy("create_shipment") ? "Creating..." : "Create Shipment"}</button>
-                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasShipment || hasAwb} title={!hasShipment ? "Create a shipment first" : hasAwb ? "AWB already assigned" : "Assign a courier AWB"} onClick={() => void runShiprocketAction("assign_awb")} className={buttonClass}>{busy("assign_awb") ? "Assigning..." : "Assign AWB"}</button>
-                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasAwb || pickupDone} title={!hasAwb ? "Assign an AWB first" : "Request courier pickup"} onClick={() => void runShiprocketAction("generate_pickup")} className={buttonClass}>{busy("generate_pickup") ? "Generating..." : "Generate Pickup"}</button>
-                      <button type="button" disabled={Boolean(shiprocketBusy) || !hasAwb} title={!hasAwb ? "Assign an AWB first" : "Pull the latest tracking from Shiprocket"} onClick={() => void runShiprocketAction("refresh_tracking")} className={buttonClass}>{busy("refresh_tracking") ? "Refreshing..." : "Refresh Tracking"}</button>
-                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("retry_shipment_sync")} className={buttonClass}>{busy("retry_shipment_sync") ? "Retrying..." : "Retry Sync"}</button>
-                    </div>
-                    {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
-                    <div className="mt-3">
-                      <TrackingTimeline
-                        orderStatus={lifecycleStatus}
-                        shipmentStatus={pickupDone ? (order.pickupStatus || activeShipment?.pickupStatus || "pickup_generated") : (activeShipment?.shipmentStatus ?? order.shipmentStatus ?? null)}
-                        statusHistory={order.statusHistory}
-                      />
                     </div>
                   </>
                 )

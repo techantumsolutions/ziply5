@@ -3,17 +3,9 @@
 import BannerSection from "@/components/BannerSection";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { useLocations } from "@/hooks/useLocations";
 import { getCartItems, type CartItem, setCartItems, validateCartItems } from "@/lib/cart";
 import { useStorefrontProducts } from "@/hooks/useStorefrontProducts";
 import { toast } from "@/lib/toast";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authedFetch, authedPost, authedPatch } from "@/lib/dashboard-fetch"; // Utility functions for authenticated API calls
@@ -59,39 +51,6 @@ export default function CheckoutPage() {
 
   const [state, setState] = useState("");
   const [city, setCity] = useState("");
-
-  const { data: states } = useLocations("state");
-  const { data: cities } = useLocations("city");
-  const [cityMap, setCityMap] = useState<Record<string, string[]>>({});
-
-  useEffect(() => {
-    fetch("/data/india-locations.json")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data?.cities) setCityMap(data.cities);
-      })
-      .catch(() => { });
-  }, []);
-
-  const availableCities = cities?.filter((c: any) => {
-    if (!state) return false;
-    const selectedStateObj = states?.find((s) => s.label === state);
-    if (!selectedStateObj) return false;
-
-    // 1. Check for strict DB relationship
-    const parentRef = c.parentState || c.valueJson?.parentState || c.meta?.parentState;
-    if (parentRef) {
-      return parentRef === selectedStateObj.value || parentRef === selectedStateObj.label;
-    }
-
-    // 2. Fallback to local JSON map
-    if (selectedStateObj.label && cityMap[selectedStateObj.label]) {
-      return cityMap[selectedStateObj.label].includes(c.label);
-    }
-
-    // 3. Absolute Failsafe
-    return Object.keys(cityMap).length === 0;
-  });
 
   const sessionKey = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -167,12 +126,6 @@ export default function CheckoutPage() {
     phone: "",
   });
 
-  const [fetchingPincode, setFetchingPincode] = useState(false);
-  const loadedPostalCodeRef = useRef("");
-
-  const normalizeStr = (str: string) =>
-    str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
-
   const loadAddresses = useCallback(async () => {
     const token = typeof window !== "undefined" ? window.localStorage.getItem("ziply5_access_token") : null;
     if (!token) {
@@ -231,7 +184,6 @@ export default function CheckoutPage() {
 
       if (initialAddr) {
         setSelectedAddressId(initialSelectedId);
-        loadedPostalCodeRef.current = initialAddr.postalCode;
         setBilling((prev) => ({
           firstName: initialAddr.firstName || "",
           lastName: initialAddr.lastName || "",
@@ -266,7 +218,6 @@ export default function CheckoutPage() {
     if (savedCheckout) {
       if (savedCheckout.billingAddress) {
         const [firstName, ...last] = (savedCheckout.billingAddress.fullName || "").split(" ");
-        loadedPostalCodeRef.current = savedCheckout.billingAddress.postalCode ?? "";
         setBilling((prev) => ({
           ...prev,
           firstName: firstName ?? "",
@@ -329,59 +280,6 @@ export default function CheckoutPage() {
   }, [couponCode, loadAddresses]);
 
 
-
-  // Pincode Lookup Logic
-  useEffect(() => {
-    const pin = billing.postalCode.trim();
-    if (pin.length === 6 && /^\d{6}$/.test(pin)) {
-      if (loadedPostalCodeRef.current === pin) {
-        return;
-      }
-      const controller = new AbortController();
-      const runLookup = async () => {
-        setFetchingPincode(true);
-        try {
-          const res = await fetch(`/api/v1/pincode/${pin}`, { signal: controller.signal });
-          const payload = await res.json();
-          if (payload.success && payload.data) {
-            const { city: fetchedCity, state: fetchedState } = payload.data;
-
-            // Case-insensitive & accent-insensitive state matching
-            if (fetchedState && states) {
-              const normState = normalizeStr(fetchedState);
-              const matchedState = states.find(s => normalizeStr(s.label) === normState);
-
-              if (matchedState) {
-                setState(matchedState.label);
-              } else {
-                // Fallback to title case
-                const titleCaseState = fetchedState.toLowerCase().split(' ').map((w: any) => w.charAt(0).toUpperCase() + w.substring(1)).join(' ');
-                setState(titleCaseState);
-              }
-            }
-
-            if (fetchedCity) {
-              const normCity = normalizeStr(fetchedCity);
-              const titleCaseCity = fetchedCity.toLowerCase().split(' ').map((w: any) => w.charAt(0).toUpperCase() + w.substring(1)).join(' ');
-
-              // We need to wait for state to update and cities to be available
-              // or just set the city and hope the Select can handle it.
-              // Since availableCities depends on 'state', we set a small timeout or use the city directly.
-              setCity(titleCaseCity);
-            }
-          }
-        } catch (err) {
-          if ((err as any).name !== "AbortError") {
-            console.error("Pincode lookup failed:", err);
-          }
-        } finally {
-          setFetchingPincode(false);
-        }
-      };
-      void runLookup();
-      return () => controller.abort();
-    }
-  }, [billing.postalCode]);
 
   useEffect(() => {
     if (!products.length) return;
@@ -484,75 +382,6 @@ export default function CheckoutPage() {
     return calc.ok ? calc.shippingCharge : 0;
   }, [items.length, subTotal, shippingRules]);
 
-  const [deliveryCheck, setDeliveryCheck] = useState<{
-    loading: boolean;
-    error: string | null;
-    lastOk: boolean;
-    data: {
-      status: string;
-      deliverable: boolean;
-      message?: string;
-      estimatedDeliveryDaysMin: number | null;
-      estimatedDeliveryDaysMax: number | null;
-      codAvailable: boolean;
-      prepaidAvailable: boolean;
-    } | null;
-  }>({ loading: false, error: null, lastOk: false, data: null });
-
-  const runDeliveryCheck = useCallback(async () => {
-    const pin = billing.postalCode.trim();
-    if (!/^\d{6}$/.test(pin) || totalPacksForShipping < 1) {
-      setDeliveryCheck((prev) => ({ ...prev, loading: false, error: null, data: null, lastOk: false }));
-      return;
-    }
-    setDeliveryCheck((prev) => ({ ...prev, loading: true, error: null }));
-    try {
-      const res = await fetch("/api/shipping/check-serviceability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          delivery_postcode: pin,
-          cod: false,
-          subtotal: subTotal,
-          totalItems: totalPacksForShipping,
-        }),
-      });
-      const payload = (await res.json()) as {
-        success?: boolean;
-        message?: string;
-        data?: {
-          status: string;
-          deliverable: boolean;
-          message?: string;
-          estimatedDeliveryDaysMin: number | null;
-          estimatedDeliveryDaysMax: number | null;
-          codAvailable: boolean;
-          prepaidAvailable: boolean;
-        };
-      };
-      if (!res.ok || payload.success === false || !payload.data) {
-        throw new Error(payload.message ?? "Unable to verify delivery for this pincode.");
-      }
-      const d = payload.data;
-      setDeliveryCheck({ loading: false, error: null, lastOk: true, data: d });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Delivery check failed";
-      setDeliveryCheck({ loading: false, error: msg, lastOk: false, data: null });
-      toast.warning("Could not verify delivery right now. You can still try to place your order.");
-    }
-  }, [billing.postalCode, subTotal, totalPacksForShipping]);
-
-  useEffect(() => {
-    const pin = billing.postalCode.trim();
-    if (!/^\d{6}$/.test(pin) || totalPacksForShipping < 1) {
-      setDeliveryCheck({ loading: false, error: null, lastOk: false, data: null });
-      return;
-    }
-    const t = window.setTimeout(() => {
-      void runDeliveryCheck();
-    }, 450);
-    return () => window.clearTimeout(t);
-  }, [billing.postalCode, subTotal, totalPacksForShipping, runDeliveryCheck]);
   const baseTotal =
     offerFinalTotal != null
       ? offerFinalTotal
@@ -727,7 +556,6 @@ export default function CheckoutPage() {
 
     const addr = savedAddresses.find((a) => a.id === id);
     if (addr) {
-      loadedPostalCodeRef.current = addr.postalCode;
       setBilling((prev) => ({
         firstName: addr.firstName || prev.firstName,
         lastName: addr.lastName || prev.lastName,
@@ -758,12 +586,6 @@ export default function CheckoutPage() {
     setPlacing(true);
     setOrderError("");
     try {
-      if (deliveryCheck.data?.status === "not_deliverable" && deliveryCheck.lastOk) {
-        const message = "Delivery is not available for this pincode. Please choose a different address.";
-        setOrderError(message);
-        toast.error(message);
-        return;
-      }
       const fullName = `${billing.firstName} ${billing.lastName}`.trim();
       const payload = {
         fullName,
@@ -1062,62 +884,6 @@ export default function CheckoutPage() {
                 </Link>
               </div>
 
-              {/* Delivery validation (Shiprocket serviceability — pricing is Ziply5 slabs only) */}
-              {billing.postalCode.trim().length >= 6 && validatedItems.length > 0 && (
-                <div className="md:col-span-2 rounded-xl border border-[#e8e0d4] bg-white/80 p-3 text-sm text-[#646464]">
-                  {deliveryCheck.loading && (
-                    <p className="flex items-center gap-2">
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Checking delivery for this pincode…
-                    </p>
-                  )}
-                  {!deliveryCheck.loading && deliveryCheck.error && (
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <span className="text-amber-800">{deliveryCheck.error}</span>
-                      <button
-                        type="button"
-                        className="rounded-full border border-[#7B3010] px-3 py-1 text-xs font-semibold text-[#7B3010]"
-                        onClick={() => void runDeliveryCheck()}
-                      >
-                        Retry
-                      </button>
-                    </div>
-                  )}
-                  {!deliveryCheck.loading && !deliveryCheck.error && deliveryCheck.data?.status === "deliverable" && (
-                    <p className="text-emerald-800">
-                      Deliverable
-                      {deliveryCheck.data.estimatedDeliveryDaysMin != null && (
-                        <span className="ml-1">
-                          · Est. {deliveryCheck.data.estimatedDeliveryDaysMin}
-                          {deliveryCheck.data.estimatedDeliveryDaysMax != null &&
-                            deliveryCheck.data.estimatedDeliveryDaysMax !== deliveryCheck.data.estimatedDeliveryDaysMin
-                            ? `–${deliveryCheck.data.estimatedDeliveryDaysMax}`
-                            : ""}{" "}
-                          day(s)
-                        </span>
-                      )}
-                    </p>
-                  )}
-                  {!deliveryCheck.loading && !deliveryCheck.error && deliveryCheck.data?.status === "limited_service" && (
-                    <p className="text-amber-900">
-                      Limited service for this pincode (fewer courier options or longer transit). You can continue with prepaid;
-                      COD may be restricted for this destination.
-                    </p>
-                  )}
-                  {!deliveryCheck.loading && !deliveryCheck.error && deliveryCheck.data?.status === "not_deliverable" && (
-                    <p className="text-red-700 font-medium">
-                      Not deliverable to this pincode. Please update your address to continue.
-                    </p>
-                  )}
-                  {!deliveryCheck.loading && !deliveryCheck.error && deliveryCheck.data?.status === "api_unavailable" && (
-                    <p className="text-amber-900">
-                      {deliveryCheck.data.message ??
-                        "We could not verify delivery with the carrier right now. You may still place your order; we will confirm before dispatch."}
-                    </p>
-                  )}
-                </div>
-              )}
-
             </div>
             <div className="mt-4 flex flex-col gap-4">
               {/* Terms */}
@@ -1147,7 +913,7 @@ export default function CheckoutPage() {
               <button
                 type="button"
                 onClick={() => void goToPayment()}
-                disabled={placing || items.length === 0 || total < minCartValue || (deliveryCheck.data?.status === "not_deliverable" && deliveryCheck.lastOk)}
+                disabled={placing || items.length === 0 || total < minCartValue}
                 className="bg-[#7B3010] shadow-2xl tracking-wide font-medium text-white w-full py-4 rounded-full font-melon disabled:opacity-60 disabled:cursor-not-allowed transition-all"
               >
                 {placing ? "Please wait…" : "Place Order →"}

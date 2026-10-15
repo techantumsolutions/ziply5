@@ -1618,6 +1618,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         shippingStatus: safeString((row as Record<string, unknown>).shippingStatus ?? (row as Record<string, unknown>).shipping_status) || null,
         shipmentStatus: safeString((row as Record<string, unknown>).shipmentStatus ?? (row as Record<string, unknown>).shipment_status) || null,
         pickupStatus: safeString((row as Record<string, unknown>).pickupStatus ?? (row as Record<string, unknown>).pickup_status) || null,
+        labelUrl: safeString((row as Record<string, unknown>).labelUrl ?? (row as Record<string, unknown>).label_url) || null,
         shippingCharges: (row.shippingCharges ?? row.shipping_charges ?? null) as number | null,
         shippingMethod: safeString((row as Record<string, unknown>).shippingMethod ?? (row as Record<string, unknown>).shipping_method) || null,
         estimatedDeliveryDate: (row.estimatedDeliveryDate ?? row.estimated_delivery_date ?? null) as string | Date | null,

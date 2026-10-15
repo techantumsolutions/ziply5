@@ -2,6 +2,7 @@
 
 import type React from "react"
 import { useEffect, useMemo, useState } from "react"
+import Link from "next/link"
 import { authedFetch } from "@/lib/dashboard-fetch"
 import { Package, ShoppingCart, Users, IndianRupee } from "lucide-react"
 import { FadeIn, ScaleHover } from "@/components/animations"
@@ -32,56 +33,25 @@ type AdminSummary = {
 
 const money = (n: number) => `Rs.${Number(n || 0).toFixed(2)}`
 
-const AnimatedNumber = ({
-  value,
-  prefix = "",
-  suffix = "",
-}: {
-  value: number
-  prefix?: string
-  suffix?: string
-}) => {
-  const [count, setCount] = useState(0)
-
-  useEffect(() => {
-    let start = 0
-    const duration = 1200
-    const startTime = performance.now()
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime
-      const progress = Math.min(elapsed / duration, 1)
-
-      const current = Math.floor(progress * value)
-
-      setCount(current)
-
-      if (progress < 1) {
-        requestAnimationFrame(animate)
-      }
-    }
-
-    requestAnimationFrame(animate)
-  }, [value])
-
-  return (
-    <span>
-      {prefix}
-      {count.toLocaleString()}
-      {suffix}
-    </span>
-  )
+const formatStatValue = (value: number, isMoney: boolean) => {
+  const amount = Number(value || 0)
+  if (isMoney) {
+    return `₹${amount.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
+  return amount.toLocaleString("en-IN")
 }
 
 const StatCard = ({
   label,
   value,
+  href,
   icon: Icon,
   iconTone,
   isMoney = false,
 }: {
   label: string
   value: number
+  href: string
   icon: React.ComponentType<{ className?: string }>
   iconTone: "primary" | "accent" | "neutral"
   isMoney?: boolean
@@ -95,7 +65,10 @@ const StatCard = ({
 
   return (
     <ScaleHover className="h-full">
-      <div className="flex h-full items-center gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm transition-all duration-300 will-change-transform hover:shadow-md">
+      <Link
+        href={href}
+        className="flex h-full cursor-pointer items-center gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm transition-all duration-300 will-change-transform hover:shadow-md"
+      >
         <div
           className={`flex h-10 w-10 items-center justify-center rounded-xl ${tone.icon}`}
         >
@@ -108,14 +81,10 @@ const StatCard = ({
           </p>
 
           <p className="mt-0.5 font-melon text-xl font-medium text-[#4A1D1F]">
-            <AnimatedNumber
-              value={value}
-              prefix={isMoney ? "₹" : ""}
-              suffix="+"
-            />
+            {formatStatValue(value, isMoney)}
           </p>
         </div>
-      </div>
+      </Link>
     </ScaleHover>
   )
 }
@@ -169,6 +138,7 @@ export default function AdminDashboardPage() {
                 icon={Users}
                 label="Total Customers"
                 value={summary.totalCustomers}
+                href="/admin/users"
               />
 
               <StatCard
@@ -176,6 +146,7 @@ export default function AdminDashboardPage() {
                 icon={Package}
                 label="Total Products"
                 value={summary.totalProducts}
+                href="/admin/products"
               />
 
               <StatCard
@@ -183,6 +154,7 @@ export default function AdminDashboardPage() {
                 icon={ShoppingCart}
                 label="Total Orders"
                 value={summary.totalOrders}
+                href="/admin/orders"
               />
 
               <StatCard
@@ -190,6 +162,7 @@ export default function AdminDashboardPage() {
                 icon={IndianRupee}
                 label="Total Sales"
                 value={summary.totalSales}
+                href="/admin/reports"
                 isMoney
               />
             </div>

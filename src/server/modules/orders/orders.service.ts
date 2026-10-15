@@ -55,6 +55,8 @@ export type OrderLifecycleStatus =
   | "confirmed"
   | "packed"
   | "shipped"
+  | "in_transit"
+  | "out_for_delivery"
   | "delivered"
   | "cancel_requested"
   | "returned"
@@ -71,7 +73,9 @@ const allowedTransitions: Record<OrderLifecycleStatus, OrderLifecycleStatus[]> =
   pending: ["payment_success", "confirmed", "cancelled"],
   confirmed: ["packed", "cancel_requested", "cancelled"],
   packed: ["shipped", "cancel_requested", "cancelled"],
-  shipped: ["delivered", "returned"],
+  shipped: ["in_transit", "out_for_delivery", "delivered", "returned", "cancelled"],
+  in_transit: ["out_for_delivery", "delivered", "returned", "cancelled"],
+  out_for_delivery: ["delivered", "returned", "cancelled"],
   delivered: ["returned", "return_requested"],
   cancel_requested: ["cancelled", "confirmed"],
   returned: [],
@@ -90,6 +94,8 @@ const internalOrderLifecycleStatuses = new Set<OrderLifecycleStatus>([
   "confirmed",
   "packed",
   "shipped",
+  "in_transit",
+  "out_for_delivery",
   "delivered",
   "cancel_requested",
   "returned",
@@ -103,6 +109,7 @@ const persistedOrderStatus = (status: OrderLifecycleStatus): "pending" | "confir
   if (status === "pending_payment" || status === "payment_success" || status === "admin_approval_pending" || status === "failed") return "pending"
   if (status === "cancel_requested") return "confirmed"
   if (status === "packed") return "confirmed"
+  if (status === "in_transit" || status === "out_for_delivery") return "shipped"
   if (status === "returned" || status === "return_requested" || status === "return_approved" || status === "refund_initiated") return "delivered"
   return status
 }
@@ -891,6 +898,24 @@ const autoSyncFromPayment = async (orderId: string, currentStatus: string, payme
   }).catch(() => null)
 }
 
+const closeOrderWhenShipmentCancelled = async (order: {
+  id: string
+  status?: string | null
+  shipmentStatus?: string | null
+  statusHistory?: Array<{ toStatus?: string | null; changedAt?: string | Date | null; reasonCode?: string | null }>
+}) => {
+  const shipmentStatus = String(order.shipmentStatus ?? "").toLowerCase()
+  const lifecycle = String(order.statusHistory?.[0]?.toStatus ?? order.status ?? "").toLowerCase()
+  if (shipmentStatus !== "cancelled" || ["cancelled", "rejected", "delivered", "returned"].includes(lifecycle)) return
+  const cancelled = await updateOrderStatus(String(order.id), "cancelled", undefined, {
+    reasonCode: "shipment_cancelled",
+    note: "Order cancelled because the shipment was cancelled",
+  }).catch(() => null)
+  if (!cancelled) return
+  order.status = "cancelled"
+  order.statusHistory = [{ toStatus: "cancelled", changedAt: new Date().toISOString(), reasonCode: "shipment_cancelled" }, ...(order.statusHistory ?? [])]
+}
+
 export const listOrders = async (
   page: number,
   limit: number,
@@ -927,6 +952,26 @@ export const listOrders = async (
     )
   }
 
+  const shipmentNos = hydratedItems.length
+    ? await pgQuery<Array<{ orderId: string; shipmentNo: string | null }>>(
+        `SELECT DISTINCT ON ("orderId") "orderId", "shipmentNo"
+         FROM "Shipment"
+         WHERE "orderId" = ANY($1::text[])
+           AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled'
+         ORDER BY "orderId", "createdAt" DESC`,
+        [hydratedItems.map((order) => String(order.id))],
+      ).catch(() => [])
+    : []
+  const shipmentNoByOrder = new Map(shipmentNos.map((row) => [row.orderId, row.shipmentNo]))
+  hydratedItems = hydratedItems.map((order) => ({
+    ...order,
+    shipmentNo: shipmentNoByOrder.get(String(order.id)) ?? null,
+  }))
+
+  for (const order of hydratedItems) {
+    await closeOrderWhenShipmentCancelled(order)
+  }
+
   return { items: hydratedItems, total, page, limit }
 }
 
@@ -957,6 +1002,7 @@ export const getOrderById = async (id: string) => {
     pickupStatus: (hydrated as { pickupStatus?: string | null }).pickupStatus || activeShipment?.pickupStatus || null,
     estimatedDeliveryDate: (hydrated as { estimatedDeliveryDate?: string | null }).estimatedDeliveryDate || activeShipment?.estimatedDeliveryDate || null,
   })
+  await closeOrderWhenShipmentCancelled(hydrated as { id: string; status?: string | null; shipmentStatus?: string | null; statusHistory?: Array<{ toStatus?: string | null; changedAt?: string | Date | null; reasonCode?: string | null }> })
   if (shouldAutoSyncOrders()) {
     await autoSyncFromPayment(String(hydrated.id), String(hydrated.status), String(hydrated.paymentStatus))
     await syncOrderStatusFromShiprocket(String(hydrated.id))
@@ -1063,6 +1109,8 @@ export const updateOrderStatus = async (
     confirmed: "confirmed",
     packed: "packed",
     shipped: "shipped",
+    in_transit: "in_transit",
+    out_for_delivery: "out_for_delivery",
     delivered: "delivered",
     returned: "returned",
     cancelled: "cancelled",

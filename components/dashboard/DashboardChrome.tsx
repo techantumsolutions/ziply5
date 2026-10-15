@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useState, type ReactNode } from "react"
 import type { LucideIcon } from "lucide-react"
 import { Menu, X } from "lucide-react"
+import { AdminNotificationBell } from "./AdminNotificationBell"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { authFetch, clearSession } from "@/lib/auth-session"
 import { AnimatePresence, m, useReducedMotion } from "framer-motion"
@@ -33,12 +34,14 @@ export function DashboardChrome({
   websiteHref,
   navItems,
   children,
+  showAdminNotifications = false,
 }: {
   portalLabel: string
   loginPath: string
   websiteHref: string
   navItems: DashboardNavItem[]
   children: ReactNode
+  showAdminNotifications?: boolean
 }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -267,6 +270,7 @@ export function DashboardChrome({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {showAdminNotifications ? <AdminNotificationBell /> : null}
             <div className="hidden text-right text-xs sm:block">
               <p className="font-semibold text-[#4A1D1F]">{me?.email ?? "…"}</p>            </div>
             <button

@@ -8,7 +8,8 @@ import { useMasterValues } from "@/hooks/useMasterData"
 import { Camera, X } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { useOrderWithTracking } from "@/hooks/useOrderWithTracking"
-import { isOrderShipped } from "@/src/lib/orders/order-shipped"
+import { isOrderShipped, isZiplyInvoiceReady } from "@/src/lib/orders/order-shipped"
+import { generateAdminInvoicePDF } from "@/lib/invoice"
 import {
   deriveLatestLifecycleToStatus,
   orderHistoryHasCancelRequested,
@@ -49,8 +50,11 @@ export default function OrderDetailPage() {
   const queryClient = useQueryClient()
   const statusMasterQuery = useMasterValues("ORDER_STATUS")
   const returnReasonMasterQuery = useMasterValues("RETURN_REASONS")
+  const returnReasonFallbackQuery = useMasterValues("RETURN_REASON")
   const timeline = statusMasterQuery.data?.map((item) => item.value) ?? FALLBACK_TIMELINE
-  const returnReasons = returnReasonMasterQuery.data ?? []
+  const returnReasons = returnReasonMasterQuery.data?.length
+    ? returnReasonMasterQuery.data
+    : returnReasonFallbackQuery.data ?? []
 
   const { orderQuery, trackingQuery, refreshTrackingMutation } = useOrderWithTracking(params.id)
 
@@ -297,6 +301,7 @@ export default function OrderDetailPage() {
 
   const order = orderQuery.data
   const orderShipped = order ? isOrderShipped(order) : false
+  const invoiceReady = order ? isZiplyInvoiceReady(order) : false
   const historySet = useMemo(() => new Set(order?.statusHistory.map((entry) => entry.toStatus.toLowerCase())), [order?.statusHistory])
   const returnedProductIds = useMemo(
     () =>
@@ -433,25 +438,11 @@ export default function OrderDetailPage() {
   }
 
   const downloadInvoice = async () => {
-    if (!order || !orderShipped) return
-    const token = window.localStorage.getItem("ziply5_access_token")
-    if (!token) {
-      toast.error("Invoice", "Please login to download the invoice.")
-      return
-    }
+    if (!order || !invoiceReady) return
     setDownloadingInvoice(true)
     try {
-      const res = await fetch(`/api/v1/orders/${order.id}/shiprocket-invoice`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      const payload = (await res.json()) as { success?: boolean; message?: string; data?: { invoiceUrl?: string } }
-      const invoiceUrl = payload.data?.invoiceUrl
-      if (!res.ok || payload.success === false || !invoiceUrl) {
-        throw new Error(payload.message ?? "Could not fetch the invoice")
-      }
-      window.open(invoiceUrl, "_blank", "noopener,noreferrer")
-      toast.success("Success", "Invoice is ready")
+      await generateAdminInvoicePDF(order as never)
+      toast.success("Invoice", "Invoice downloaded")
     } catch (err) {
       toast.error("Invoice", err instanceof Error ? err.message : "Failed to download invoice")
     } finally {
@@ -486,7 +477,7 @@ export default function OrderDetailPage() {
             order={order}
             paymentStatus={paymentStatus}
             onDownloadInvoice={() => void downloadInvoice()}
-            invoiceAvailable={orderShipped}
+            invoiceAvailable={invoiceReady}
             downloadingInvoice={downloadingInvoice}
             extraActions={
               <>
