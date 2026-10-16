@@ -29,6 +29,9 @@ export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, 
           <p className="mt-0.5 text-xs text-[#374151]">
             Invoice No: <code className="font-mono font-semibold text-[#7B3010]">{invoiceNo}</code>
           </p>
+          <p className="mt-0.5 text-xs text-[#374151]">
+            Order ID: <code className="font-mono font-semibold text-[#7B3010]">#{order.id.slice(0, 10).toUpperCase()}</code>
+          </p>
           <p className="mt-1 text-xs text-[#6B7280]">
             Placed on {formatOrderDateTime(order.createdAt)}
           </p>

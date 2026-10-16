@@ -224,6 +224,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     return products.filter((p) => {
       const matchesSearch =
         !q ||
+        (p.id && p.id.toLowerCase().includes(q)) ||
         p.name.toLowerCase().includes(q) ||
         p.slug.toLowerCase().includes(q) ||
         (p.sku && p.sku.toLowerCase().includes(q))

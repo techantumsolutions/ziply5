@@ -282,19 +282,51 @@ export default function AdminDashboardPage() {
             </div>
 
             <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <p className="font-melon text-sm font-medium text-[#4A1D1F]">Top Sold Items</p>
+              <div className="mb-3 flex items-center justify-between">
+                <p className="font-melon text-sm font-medium text-[#4A1D1F]">Top Sold Items</p>
+                <Link
+                  href="/admin/products"
+                  className="text-xs font-semibold text-[#7B3010] hover:underline"
+                >
+                  View all
+                </Link>
+              </div>
               <div className="mt-4 space-y-3">
-                {summary.topSoldItems.map((row) => (
-                  <div key={row.productId}>
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-[#4A1D1F]">{row.name}</span>
-                      <span className="text-[#6B6B6B]">{row.percent}%</span>
+                {summary.topSoldItems.map((row) => {
+                  const hasSeparateId = row.productId && row.name !== row.productId
+                  return (
+                    <div key={row.productId} className="group">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                          <Link
+                            href={`/admin/products/${encodeURIComponent(row.productId)}`}
+                            className="font-semibold text-[#4A1D1F] truncate hover:text-[#7B3010] hover:underline"
+                            title={row.name}
+                          >
+                            {row.name}
+                          </Link>
+                          {hasSeparateId && (
+                            <span className="shrink-0 rounded bg-[#FFF3EA] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[#7B3010]">
+                              {row.productId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 text-[#6B6B6B]">
+                          {row.units ? (
+                            <span className="text-[11px] text-[#8A8A8A]">{row.units} sold</span>
+                          ) : null}
+                          <span className="font-medium text-[#4A1D1F]">{row.percent}%</span>
+                        </div>
+                      </div>
+                      <div className="mt-2 h-2 w-full rounded-full bg-[#FFFBF3]">
+                        <div
+                          className="h-2 rounded-full bg-[#7B3010] transition-all duration-300"
+                          style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="mt-2 h-2 w-full rounded-full bg-[#FFFBF3]">
-                      <div className="h-2 rounded-full bg-[#7B3010]" style={{ width: `${Math.min(100, Math.max(0, row.percent))}%` }} />
-                    </div>
-                  </div>
-                ))}
+                  )
+                })}
                 {!summary.topSoldItems.length ? <p className="text-xs text-[#6B6B6B]">No sales data yet.</p> : null}
               </div>
             </div>

@@ -187,7 +187,7 @@ export default function AdminUsersPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">
-            Users
+            Customers
           </h1>
           <p className="text-sm text-[#646464]">
             Accounts - {total} 

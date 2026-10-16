@@ -1003,7 +1003,11 @@ export function ProductConsolePage({
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim()
       result = result.filter((p) => {
+        const idMatch = (p.id ?? "").toLowerCase().includes(query)
         const nameMatch = (p.name ?? "").toLowerCase().includes(query)
+        const skuMatch =
+          (p.sku ?? "").toLowerCase().includes(query) ||
+          Boolean(p.variants?.some((v) => (v.sku ?? "").toLowerCase().includes(query)))
         const priceValues = p.type === "variant" && p.variants?.length
           ? p.variants.map((v) => v.price)
           : [p.price]
@@ -1014,7 +1018,7 @@ export function ProductConsolePage({
           const formatted = Number.isFinite(numeric) ? numeric.toFixed(2) : ""
           return raw.includes(query) || formatted.includes(query)
         })
-        return nameMatch || priceMatch
+        return idMatch || nameMatch || skuMatch || priceMatch
       })
     }
 
@@ -2633,7 +2637,7 @@ export function ProductConsolePage({
   if (mode === "list") {
     if (catalog === "combos") {
       const q = searchQuery.trim().toLowerCase()
-      const filteredCombos = q ? comboRows.filter((b) => `${b.name} ${b.slug}`.toLowerCase().includes(q)) : comboRows
+      const filteredCombos = q ? comboRows.filter((b) => `${b.id} ${b.name} ${b.slug}`.toLowerCase().includes(q)) : comboRows
       return (
         <section className="w-full space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-3">
@@ -2844,7 +2848,7 @@ export function ProductConsolePage({
           <div className="flex gap-2 w-full">
             <Input
               type="text"
-              placeholder="Search by name or price..."
+              placeholder="Search by ID, name, SKU, or price..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="max-w-sm bg-white rounded-lg"

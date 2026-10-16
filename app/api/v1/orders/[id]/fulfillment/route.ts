@@ -17,8 +17,8 @@ const schema = z.object({
   trackingUrl: z.string().optional(),
   courierName: z.string().optional(),
   slipUrl: z.string().optional(),
-  shipmentStatus: z.enum(["shipped", "in_transit", "out_for_delivery", "delivered", "cancelled"]).optional(),
-  orderStatus: z.enum(["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered"]).optional(),
+  shipmentStatus: z.string().optional(),
+  orderStatus: z.string().optional(),
 })
 
 export async function POST(request: NextRequest, ctx: { params: Promise<{ id: string }> }) {

@@ -1,6 +1,7 @@
 import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import { formatOrderDateTime, toUtcIso } from "@/src/lib/datetime"
+import { buildPaymentQrMatrix } from "@/lib/payment-qr"
 
 export type OrderForInvoice = {
   id: string
@@ -19,6 +20,7 @@ export type OrderForInvoice = {
   paymentId?: string | null
   paymentMethod?: string | null
   paymentStatus?: string | null
+  codPaymentLinkUrl?: string | null
   transactions?: Array<{ id: string; gateway?: string; amount?: string | number; status?: string; createdAt?: string }>
   user?: { email?: string | null } | null
   items?: Array<{
@@ -317,9 +319,13 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     }
 
     renderKeyValue("Invoice No.", invoiceNo, col3Y)
-    renderKeyValue("Date", invoiceDateStr, col3Y + 6.5)
-    renderKeyValue("Payment Mode", paymentMode, col3Y + 13)
-    renderKeyValue("Payment Terms", paymentTerms, col3Y + 19.5)
+    const shortOrderId = String(order.id).startsWith("#")
+      ? String(order.id).slice(0, 11).toUpperCase()
+      : `#${String(order.id).slice(0, 10).toUpperCase()}`
+    renderKeyValue("Order ID", shortOrderId, col3Y + 5.5)
+    renderKeyValue("Date", invoiceDateStr, col3Y + 11)
+    renderKeyValue("Payment Mode", paymentMode, col3Y + 16.5)
+    renderKeyValue("Payment Terms", paymentTerms, col3Y + 22)
 
     topY += gridBoxHeight + 6
 
@@ -446,7 +452,10 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     topY = Math.max(currentSummaryY + 6, tableFinalY + wordsLines.length * 4.5 + 4)
 
     // 6. Bank Details & Payment Section Box
-    const bankBoxHeight = 36
+    const codPaid = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS"
+    const codPayUrl = String(order.codPaymentLinkUrl ?? "").trim()
+    const showCodQr = isCod && !codPaid && Boolean(codPayUrl)
+    const bankBoxHeight = showCodQr ? 64 : 36
     doc.setDrawColor(209, 213, 219)
     doc.setLineWidth(0.3)
     doc.rect(margin, topY, contentWidth, bankBoxHeight)
@@ -483,7 +492,49 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     const pX = bankColRight + 4
     let pY = topY + 6
 
-    if (isCod) {
+    if (isCod && codPaid) {
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
+      doc.setTextColor(22, 101, 52)
+      doc.text("Payment received", pX, pY)
+      pY += 5.5
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8)
+      doc.setTextColor(55, 65, 81)
+      doc.text("This order is already paid. Do not collect again.", pX, pY)
+    } else if (showCodQr) {
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
+      doc.setTextColor(17, 24, 39)
+      doc.text("Scan once to pay", pX, pY)
+      pY += 2
+      try {
+        const matrix = buildPaymentQrMatrix(codPayUrl)
+        const quiet = 4
+        const qrSize = 32
+        const cell = qrSize / (matrix.length + quiet * 2)
+        doc.setFillColor(255, 255, 255)
+        doc.rect(pX, pY, qrSize, qrSize, "F")
+        doc.setFillColor(17, 24, 39)
+        matrix.forEach((row, y) => {
+          row.forEach((on, x) => {
+            if (!on) return
+            const moduleX = pX + (x + quiet) * cell
+            const moduleY = pY + (y + quiet) * cell
+            doc.rect(moduleX, moduleY, cell + 0.08, cell + 0.08, "F")
+          })
+        })
+      } catch {
+        // The payment link below still works if the symbol cannot be drawn
+      }
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(7)
+      doc.setTextColor(70, 70, 70)
+      const textX = pX + 34
+      const linkLines = doc.splitTextToSize(codPayUrl, Math.max(24, margin + contentWidth - textX - 4))
+      doc.text(linkLines.slice(0, 3), textX, pY + 6)
+      doc.text("One payment for this order only.", textX, pY + 22)
+    } else if (isCod) {
       doc.setFont("helvetica", "bold")
       doc.setFontSize(9)
       doc.setTextColor(180, 83, 9) // Amber

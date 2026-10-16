@@ -45,35 +45,65 @@ const reconcileCodPayment = async (orderId: string) => {
   ).catch(() => null)
 }
 
-export const setAdminShipmentStatus = async (orderId: string, shipmentStatus: AdminShipmentStatus, actorId: string) => {
-  if (!SHIPMENT_STATUSES.includes(shipmentStatus)) throw new Error("Unsupported shipment status")
-  await pgQuery(
-    `UPDATE "Shipment" SET "shipmentStatus" = $2, "shippingStatus" = $2,
-      "shippedAt" = CASE WHEN $2 = 'shipped' THEN COALESCE("shippedAt", now()) ELSE "shippedAt" END,
-      "deliveredAt" = CASE WHEN $2 = 'delivered' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
-      "updatedAt" = now()
-     WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled'`,
-    [orderId, shipmentStatus],
+export const setAdminShipmentStatus = async (orderId: string, shipmentStatus: string, actorId: string) => {
+  const normalizedStatus = shipmentStatus.toLowerCase()
+
+  const rows = await pgQuery<Array<{ id: string }>>(
+    `SELECT id FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' ORDER BY "createdAt" DESC LIMIT 1`,
+    [orderId],
   )
-  if (shipmentStatus === "delivered") {
-    const { status } = await latestHistoryStatus(orderId)
-    if (status === "confirmed") {
-      await updateOrderStatus(orderId, "packed", actorId, { reasonCode: "admin_shipment_status", note: "Packed before delivery" }).catch(() => null)
-    }
-    const again = await latestHistoryStatus(orderId)
-    if (again.status === "packed") {
-      await updateOrderStatus(orderId, "shipped", actorId, { reasonCode: "admin_shipment_status", note: "Shipped before delivery" }).catch(() => null)
-    }
-    const ready = await latestHistoryStatus(orderId)
-    if (ready.status === "shipped") {
-      await updateOrderStatus(orderId, "delivered", actorId, { reasonCode: "admin_shipment_status", note: "Marked delivered by admin" })
-    }
+  if (rows.length > 0) {
+    await pgQuery(
+      `UPDATE "Shipment" SET "shipmentStatus" = $2, "shippingStatus" = $2,
+        "shippedAt" = CASE WHEN $2 IN ('shipped', 'in_transit', 'out_for_delivery', 'delivered') THEN COALESCE("shippedAt", now()) ELSE "shippedAt" END,
+        "deliveredAt" = CASE WHEN $2 = 'delivered' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
+        "updatedAt" = now()
+       WHERE id = $1`,
+      [rows[0].id, normalizedStatus],
+    ).catch(() => null)
+  } else {
+    const id = randomUUID()
+    await pgQuery(
+      `INSERT INTO "Shipment" (id, "orderId", "shipmentNo", carrier, "shipmentStatus", "shippingStatus", "shippedAt", "deliveredAt", "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, 'Manual', $4, $4, CASE WHEN $4 IN ('shipped', 'in_transit', 'out_for_delivery', 'delivered') THEN now() ELSE null END, CASE WHEN $4 = 'delivered' THEN now() ELSE null END, now(), now())`,
+      [id, orderId, `shipment-${id.slice(0, 8)}`, normalizedStatus],
+    ).catch(() => null)
+  }
+
+  await upsertOrderShipmentSnapshotSupabase(orderId, {
+    shipmentStatus: normalizedStatus,
+    shippingStatus: normalizedStatus,
+    shipmentDeliveredAt: normalizedStatus === "delivered" ? new Date() : undefined,
+  }).catch(() => null)
+
+  if (normalizedStatus === "delivered") {
+    await updateOrderStatus(orderId, "delivered", actorId, {
+      reasonCode: "admin_shipment_status",
+      note: "Marked delivered by admin",
+      force: true,
+    }).catch(() => null)
     await reconcileCodPayment(orderId)
+  } else if (normalizedStatus === "shipped") {
+    await updateOrderStatus(orderId, "shipped", actorId, {
+      reasonCode: "admin_shipment_shipped",
+      note: "Shipment marked shipped by admin",
+      force: true,
+    }).catch(() => null)
+  } else if (normalizedStatus === "in_transit") {
+    await updateOrderStatus(orderId, "in_transit", actorId, {
+      reasonCode: "admin_shipment_in_transit",
+      note: "Shipment marked in transit by admin",
+      force: true,
+    }).catch(() => null)
+  } else if (normalizedStatus === "out_for_delivery") {
+    await updateOrderStatus(orderId, "out_for_delivery", actorId, {
+      reasonCode: "admin_shipment_out_for_delivery",
+      note: "Shipment marked out for delivery by admin",
+      force: true,
+    }).catch(() => null)
   }
-  if (shipmentStatus === "in_transit" || shipmentStatus === "out_for_delivery") {
-    return { shipmentStatus }
-  }
-  return { shipmentStatus }
+
+  return { shipmentStatus: normalizedStatus }
 }
 
 export const createManualShipment = async (input: {
@@ -129,7 +159,17 @@ export const createManualShipment = async (input: {
   return { shipmentId: shipment.id, trackingId, trackingUrl }
 }
 
-export const setManualOrderStatus = async (orderId: string, orderStatus: ManualOrderStatus, actorId: string) => {
+export const setManualOrderStatus = async (orderId: string, orderStatus: string, actorId: string) => {
+  const normalizedStatus = orderStatus.toLowerCase() === "new" ? "pending" : orderStatus.toLowerCase()
+
+  // Update order status directly in orders service with force: true so any valid admin transition is permitted
+  await updateOrderStatus(orderId, normalizedStatus as any, actorId, {
+    reasonCode: "admin_manual_update",
+    note: `Order status set to ${orderStatus.replaceAll("_", " ")} by admin`,
+    force: true,
+  })
+
+  // Also update Shipment record if it exists
   const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null }>>(
     `SELECT id, "shipmentNo" FROM "Shipment"
      WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL
@@ -137,30 +177,28 @@ export const setManualOrderStatus = async (orderId: string, orderStatus: ManualO
     [orderId],
   )
   const shipment = rows[0]
-  if (!shipment || !isManualShipment({ shipmentNo: shipment.shipmentNo })) {
-    throw new Error("Order status can be updated here only for a manual shipment")
+  if (shipment) {
+    await pgQuery(
+      `UPDATE "Shipment" SET "shipmentStatus" = $2, "shippingStatus" = $2,
+        "shippedAt" = CASE WHEN $2 IN ('shipped','in_transit','out_for_delivery','delivered') THEN COALESCE("shippedAt", now()) ELSE "shippedAt" END,
+        "deliveredAt" = CASE WHEN $2 = 'delivered' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
+        "updatedAt" = now()
+       WHERE id = $1`,
+      [shipment.id, normalizedStatus],
+    ).catch(() => null)
   }
-  const { status } = await latestHistoryStatus(orderId)
-  const steps = manualOrderStatusSteps(status, orderStatus)
-  for (const step of steps) {
-    await updateOrderStatus(orderId, step, actorId, {
-      reasonCode: "manual_order_status",
-      note: `Manual shipment status set to ${step.replaceAll("_", " ")}`,
-    })
+
+  // Update Supabase snapshot if shipment exists or moving to a shipping status
+  if (shipment || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(normalizedStatus)) {
+    await upsertOrderShipmentSnapshotSupabase(orderId, {
+      shipmentStatus: normalizedStatus,
+      shippingStatus: normalizedStatus,
+    }).catch(() => null)
   }
-  await pgQuery(
-    `UPDATE "Shipment" SET "shipmentStatus" = $2, "shippingStatus" = $2,
-      "shippedAt" = CASE WHEN $2 IN ('shipped','in_transit','out_for_delivery','delivered') THEN COALESCE("shippedAt", now()) ELSE "shippedAt" END,
-      "deliveredAt" = CASE WHEN $2 = 'delivered' THEN COALESCE("deliveredAt", now()) ELSE "deliveredAt" END,
-      "updatedAt" = now()
-     WHERE id = $1`,
-    [shipment.id, orderStatus],
-  )
-  await upsertOrderShipmentSnapshotSupabase(orderId, {
-    shipmentStatus: orderStatus,
-    shippingStatus: orderStatus,
-    shippingMethod: "manual",
-  }).catch(() => null)
-  if (orderStatus === "delivered") await reconcileCodPayment(orderId)
-  return { orderStatus, shipmentStatus: orderStatus }
+
+  if (normalizedStatus === "delivered") {
+    await reconcileCodPayment(orderId)
+  }
+
+  return { orderStatus: normalizedStatus, shipmentStatus: normalizedStatus }
 }
