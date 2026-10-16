@@ -302,21 +302,29 @@ export const getDashboardSummary = async () => {
     const names = new Map<string, string>()
     if (ids.length) {
       for (const pt of PRODUCT_TABLES) {
-        const { data, error } = await client.from(pt).select("id,name,title").in("id", ids)
-        if (!error && Array.isArray(data)) {
-          for (const p of data as Array<Record<string, unknown>>) {
-            const id = safeString(p.id)
-            const name = safeString(p.name ?? p.title)
-            if (id) names.set(id, name)
+        const attempts = [
+          () => client.from(pt).select("id,name").in("id", ids),
+          () => client.from(pt).select("id,name,title").in("id", ids),
+          () => client.from(pt).select("id,title").in("id", ids),
+        ]
+        for (const run of attempts) {
+          const { data, error } = await run()
+          if (!error && Array.isArray(data) && data.length) {
+            for (const p of data as Array<Record<string, unknown>>) {
+              const id = safeString(p.id)
+              const name = safeString(p.name ?? (p as any).title)
+              if (id && name) names.set(id, name)
+            }
+            break
           }
-          break
         }
+        if (names.size > 0) break
       }
     }
     const max = sorted[0]?.[1] ?? 1
     return sorted.map(([productId, qty]) => ({
       productId,
-      name: names.get(productId) ?? productId.slice(0, 8),
+      name: names.get(productId) || productId,
       percent: Math.round((qty / max) * 100),
       units: qty,
     }))

@@ -19,6 +19,9 @@ import {
   upsertPaidTransactionSupabase,
 } from "@/src/lib/db/orders"
 import { getSupabaseAdmin } from "@/src/lib/supabase/admin"
+import { pgQuery } from "@/src/server/db/pg"
+import { codAmountsMatch } from "@/src/server/modules/payments/cod-payment-link"
+import { refundRazorpayPayment } from "@/src/server/modules/payments/cod-payment-link.service"
 
 const getOrderById = async (orderId: string) => {
   const client = getSupabaseAdmin()
@@ -379,14 +382,29 @@ export const processWebhookEvent = async (
   let externalId: string | null = externalIdHint ?? null
   let paid = false
 
+  let paidMinor = 0
+  let incomingPaymentId: string | null = null
   if (provider === "razorpay") {
     const payload = obj.payload as Record<string, unknown> | undefined
     const payment = payload?.payment as Record<string, unknown> | undefined
+    const paymentLink = payload?.payment_link as Record<string, unknown> | undefined
     const refund = payload?.refund as Record<string, unknown> | undefined
     const entity = (payment?.entity ?? payload?.entity ?? {}) as Record<string, unknown>
+    const linkEntity = (paymentLink?.entity ?? {}) as Record<string, unknown>
     const refundEntity = (refund?.entity ?? {}) as Record<string, unknown>
-    const notes = (entity.notes ?? {}) as Record<string, unknown>
+    const entityNotes = entity.notes && typeof entity.notes === "object" ? entity.notes as Record<string, unknown> : {}
+    const linkNotes = linkEntity.notes && typeof linkEntity.notes === "object" ? linkEntity.notes as Record<string, unknown> : {}
+    const notes = { ...linkNotes, ...entityNotes }
     orderId = typeof notes.orderId === "string" ? notes.orderId : null
+    if (!orderId && typeof linkEntity.id === "string") {
+      const linked = await pgQuery<Array<{ id: string }>>(
+        `SELECT id FROM "Order" WHERE "codPaymentLinkId" = $1 LIMIT 1`,
+        [linkEntity.id],
+      ).catch(() => [])
+      orderId = linked[0]?.id ?? null
+    }
+    incomingPaymentId = typeof entity.id === "string" && entity.id.startsWith("pay_") ? entity.id : null
+    paidMinor = Number(entity.amount ?? linkEntity.amount_paid ?? 0)
     externalId = externalId ?? (typeof entity.order_id === "string" ? entity.order_id : null)
     if (!orderId && typeof refundEntity.payment_id === "string") {
       const client = getSupabaseAdmin()
@@ -397,7 +415,7 @@ export const processWebhookEvent = async (
         .maybeSingle()
       orderId = typeof orderByPayment?.id === "string" ? orderByPayment.id : null
     }
-    paid = type.includes("captured") || type.includes("paid")
+    paid = (type.includes("captured") || type.includes("paid")) && !type.includes("partial")
   } else if (provider === "stripe") {
     const data = obj.data as Record<string, unknown> | undefined
     const object = (data?.object ?? {}) as Record<string, unknown>
@@ -413,6 +431,18 @@ export const processWebhookEvent = async (
   }
 
   if (!orderId) return { applied: false, reason: "orderId_missing" }
+  if (provider === "razorpay" && paid) {
+    const current = await getOrderByIdSupabaseBasic(orderId)
+    if (current && paidMinor > 0 && !codAmountsMatch(Number(current.total ?? 0), paidMinor)) {
+      return { applied: false, reason: "amount_mismatch", orderId }
+    }
+    if (current && String(current.paymentStatus ?? "").toUpperCase() === "SUCCESS") {
+      if (incomingPaymentId && current.paymentId && incomingPaymentId !== current.paymentId) {
+        await refundRazorpayPayment(incomingPaymentId).catch(() => false)
+      }
+      return { applied: true, duplicate: true, paid: true, orderId }
+    }
+  }
   const client = getSupabaseAdmin()
   let tx: { id: string; status: string; externalId?: string | null } | null = null
   {
@@ -427,6 +457,22 @@ export const processWebhookEvent = async (
     }
     const { data, error } = await query.maybeSingle()
     if (!error && data?.id) {
+      tx = {
+        id: String(data.id),
+        status: String(data.status ?? ""),
+        externalId: data.externalId ? String(data.externalId) : null,
+      }
+    }
+  }
+  if (!tx && orderId) {
+    const { data } = await client
+      .from("Transaction")
+      .select("id,status,externalId")
+      .eq("orderId", orderId)
+      .order("createdAt", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (data?.id) {
       tx = {
         id: String(data.id),
         status: String(data.status ?? ""),
@@ -450,11 +496,13 @@ export const processWebhookEvent = async (
   })
   if (!txUpdated) throw new Error("supabase_transaction_status_write_failed")
 
-  const orderUpdated = await setOrderRefundAndPaymentStatusSupabase({
-    orderId,
-    paymentStatus: type === "refund.processed" ? "REFUNDED" : paid ? "SUCCESS" : "FAILED",
-    refundStatus: type === "refund.processed" ? "COMPLETED" : undefined,
-  })
+  const orderUpdated = paid && incomingPaymentId
+    ? await markOrderPaymentSuccessSupabase(orderId, incomingPaymentId)
+    : await setOrderRefundAndPaymentStatusSupabase({
+      orderId,
+      paymentStatus: type === "refund.processed" ? "REFUNDED" : paid ? "SUCCESS" : "FAILED",
+      refundStatus: type === "refund.processed" ? "COMPLETED" : undefined,
+    })
   if (!orderUpdated) throw new Error("supabase_order_payment_status_write_failed")
 
   if (type === "refund.processed") {

@@ -1604,6 +1604,8 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         couponCode: safeString(row.couponCode ?? row.coupon_code) || null,
         paymentMethod: safeString(row.paymentMethod ?? row.payment_method) || null,
         paymentId: safeString(row.paymentId ?? row.payment_id) || null,
+        codPaymentLinkId: safeString((row as Record<string, unknown>).codPaymentLinkId ?? (row as Record<string, unknown>).cod_payment_link_id) || null,
+        codPaymentLinkUrl: safeString((row as Record<string, unknown>).codPaymentLinkUrl ?? (row as Record<string, unknown>).cod_payment_link_url) || null,
         customerName: (row.customerName ?? row.customer_name ?? null) as string | null,
         customerPhone: (row.customerPhone ?? row.customer_phone ?? null) as string | null,
         customerAddress: (row.customerAddress ?? row.customer_address ?? null) as string | null,

@@ -10,6 +10,7 @@ import { toast } from "@/lib/toast"
 import { useOrderWithTracking } from "@/hooks/useOrderWithTracking"
 import { isOrderShipped, isZiplyInvoiceReady } from "@/src/lib/orders/order-shipped"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
+import { paymentQrDataUrl } from "@/lib/payment-qr"
 import {
   deriveLatestLifecycleToStatus,
   orderHistoryHasCancelRequested,
@@ -83,6 +84,7 @@ export default function OrderDetailPage() {
 
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
+  const [codQr, setCodQr] = useState("")
   const [reviewDrafts, setReviewDrafts] = useState<Record<string, { rating: number; content: string }>>({})
   const [existingReviewedProducts, setExistingReviewedProducts] = useState<Set<string>>(new Set())
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false)
@@ -372,6 +374,25 @@ export default function OrderDetailPage() {
   const paymentStatus =
     order?.paymentStatus ??
     (order?.transactions.some((tx) => tx.status === "paid") ? "paid" : "pending")
+  const codPayUrl = String((order as { codPaymentLinkUrl?: string | null } | null | undefined)?.codPaymentLinkUrl ?? "").trim()
+  const codUnpaid = String(order?.paymentMethod ?? "").toLowerCase() === "cod" && !["success", "paid"].includes(paymentStatus.toLowerCase())
+
+  useEffect(() => {
+    if (!codUnpaid || !codPayUrl) {
+      setCodQr("")
+      return
+    }
+    let cancelled = false
+    try {
+      const dataUrl = paymentQrDataUrl(codPayUrl)
+      if (!cancelled) setCodQr(dataUrl)
+    } catch {
+      if (!cancelled) setCodQr("")
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [codPayUrl, codUnpaid])
 
   const confirmCancelFromModal = async () => {
     setActionBusy("cancel_request")
@@ -491,9 +512,18 @@ export default function OrderDetailPage() {
                     {actionBusy === "cancel_request" ? "Submitting…" : "Cancel"}
                   </button>
                 )}
-                {paymentStatus.toLowerCase() === "pending" &&
+                {codUnpaid && codPayUrl ? (
+                    <a
+                      href={codPayUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="rounded-md bg-[#111827] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#1f2937]"
+                    >
+                      Pay now
+                    </a>
+                  ) : paymentStatus.toLowerCase() === "pending" &&
                   order.status.toLowerCase() !== "delivered" &&
-                  order.status.toLowerCase() !== "cancelled" && (
+                  order.status.toLowerCase() !== "cancelled" ? (
                     <button
                       type="button"
                       onClick={() =>
@@ -505,7 +535,7 @@ export default function OrderDetailPage() {
                     >
                       Pay now
                     </button>
-                  )}
+                  ) : null}
               </>
             }
           />
@@ -576,7 +606,7 @@ export default function OrderDetailPage() {
                   <div key={req.id} className="rounded-lg border border-[#F3F4F6] bg-[#FAFAFA] p-3 text-sm text-[#6B7280]">
                     <p>
                       Return: <span className="font-semibold uppercase text-[#111827]">{req.status}</span>
-                      {req.productId ? ` — Product ${req.productId.slice(0, 8)}…` : ""}
+                      {req.productId ? ` — Product ${/^PRD-\d+$/i.test(req.productId) ? req.productId : `${req.productId.slice(0, 8)}…`}` : ""}
                     </p>
                     {req.reason ? <p className="mt-1 text-xs">Reason: {req.reason}</p> : null}
                     {req.description ? <p className="mt-1 text-xs">Details: {req.description}</p> : null}
@@ -656,6 +686,16 @@ export default function OrderDetailPage() {
               <p className="mt-2 font-semibold text-[#111827]">
                 Total: <span className="text-[#6B7280]">{order.currency} {Number(order.total).toFixed(2)}</span>
               </p>
+              {codUnpaid && codPayUrl ? (
+                <div className="mt-3 flex items-center gap-3">
+                  {codQr ? <img src={codQr} alt="Payment QR for this order" className="h-36 w-36 rounded border border-[#E5E7EB]" style={{ imageRendering: "pixelated" }} /> : null}
+                  <div>
+                    <p className="font-semibold text-[#111827]">Pay before or at delivery</p>
+                    <p className="mt-1 text-xs text-[#6B7280]">This QR and link work once for this order. A second payment is not accepted.</p>
+                    <a href={codPayUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold text-[#7B3010] underline">{codPayUrl}</a>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 

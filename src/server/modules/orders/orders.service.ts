@@ -791,6 +791,12 @@ export const createOrderFromCheckout = async (input: {
     metadata: { itemCount: lines.length, total },
   })
   console.log("Activity logged for order creation", { orderId: order.id, userId: input.userId ?? null })
+  if (input.gateway.trim().toLowerCase() === "cod") {
+    const { ensureCodPaymentLink } = await import("@/src/server/modules/payments/cod-payment-link.service")
+    await ensureCodPaymentLink(String(order.id)).catch((error) => {
+      console.error("[cod-payment-link] create failed", error instanceof Error ? error.message : "unknown")
+    })
+  }
   console.log(`[Order Service] createOrderFromCheckout: order.status="${order.status}", order.paymentStatus="${order.paymentStatus}", phone="${order.customerPhone}"`)
   const normalizedStatus = String(order.status).toLowerCase()
   let customerEmailRaw = accountEmail || (order as any).customerEmail || (order as any).user?.email
@@ -1003,6 +1009,18 @@ export const getOrderById = async (id: string) => {
     estimatedDeliveryDate: (hydrated as { estimatedDeliveryDate?: string | null }).estimatedDeliveryDate || activeShipment?.estimatedDeliveryDate || null,
   })
   await closeOrderWhenShipmentCancelled(hydrated as { id: string; status?: string | null; shipmentStatus?: string | null; statusHistory?: Array<{ toStatus?: string | null; changedAt?: string | Date | null; reasonCode?: string | null }> })
+  const codMethod = String((hydrated as { paymentMethod?: string | null }).paymentMethod ?? "").toLowerCase()
+  const codPaid = String((hydrated as { paymentStatus?: string | null }).paymentStatus ?? "").toUpperCase() === "SUCCESS"
+  const codLifecycle = latestLifecycleStatus(hydrated as { status?: string | null; statusHistory?: Array<{ toStatus?: string | null }> })
+  if (codMethod === "cod" && !codPaid && codLifecycle !== "cancelled" && codLifecycle !== "rejected") {
+    const { ensureCodPaymentLink } = await import("@/src/server/modules/payments/cod-payment-link.service")
+    const link = await ensureCodPaymentLink(String(hydrated.id)).catch(() => null)
+    if (link && "url" in link) {
+      Object.assign(hydrated, { codPaymentLinkId: link.id, codPaymentLinkUrl: link.url })
+    } else if (link && "paid" in link) {
+      Object.assign(hydrated, { paymentStatus: "SUCCESS" })
+    }
+  }
   if (shouldAutoSyncOrders()) {
     await autoSyncFromPayment(String(hydrated.id), String(hydrated.status), String(hydrated.paymentStatus))
     await syncOrderStatusFromShiprocket(String(hydrated.id))
@@ -1022,7 +1040,7 @@ export const updateOrderStatus = async (
   id: string,
   status: OrderLifecycleStatus,
   actorId?: string,
-  options?: { reasonCode?: string; note?: string },
+  options?: { reasonCode?: string; note?: string; force?: boolean },
 ) => {
   console.log(`[STATUS UPDATE DEBUG] Order ID: ${id}, New Status: ${status}, Options: ${JSON.stringify(options)}`)
 
@@ -1076,11 +1094,11 @@ export const updateOrderStatus = async (
   const paymentStatus = normalizePaymentStatus((existing as any).paymentStatus)
   const paymentMethod = String((existing as any).paymentMethod ?? "").toLowerCase()
 
-  if (status === "confirmed" && paymentStatus !== "SUCCESS" && paymentMethod !== "cod" && fromStatus !== "admin_approval_pending") {
+  if (status === "confirmed" && paymentStatus !== "SUCCESS" && paymentMethod !== "cod" && fromStatus !== "admin_approval_pending" && !options?.force) {
     console.error(`[STATUS UPDATE ERROR] Cannot move to CONFIRMED without SUCCESS payment status. Current: ${paymentStatus}`)
     throw new Error("Order cannot move to CONFIRMED unless payment_status = SUCCESS")
   }
-  if (status !== fromStatus && !allowedTransitions[fromStatus]?.includes(status)) {
+  if (!options?.force && status !== fromStatus && !allowedTransitions[fromStatus]?.includes(status)) {
     console.error(`[STATUS UPDATE ERROR] Invalid transition: ${fromStatus} -> ${status}`)
     throw new Error(`Invalid status transition: ${fromStatus} -> ${status}`)
   }
@@ -1140,6 +1158,11 @@ export const updateOrderStatus = async (
     aggregateId: id,
     payload: { orderId: id, fromStatus, toStatus: status, reasonCode: options?.reasonCode ?? null },
   }).catch(() => null)
+
+  if (status === "cancelled" && paymentMethod === "cod") {
+    const { cancelCodPaymentLink } = await import("@/src/server/modules/payments/cod-payment-link.service")
+    await cancelCodPaymentLink(id).catch(() => null)
+  }
 
   let customerEmailRaw = (order as any).customerEmail || (order as any).user?.email
   if (!customerEmailRaw && order.userId) {

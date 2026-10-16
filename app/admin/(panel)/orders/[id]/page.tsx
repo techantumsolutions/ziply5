@@ -9,7 +9,30 @@ import { AlertTriangle, Ban, Check, Download, Loader2, Mail, MapPin, Package, Ph
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
+import { orderStatusLabel } from "@/src/lib/orders/manual-order-status"
 import { toast } from "@/lib/toast"
+
+const ADMIN_ORDER_STATUS_OPTIONS = [
+  "pending",
+  "confirmed",
+  "packed",
+  "shipped",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "cancelled",
+  "returned",
+] as const
+
+const ADMIN_SHIPMENT_STATUS_OPTIONS = [
+  "not_shipped",
+  "shipped",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "cancelled",
+  "returned",
+] as const
 
 type OrderDetail = {
   id: string
@@ -223,6 +246,42 @@ export default function AdminOrderDetailPage() {
     void loadOrder()
   }, [params.id])
 
+  const [updatingStatus, setUpdatingStatus] = useState<"order" | "shipment" | null>(null)
+
+  const handleUpdateOrderStatus = async (nextStatus: string) => {
+    if (!order?.id || updatingStatus) return
+    setUpdatingStatus("order")
+    try {
+      await authedPost(`/api/v1/orders/${order.id}/fulfillment`, {
+        action: "set_order_status",
+        orderStatus: nextStatus,
+      })
+      toast.success("Order updated", `Order status set to ${orderStatusLabel(nextStatus)}.`)
+      await loadOrder({ silent: true })
+    } catch (err) {
+      toast.error("Status update failed", err instanceof Error ? err.message : "Failed to update order status")
+    } finally {
+      setUpdatingStatus(null)
+    }
+  }
+
+  const handleUpdateShipmentStatus = async (nextStatus: string) => {
+    if (!order?.id || updatingStatus) return
+    setUpdatingStatus("shipment")
+    try {
+      await authedPost(`/api/v1/orders/${order.id}/fulfillment`, {
+        action: "set_shipment_status",
+        shipmentStatus: nextStatus,
+      })
+      toast.success("Shipment updated", `Shipment status set to ${orderStatusLabel(nextStatus)}.`)
+      await loadOrder({ silent: true })
+    } catch (err) {
+      toast.error("Status update failed", err instanceof Error ? err.message : "Failed to update shipment status")
+    } finally {
+      setUpdatingStatus(null)
+    }
+  }
+
   const runAction = async (
     action:
       | "approve_order"
@@ -424,9 +483,31 @@ export default function AdminOrderDetailPage() {
           </p>
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-[#111827]">
-              Order #{order ? order.id.slice(0, 8).toUpperCase() : "--------"}
+              Order #{order ? order.id.slice(0, 10).toUpperCase() : "--------"}
             </h1>
             {order ? getOrderStatusBadge(lifecycleStatus) : null}
+            {order ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-[#6B7280]">Update Status:</span>
+                <select
+                  value={lifecycleStatus}
+                  disabled={updatingStatus !== null}
+                  onChange={(e) => void handleUpdateOrderStatus(e.target.value)}
+                  className="cursor-pointer rounded-lg border border-[#7B3010]/30 bg-[#FFF7ED] px-2.5 py-1 text-xs font-semibold text-[#7B3010] shadow-sm hover:border-[#7B3010] focus:outline-none focus:ring-1 focus:ring-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Manually Change Order Status"
+                >
+                  {((ADMIN_ORDER_STATUS_OPTIONS as readonly string[]).includes(lifecycleStatus)
+                    ? ADMIN_ORDER_STATUS_OPTIONS
+                    : [lifecycleStatus, ...ADMIN_ORDER_STATUS_OPTIONS]
+                  ).map((val) => (
+                    <option key={val} value={val}>
+                      {orderStatusLabel(val)}
+                    </option>
+                  ))}
+                </select>
+                {updatingStatus === "order" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7B3010]" />}
+              </div>
+            ) : null}
           </div>
           <p className="mt-1 text-xs text-[#6B7280]">
             {order
@@ -665,7 +746,29 @@ export default function AdminOrderDetailPage() {
                 const buttonClass = "cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1.5 text-[11px] font-semibold text-[#7B3010] shadow-sm transition hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#FFF7ED] disabled:hover:text-[#7B3010]"
                 return (
                   <>
-                    <h2 className="mb-3 text-sm font-semibold text-[#111827]">Delivery details</h2>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h2 className="text-sm font-semibold text-[#111827]">Delivery details</h2>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-[#6B7280]">Shipment Status:</span>
+                        <select
+                          value={shipmentState || "not_shipped"}
+                          disabled={updatingStatus !== null}
+                          onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
+                          className="cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C] disabled:cursor-not-allowed disabled:opacity-50"
+                          title="Manually Change Shipment Status"
+                        >
+                          {((ADMIN_SHIPMENT_STATUS_OPTIONS as readonly string[]).includes(shipmentState || "not_shipped")
+                            ? ADMIN_SHIPMENT_STATUS_OPTIONS
+                            : [shipmentState || "not_shipped", ...ADMIN_SHIPMENT_STATUS_OPTIONS]
+                          ).map((val) => (
+                            <option key={val} value={val}>
+                              {orderStatusLabel(val)}
+                            </option>
+                          ))}
+                        </select>
+                        {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
+                      </div>
+                    </div>
                     <div className="flex flex-wrap gap-2">
                       {shipmentState === "cancelled" ? null : (
                         <>

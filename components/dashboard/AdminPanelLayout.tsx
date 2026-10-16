@@ -38,7 +38,7 @@ const adminNav: DashboardNavItem[] = [
       { href: "/admin/product-usage", label: "Product Usage", icon: FileText },
     ],
   },
-  { href: "/admin/users", label: "Users", icon: Users },
+  { href: "/admin/users", label: "Customers", icon: Users },
   { href: "/admin/reviews", label: "Reviews", icon: Star },
   { href: "/admin/returns", label: "Returns", icon: RotateCcw },
   {

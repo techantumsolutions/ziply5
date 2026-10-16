@@ -51,6 +51,28 @@ type OrderRow = {
   user?: { id: string; name: string; email: string };
 };
 
+const ADMIN_ORDER_STATUS_OPTIONS = [
+  "pending",
+  "confirmed",
+  "packed",
+  "shipped",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "cancelled",
+  "returned",
+] as const;
+
+const ADMIN_SHIPMENT_STATUS_OPTIONS = [
+  "not_shipped",
+  "shipped",
+  "in_transit",
+  "out_for_delivery",
+  "delivered",
+  "cancelled",
+  "returned",
+] as const;
+
 export default function AdminOrdersPage() {
   const router = useRouter();
   const [rows, setRows] = useState<OrderRow[]>([]);
@@ -276,6 +298,52 @@ export default function AdminOrdersPage() {
     );
   };
 
+  const getOrderStatusSelectClass = (status: string) => {
+    const s = status.toLowerCase().trim();
+    if (s === "cancelled" || s === "rejected" || s === "failed") {
+      return "border-red-300 bg-red-50 text-red-700 hover:border-red-400 focus:ring-red-400";
+    }
+    if (s === "delivered" || s === "completed") {
+      return "border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-400 focus:ring-emerald-400";
+    }
+    if (s === "shipped") {
+      return "border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400 focus:ring-blue-400";
+    }
+    if (s === "in_transit" || s === "out_for_delivery" || s === "dispatched") {
+      return "border-indigo-300 bg-indigo-50 text-indigo-700 hover:border-indigo-400 focus:ring-indigo-400";
+    }
+    if (s === "confirmed" || s === "packed" || s === "processing") {
+      return "border-cyan-300 bg-cyan-50 text-cyan-700 hover:border-cyan-400 focus:ring-cyan-400";
+    }
+    if (s === "admin_approval_pending" || s === "approval_pending") {
+      return "border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400 focus:ring-amber-400";
+    }
+    if (s === "new" || s === "pending" || s === "pending_payment" || s === "payment_success") {
+      return "border-sky-300 bg-sky-50 text-sky-700 hover:border-sky-400 focus:ring-sky-400";
+    }
+    return "border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-400 focus:ring-slate-400";
+  };
+
+  const getShipmentStatusSelectClass = (status: string) => {
+    const s = status.toLowerCase().trim();
+    if (s === "delivered") {
+      return "border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-400 focus:ring-emerald-400";
+    }
+    if (s === "shipped") {
+      return "border-blue-300 bg-blue-50 text-blue-700 hover:border-blue-400 focus:ring-blue-400";
+    }
+    if (s === "in_transit" || s === "out_for_delivery") {
+      return "border-indigo-300 bg-indigo-50 text-indigo-700 hover:border-indigo-400 focus:ring-indigo-400";
+    }
+    if (s === "cancelled" || s === "returned" || s === "rto") {
+      return "border-rose-300 bg-rose-50 text-rose-700 hover:border-rose-400 focus:ring-rose-400";
+    }
+    if (s === "shipment_created" || s === "manifest_generated" || s === "pickup_generated") {
+      return "border-cyan-300 bg-cyan-50 text-cyan-700 hover:border-cyan-400 focus:ring-cyan-400";
+    }
+    return "border-slate-300 bg-slate-50 text-slate-700 hover:border-slate-400 focus:ring-slate-400";
+  };
+
   const toPaymentStatus = useCallback((o: OrderRow) => {
     if (o.transactions?.some((t) => /paid|captured|success/i.test(t.status ?? "")) || (o.paymentStatus ?? "").toUpperCase() === "SUCCESS") return "success";
     if (o.transactions?.some((t) => /fail/i.test(t.status ?? "")) || (o.paymentStatus ?? "").toUpperCase() === "FAILED") return "failed";
@@ -294,14 +362,6 @@ export default function AdminOrdersPage() {
   }, []);
   const latestShipmentStatus = useCallback((o: OrderRow) => (o.shipmentStatus ?? o.shipments?.[0]?.shipmentStatus ?? "not_shipped").toLowerCase(), []);
   const itemsCount = useCallback((o: OrderRow) => o.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0), []);
-  const deliveryEta = useCallback((o: OrderRow) => {
-    if (o.fulfillment?.deliveredAt) return "Delivered";
-    const shippedAt = o.shipments?.[0]?.shippedAt ?? o.fulfillment?.shippedAt;
-    if (!shippedAt) return "—";
-    const eta = new Date(shippedAt);
-    eta.setDate(eta.getDate() + 3);
-    return eta.toLocaleDateString();
-  }, []);
 
   const statusTabCounts = useMemo(() => {
     const counts = {
@@ -347,7 +407,11 @@ export default function AdminOrdersPage() {
   }, [rows, lifecycleStatus, latestShipmentStatus]);
 
   const filteredRows = useMemo(() => {
-    const term = searchTerm.trim().toLowerCase();
+    const rawTerm = searchTerm.trim();
+    const term = rawTerm.toLowerCase();
+    const cleanTerm = term.replace(/^#+/, "").trim();
+    const alphaNumTerm = cleanTerm.replace(/[^a-z0-9]/g, "");
+
     let list = rows.filter((o) => {
       const payment = toPaymentStatus(o);
       const lifecycle = lifecycleStatus(o);
@@ -371,13 +435,40 @@ export default function AdminOrdersPage() {
       if (shipmentFilter !== "all" && ship !== shipmentFilter) return false;
       if (dateFrom && date < new Date(`${dateFrom}T00:00:00`)) return false;
       if (dateTo && date > new Date(`${dateTo}T23:59:59`)) return false;
-      if (!term) return true;
-      return (
-        o.id.toLowerCase().includes(term) ||
+      if (!rawTerm) return true;
+
+      const orderId = String(o.id ?? "").toLowerCase();
+      const displayedId = `#${String(o.id ?? "").slice(0, 10).toUpperCase()}`.toLowerCase();
+      const shortId10 = String(o.id ?? "").slice(0, 10).toLowerCase();
+      const shortId8 = String(o.id ?? "").slice(0, 8).toLowerCase();
+      const alphaNumOrderId = orderId.replace(/[^a-z0-9]/g, "");
+
+      const matchesId =
+        orderId.includes(term) ||
+        (cleanTerm.length > 0 && orderId.includes(cleanTerm)) ||
+        displayedId.includes(term) ||
+        shortId10.includes(cleanTerm) ||
+        shortId8.includes(cleanTerm) ||
+        (alphaNumTerm.length >= 3 && alphaNumOrderId.includes(alphaNumTerm));
+
+      const matchesCustomer =
         (o.customerName ?? o.user?.name ?? "").toLowerCase().includes(term) ||
         (o.customerPhone ?? "").toLowerCase().includes(term) ||
-        (o.user?.email ?? "").toLowerCase().includes(term)
+        (o.user?.email ?? "").toLowerCase().includes(term);
+
+      const matchesOtherRef =
+        (o.shiprocketOrderId ?? "").toLowerCase().includes(cleanTerm || term) ||
+        (o.awbCode ?? "").toLowerCase().includes(cleanTerm || term) ||
+        (o.trackingNumber ?? "").toLowerCase().includes(cleanTerm || term) ||
+        (o.paymentId ?? "").toLowerCase().includes(cleanTerm || term) ||
+        (o.transactionId ?? "").toLowerCase().includes(cleanTerm || term) ||
+        (o.refNo ?? "").toLowerCase().includes(cleanTerm || term);
+
+      const matchesItems = o.items?.some((it) =>
+        (it.product?.name ?? "").toLowerCase().includes(term)
       );
+
+      return matchesId || matchesCustomer || matchesOtherRef || matchesItems;
     });
     list = list.sort((a, b) => {
       if (sortBy === "oldest") return +new Date(a.createdAt) - +new Date(b.createdAt);
@@ -732,6 +823,12 @@ export default function AdminOrdersPage() {
       toast.success("Order updated", `Status set to ${orderStatusLabel(orderStatus)}.`);
     });
 
+  const changeShipmentStatus = (orderId: string, shipmentStatus: string) =>
+    runRow(orderId, "shipment_status", async () => {
+      await authedPost(`/api/v1/orders/${orderId}/fulfillment`, { action: "set_shipment_status", shipmentStatus });
+      toast.success("Shipment updated", `Shipment status set to ${orderStatusLabel(shipmentStatus)}.`);
+    });
+
   const confirmRejectOrder = async () => {
     if (!rejectModalOrderId) return;
     const targetId = rejectModalOrderId;
@@ -742,7 +839,19 @@ export default function AdminOrdersPage() {
   };
 
   const exportCsv = () => {
-    const header = ["order_id", "date_time", "customer_name", "mobile", "email", "payment_method", "payment_status", "order_status", "shipment_status", "total_amount", "items_count", "warehouse", "delivery_eta"];
+    const header = [
+      "order_id",
+      "date_time",
+      "customer_name",
+      "mobile",
+      "email",
+      "payment_method",
+      "payment_status",
+      "order_status",
+      "shipment_status",
+      "total_amount",
+      "items_count",
+    ];
     const body = filteredRows.map((o) => [
       o.id,
       formatIstSqlDateTime(o.createdAt) ?? "",
@@ -755,8 +864,6 @@ export default function AdminOrdersPage() {
       latestShipmentStatus(o),
       Number(o.total).toFixed(2),
       itemsCount(o),
-      "—",
-      deliveryEta(o),
     ]);
     const csv = [header, ...body].map((row) => row.map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -836,7 +943,7 @@ export default function AdminOrdersPage() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8A8A8A]" />
               <input
                 type="text"
-                placeholder="Search by order, customer, mobile..."
+                placeholder="Search by order ID, #ID, customer, phone..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white pl-8 pr-3 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
@@ -1020,7 +1127,16 @@ export default function AdminOrdersPage() {
                 pagedRows.map((o) => (
                   <tr key={o.id} className="border-t border-[#F0E9DC] hover:bg-[#FFFBF3]/50">
                     <td className="px-2 py-2"><input type="checkbox" checked={selectedIds.includes(o.id)} onChange={() => toggleSelect(o.id)} /></td>
-                    <td className="px-2 py-2 font-mono text-[11px]">#{o.id.slice(0, 10).toUpperCase()}</td>
+                    <td className="px-2 py-2">
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/admin/orders/${o.id}`)}
+                        className="font-mono text-[11px] font-semibold text-[#7B3010] hover:underline cursor-pointer text-left"
+                        title={`Full Order ID: ${o.id}`}
+                      >
+                        #{o.id.slice(0, 10).toUpperCase()}
+                      </button>
+                    </td>
                     <td className="px-2 py-2 text-xs text-[#7A7A7A]">
                       <div>{formatOrderDate(o.createdAt)}</div>
                       <div>{formatOrderTime(o.createdAt)}</div>
@@ -1084,49 +1200,56 @@ export default function AdminOrdersPage() {
                       </div>
                     </td>
                     <td className="px-2 py-2">
-                      {(() => {
-                        const shipmentCancelled = latestShipmentStatus(o) === "cancelled";
-                        const status = shipmentCancelled ? "cancelled" : lifecycleStatus(o);
-                        if (!shipmentCancelled && isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && (MANUAL_ORDER_STATUSES as readonly string[]).includes(status)) {
+                      <div className="min-w-[130px]">
+                        {(() => {
+                          const currentStatus = lifecycleStatus(o);
+                          const options = (ADMIN_ORDER_STATUS_OPTIONS as readonly string[]).includes(currentStatus)
+                            ? ADMIN_ORDER_STATUS_OPTIONS
+                            : [currentStatus, ...ADMIN_ORDER_STATUS_OPTIONS];
                           return (
                             <select
-                              value={status}
+                              value={currentStatus}
                               disabled={Boolean(rowActionBusy[o.id])}
                               onChange={(e) => void changeOrderStatus(o.id, e.target.value)}
-                              className="w-full cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2 py-1 text-[11px] font-semibold text-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                              className={`w-full cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold shadow-sm focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 transition ${getOrderStatusSelectClass(currentStatus)}`}
+                              title="Change Order Status"
                             >
-                              {MANUAL_ORDER_STATUSES.map((value) => (
-                                <option key={value} value={value}>{orderStatusLabel(value)}</option>
+                              {options.map((value) => (
+                                <option key={value} value={value} className="bg-white text-[#2A1810]">
+                                  {orderStatusLabel(value)}
+                                </option>
                               ))}
                             </select>
                           );
-                        }
-                        return getOrderStatusBadge(status);
-                      })()}
+                        })()}
+                      </div>
                     </td>
                     <td className="px-2 py-2">
-                      {(() => {
-                        const shipmentCancelled = latestShipmentStatus(o) === "cancelled";
-                        const status = shipmentCancelled ? "cancelled" : lifecycleStatus(o);
-                        const manual = isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod });
-                        if (!shipmentCancelled && manual && (MANUAL_ORDER_STATUSES as readonly string[]).includes(status)) {
+                      <div className="min-w-[130px] space-y-0.5">
+                        {(() => {
+                          const currentShipStatus = latestShipmentStatus(o);
+                          const options = (ADMIN_SHIPMENT_STATUS_OPTIONS as readonly string[]).includes(currentShipStatus)
+                            ? ADMIN_SHIPMENT_STATUS_OPTIONS
+                            : [currentShipStatus, ...ADMIN_SHIPMENT_STATUS_OPTIONS];
                           return (
                             <select
-                              value={status}
+                              value={currentShipStatus}
                               disabled={Boolean(rowActionBusy[o.id])}
-                              onChange={(e) => void changeOrderStatus(o.id, e.target.value)}
-                              className="w-full cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2 py-1 text-[11px] font-semibold text-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                              onChange={(e) => void changeShipmentStatus(o.id, e.target.value)}
+                              className={`w-full cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold shadow-sm focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 transition ${getShipmentStatusSelectClass(currentShipStatus)}`}
+                              title="Change Shipment Status"
                             >
-                              {MANUAL_ORDER_STATUSES.map((value) => (
-                                <option key={value} value={value}>{orderStatusLabel(value)}</option>
+                              {options.map((value) => (
+                                <option key={value} value={value} className="bg-white text-[#2A1810]">
+                                  {orderStatusLabel(value)}
+                                </option>
                               ))}
                             </select>
                           );
-                        }
-                        return getShipmentStatusBadge((MANUAL_ORDER_STATUSES as readonly string[]).includes(status) && manual ? status : displayShipmentStatus(o));
-                      })()}
-                      <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
-                      <p className="text-[11px] text-[#646464]">AWB: {o.awbCode ?? o.shipments?.[0]?.trackingNo ?? "Pending"}</p>
+                        })()}
+                        <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
+                        <p className="text-[11px] text-[#646464]">AWB: {o.awbCode ?? o.shipments?.[0]?.trackingNo ?? "Pending"}</p>
+                      </div>
                     </td>
                     <td className="px-2 py-2 font-semibold">Rs.{Number(o.total).toFixed(2)}</td>
                     <td className="px-2 py-2 text-center font-medium">{itemsCount(o)}</td>

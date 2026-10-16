@@ -69,6 +69,21 @@ export default function AdminAbandonedCartsPage() {
     topAbandonedProducts?: Array<{ name: string; count: number }>;
   } | null>(null);
   const [activeTab, setActiveTab] = useState<"dashboard" | "live" | "campaigns" | "templates" | "settings" | "analytics">("dashboard");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, currentPage, pageSize]);
+  const startCount = rows.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endCount = Math.min(currentPage * pageSize, rows.length);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, converted, userType, pageSize]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -266,16 +281,19 @@ export default function AdminAbandonedCartsPage() {
             </Select>
             <button type="button" onClick={() => load()} className="rounded bg-[#7B3010] px-3 py-2 text-xs font-semibold uppercase tracking-wide text-white">Apply Filters</button>
           </div>
-          <ConsoleTable headers={["Cart ID", "Customer", "State", "Reason", "Step", "Items", "Value", "Last Active", "Recovery", "Actions"]}>
+          <ConsoleTable headers={["S. No.", "Cart ID", "Customer", "State", "Reason", "Step", "Items", "Value", "Last Active", "Recovery", "Actions"]}>
             {rows.length === 0 ? (
               <tr>
-                <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={10}>
+                <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={11}>
                   No abandoned carts recorded.
                 </ConsoleTd>
               </tr>
             ) : (
-              rows.map((r) => (
+              pagedRows.map((r, idx) => (
                 <tr key={r.id} className="hover:bg-[#FFFBF3]/80">
+                  <ConsoleTd className="w-14 text-center text-xs text-[#646464] font-medium">
+                    {(currentPage - 1) * pageSize + idx + 1}
+                  </ConsoleTd>
                   <ConsoleTd className="font-mono text-[11px]">{r.session_key.slice(0, 16)}…</ConsoleTd>
                   <ConsoleTd className="text-xs">
                     <div>{r.email ?? "No email"}</div>
@@ -323,6 +341,50 @@ export default function AdminAbandonedCartsPage() {
               ))
             )}
           </ConsoleTable>
+
+          {rows.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#646464]">
+                  Showing {startCount}–{endCount} of {rows.length} carts
+                </span>
+                <span className="text-xs text-[#D9D9D1]">|</span>
+                <span className="text-xs text-[#646464]">Per page:</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => setPageSize(Number(e.target.value))}
+                  className="rounded-lg border border-[#E8DCC8] bg-white px-2 py-1 text-xs font-semibold text-[#4A1D1F] focus:outline-none"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage <= 1}
+                  className="rounded-full border border-[#E8DCC8] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:cursor-not-allowed disabled:opacity-40 transition"
+                >
+                  Previous
+                </button>
+                <span className="text-xs font-medium text-[#646464]">
+                  Page {currentPage} of {pageCount}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage((prev) => Math.min(pageCount, prev + 1))}
+                  disabled={currentPage >= pageCount}
+                  className="rounded-full border border-[#E8DCC8] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#4A1D1F] hover:bg-[#FFFBF3] disabled:cursor-not-allowed disabled:opacity-40 transition"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
 
