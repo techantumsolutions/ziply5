@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation"
 import { useQueryClient, useMutation } from "@tanstack/react-query"
 import { useRealtimeTables } from "@/hooks/useRealtimeTables"
 import { useMasterValues } from "@/hooks/useMasterData"
-import { Camera, X } from "lucide-react"
+import { Camera, Package, X } from "lucide-react"
 import { toast } from "@/lib/toast"
 import { useOrderWithTracking } from "@/hooks/useOrderWithTracking"
 import { isOrderShipped, isZiplyInvoiceReady } from "@/src/lib/orders/order-shipped"
@@ -17,7 +17,8 @@ import {
   shouldRenderCustomerCancelOrderButton,
 } from "@/src/lib/orders/order-cancel-policy"
 import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibility"
-import { OrderShipmentPanel } from "@/src/components/shipping/order-shipment-panel"
+import { OrderShipmentPanel, ShipmentProgressCard } from "@/src/components/shipping/order-shipment-panel"
+import { resolveShipmentProgressIndex } from "@/src/lib/shipping/shipment-ui-constants"
 import { OrderStatusHistoryCard } from "@/src/components/orders/order-status-history-card"
 import { OrderSummaryHeroCard } from "@/src/components/orders/order-summary-hero-card"
 import { OrderHelpFooter } from "@/src/components/orders/order-help-footer"
@@ -44,6 +45,8 @@ const FALLBACK_RETURN_REASONS = [
   "Customer remorse",
   "Other",
 ] as const
+
+const formatInr = (n: number | string | null | undefined) => `₹${Number(n || 0).toFixed(2)}`
 
 export default function OrderDetailPage() {
   const params = useParams() as { id?: string }
@@ -494,8 +497,24 @@ export default function OrderDetailPage() {
 
       {order && (
         <>
+          <ShipmentProgressCard
+            activeIndex={
+              trackingQuery.data?.progressIndex != null && trackingQuery.data.progressIndex >= 0
+                ? trackingQuery.data.progressIndex
+                : resolveShipmentProgressIndex(
+                    trackingQuery.data?.shipment?.shipmentStatus ||
+                    trackingQuery.data?.shipment?.shippingStatus ||
+                    order.shipmentStatus ||
+                    order.shippingStatus ||
+                    latestLifecycle ||
+                    order.status
+                  )
+            }
+          />
+
           <OrderSummaryHeroCard
             order={order}
+            orderLifecycleStatus={latestLifecycle || order.status}
             paymentStatus={paymentStatus}
             onDownloadInvoice={() => void downloadInvoice()}
             invoiceAvailable={invoiceReady}
@@ -564,19 +583,168 @@ export default function OrderDetailPage() {
             return null
           })()}
 
-          {/* <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-[#111827]">Order lifecycle</h2>
-            <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3">
-              {timeline.map((step) => {
-                const reached = historySet.has(step) || order.status.toLowerCase() === step
-                return (
-                  <div key={step} className="rounded-lg border border-[#F3F4F6] bg-[#FAFAFA] px-3 py-2 text-xs uppercase">
-                    <span className={reached ? "font-semibold text-[#111827]" : "text-[#6B7280]"}>{step}</span>
-                  </div>
-                )
-              })}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm shadow-sm">
+              <p className="mb-2 font-semibold text-[#111827]">Shipping & contact</p>
+              <p className="text-[#111827]">{order.customerName ?? "—"}</p>
+              <p className="text-[#6B7280]">{order.customerAddress ?? "—"}</p>
+              <p className="text-[#6B7280]">{order.customerPhone ?? "—"}</p>
+              <p className="mt-2 text-[#6B7280]">{order.user?.email ?? "—"}</p>
             </div>
-          </div> */}
+            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm shadow-sm">
+              <p className="mb-2 font-semibold text-[#111827]">Payment Mode :  <span className="text-[#6B7280]">{(order.paymentMethod ?? "Not specified").toUpperCase()}</span> </p>
+              <p className="text-[#111827] font-semibold">
+                Payment Status: <span className=" text-[#6B7280] uppercase">{paymentStatus}</span>
+              </p>
+              <p className="mt-2 font-semibold text-[#111827]">
+                Total: <span className="text-[#6B7280]">{order.currency} {Number(order.total).toFixed(2)}</span>
+              </p>
+              {codUnpaid && codPayUrl ? (
+                <div className="mt-3 flex items-center gap-3">
+                  {codQr ? <img src={codQr} alt="Payment QR for this order" className="h-36 w-36 rounded border border-[#E5E7EB]" style={{ imageRendering: "pixelated" }} /> : null}
+                  <div>
+                    <p className="font-semibold text-[#111827]">Pay before or at delivery</p>
+                    <p className="mt-1 text-xs text-[#6B7280]">This QR and link work once for this order. A second payment is not accepted.</p>
+                    <a href={codPayUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold text-[#7B3010] underline">{codPayUrl}</a>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-sm font-semibold text-[#111827]">Product details ({order.items?.length ?? 0} items)</h2>
+            {(order.items ?? []).length === 0 ? (
+              <p className="text-sm text-[#6B7280]">No items in this order.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-[#E5E7EB] text-xs text-[#6B7280]">
+                      <th className="py-2 pr-3 font-medium">Product</th>
+                      <th className="py-2 pr-3 font-medium">SKU code</th>
+                      <th className="py-2 pr-3 font-medium">HSN Code</th>
+                      <th className="py-2 pr-3 font-medium">Price</th>
+                      <th className="py-2 pr-3 font-medium">Quantity</th>
+                      <th className="py-2 font-medium">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(order.items ?? []).map((item, idx) => {
+                      const productName = item.product?.name ?? "Deleted product"
+                      const weightLabel = item.variant?.weight || item.product?.weight || ""
+                      const variantName = item.variant?.name && item.variant.name !== weightLabel ? item.variant.name : ""
+                      const subtitle = [variantName, weightLabel].filter(Boolean).join(" | ")
+                      const sku = item.sku || item.variant?.sku || item.product?.sku || "—"
+                      const hsn = item.variant?.hsnCode || "—"
+                      const qty = Number(item.quantity || 0)
+                      const total = Number(item.lineTotal ?? 0)
+                      const unit = qty > 0 ? (total > 0 ? total / qty : Number(item.unitPrice ?? 0)) : Number(item.unitPrice ?? 0)
+                      const thumbnail = item.product?.thumbnail || item.product?.image || null
+                      return (
+                        <tr key={item.id ?? `${item.productId ?? "item"}-${idx}`} className="border-b border-[#F3F4F6] last:border-0">
+                          <td className="py-3 pr-3">
+                            <div className="flex items-center gap-3">
+                              {thumbnail ? (
+                                <img src={thumbnail} alt="" className="h-10 w-10 rounded-md border border-[#E5E7EB] object-cover shrink-0" />
+                              ) : (
+                                <span className="flex h-10 w-10 items-center justify-center rounded-md border border-[#E5E7EB] bg-[#F9FAFB] text-[#9CA3AF] shrink-0">
+                                  <Package className="h-4 w-4" />
+                                </span>
+                              )}
+                              <div>
+                                <p className="font-medium text-[#111827]">{productName}</p>
+                                {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
+                              </div>
+                            </div>
+                            {order.status.toLowerCase() === "delivered" && item.productId && (
+                              <div className="mt-3 rounded-lg border border-[#E8DCC8] bg-white p-3 max-w-md">
+                                {existingReviewedProducts.has(item.productId) ? (
+                                  <p className="text-xs font-semibold uppercase text-[#5A272A]">Already reviewed</p>
+                                ) : (
+                                  <>
+                                    <div className="mb-2 flex items-center gap-1">
+                                      {[1, 2, 3, 4, 5].map((star) => {
+                                        const rating = reviewDrafts[item.productId!]?.rating ?? 5
+                                        return (
+                                          <button
+                                            key={`${item.id}-star-${star}`}
+                                            type="button"
+                                            onClick={() =>
+                                              setReviewDrafts((prev) => ({
+                                                ...prev,
+                                                [item.productId!]: { rating: star, content: prev[item.productId!]?.content ?? "" },
+                                              }))
+                                            }
+                                            className={`text-lg ${star <= rating ? "text-[#F59E0B]" : "text-[#D1D5DB]"}`}
+                                          >
+                                            ★
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                    <textarea
+                                      value={reviewDrafts[item.productId]?.content ?? ""}
+                                      onChange={(event) =>
+                                        setReviewDrafts((prev) => ({
+                                          ...prev,
+                                          [item.productId!]: { rating: prev[item.productId!]?.rating ?? 5, content: event.target.value },
+                                        }))
+                                      }
+                                      placeholder="Write your review"
+                                      className="w-full rounded-md border border-[#D9D9D1] px-2 py-1.5 text-xs"
+                                      rows={3}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => void submitReview(item.productId!, item.product?.name ?? "Product")}
+                                      disabled={Boolean(reviewBusyByProduct[item.productId])}
+                                      className="mt-2 rounded-md bg-[#7B3010] px-3 py-1.5 text-xs font-semibold uppercase text-white disabled:opacity-50"
+                                    >
+                                      {reviewBusyByProduct[item.productId] ? "Submitting..." : "Submit Review"}
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-3 pr-3 text-[#374151]">{sku}</td>
+                          <td className="py-3 pr-3 text-[#374151]">{hsn}</td>
+                          <td className="py-3 pr-3 text-[#111827]">{formatInr(unit)}</td>
+                          <td className="py-3 pr-3 text-[#111827]">{qty}</td>
+                          <td className="py-3 font-medium text-[#111827]">{formatInr(total || unit * qty)}</td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="mt-4 flex justify-end">
+              <div className="w-full max-w-xs space-y-2 text-sm text-[#374151]">
+                <div className="flex items-center justify-between gap-6">
+                  <span>Subtotal ({order.items?.length ?? 0} items)</span>
+                  <span>{formatInr(Number(order.subtotal))}</span>
+                </div>
+                <div className="flex items-center justify-between gap-6">
+                  <span>Shipping charge</span>
+                  <span>{formatInr(Number(order.shipping))}</span>
+                </div>
+                <div className="flex items-center justify-between gap-6 text-green-700">
+                  <span>Discount{order.couponCode ? ` (${order.couponCode})` : ""}</span>
+                  <span>- {formatInr(Number(order.discount ?? order.savingAmount ?? 0))}</span>
+                </div>
+                <div className="flex items-center justify-between gap-6">
+                  <span>Tax</span>
+                  <span>{formatInr(Number(order.tax ?? 0))}</span>
+                </div>
+                <div className="flex items-center justify-between gap-6 border-t border-[#E5E7EB] pt-2 text-base font-semibold text-[#111827]">
+                  <span>Total amount</span>
+                  <span>{formatInr(Number(order.total))}</span>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <div id="shipment-tracking" className="scroll-mt-20">
             <OrderShipmentPanel
@@ -595,8 +763,6 @@ export default function OrderDetailPage() {
               }}
             />
           </div>
-
-          <OrderStatusHistoryCard statusHistory={order.statusHistory} />
 
           {(order.returnRequests?.length > 0 || order?.refunds?.length > 0) && (
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
@@ -669,120 +835,7 @@ export default function OrderDetailPage() {
             </div>
           )}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm shadow-sm">
-              <p className="mb-2 font-semibold text-[#111827]">Shipping & contact</p>
-              <p className="text-[#111827]">{order.customerName ?? "—"}</p>
-              <p className="text-[#6B7280]">{order.customerAddress ?? "—"}</p>
-              <p className="text-[#6B7280]">{order.customerPhone ?? "—"}</p>
-              <p className="mt-2 text-[#6B7280]">{order.user?.email ?? "—"}</p>
-            </div>
-            <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm shadow-sm">
-              <p className="mb-2 font-semibold text-[#111827]">Payment Mode :  <span className="text-[#6B7280]">{(order.paymentMethod ?? "Not specified").toUpperCase()}</span> </p>
-              {/* <p className="text-[#111827]">{(order.paymentMethod ?? "Not specified").toUpperCase()}</p> */}
-              <p className="text-[#111827] font-semibold">
-                Payment Status: <span className=" text-[#6B7280] uppercase">{paymentStatus}</span>
-              </p>
-              <p className="mt-2 font-semibold text-[#111827]">
-                Total: <span className="text-[#6B7280]">{order.currency} {Number(order.total).toFixed(2)}</span>
-              </p>
-              {codUnpaid && codPayUrl ? (
-                <div className="mt-3 flex items-center gap-3">
-                  {codQr ? <img src={codQr} alt="Payment QR for this order" className="h-36 w-36 rounded border border-[#E5E7EB]" style={{ imageRendering: "pixelated" }} /> : null}
-                  <div>
-                    <p className="font-semibold text-[#111827]">Pay before or at delivery</p>
-                    <p className="mt-1 text-xs text-[#6B7280]">This QR and link work once for this order. A second payment is not accepted.</p>
-                    <a href={codPayUrl} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-semibold text-[#7B3010] underline">{codPayUrl}</a>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-[#111827]">Items</h2>
-            <div className="space-y-2">
-              {order.items.map((item) => (
-                <div key={item.id} className="rounded-lg border border-[#F2E6DD] bg-[#FFFBF7] p-3 text-sm text-[#646464]">
-                  <p className="font-semibold text-[#2A1810]">{item.product?.name ?? "Product"}</p>
-                  <p>Quantity: {item.quantity}</p>
-                  <p>Price: {order.currency} {Number(item.unitPrice ?? 0).toFixed(2)}</p>
-                  <p>Subtotal: {order.currency} {Number(item.lineTotal ?? Number(item.unitPrice ?? 0) * Number(item.quantity ?? 0)).toFixed(2)}</p>
-                  {order.status.toLowerCase() === "delivered" && item.productId && (
-                    <div className="mt-3 rounded-lg border border-[#E8DCC8] bg-white p-3">
-                      {existingReviewedProducts.has(item.productId) ? (
-                        <p className="text-xs font-semibold uppercase text-[#5A272A]">Already reviewed</p>
-                      ) : (
-                        <>
-                          <div className="mb-2 flex items-center gap-1">
-                            {[1, 2, 3, 4, 5].map((star) => {
-                              const rating = reviewDrafts[item.productId!]?.rating ?? 5
-                              return (
-                                <button
-                                  key={`${item.id}-star-${star}`}
-                                  type="button"
-                                  onClick={() =>
-                                    setReviewDrafts((prev) => ({
-                                      ...prev,
-                                      [item.productId!]: { rating: star, content: prev[item.productId!]?.content ?? "" },
-                                    }))
-                                  }
-                                  className={`text-lg ${star <= rating ? "text-[#F59E0B]" : "text-[#D1D5DB]"}`}
-                                >
-                                  ★
-                                </button>
-                              )
-                            })}
-                          </div>
-                          <textarea
-                            value={reviewDrafts[item.productId]?.content ?? ""}
-                            onChange={(event) =>
-                              setReviewDrafts((prev) => ({
-                                ...prev,
-                                [item.productId!]: { rating: prev[item.productId!]?.rating ?? 5, content: event.target.value },
-                              }))
-                            }
-                            placeholder="Write your review"
-                            className="w-full rounded-md border border-[#D9D9D1] px-2 py-1.5 text-xs"
-                            rows={3}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void submitReview(item.productId!, item.product?.name ?? "Product")}
-                            disabled={Boolean(reviewBusyByProduct[item.productId])}
-                            className="mt-2 rounded-md bg-[#7B3010] px-3 py-1.5 text-xs font-semibold uppercase text-white disabled:opacity-50"
-                          >
-                            {reviewBusyByProduct[item.productId] ? "Submitting..." : "Submit Review"}
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-sm font-semibold text-[#111827]">Billing summary</h2>
-            <div className="space-y-1 text-sm text-[#6B7280]">
-              <p>
-                Subtotal: <span className="font-semibold text-[#111827]">{order.currency} {Number(order.subtotal ?? 0).toFixed(2)}</span>
-              </p>
-              <p>
-                Tax: <span className="font-semibold text-[#111827]">{order.currency} {Number(order.tax ?? 0).toFixed(2)}</span>
-              </p>
-              <p>
-                Total Saving: <span className="font-semibold text-red-600">- {order.currency} {Number(order.savingAmount ?? 0).toFixed(2)}</span>
-              </p>
-              <p>
-                Shipping: <span className="font-semibold text-[#111827]">{order.currency} {Number(order.shipping ?? 0).toFixed(2)}</span>
-              </p>
-              <p>
-                Total: <span className="font-semibold text-[#111827]">{order.currency} {Number(order.total).toFixed(2)}</span>
-              </p>
-            </div>
-          </div>
+          <OrderStatusHistoryCard statusHistory={order.statusHistory} />
 
           {order.status.toLowerCase() === "delivered" && (
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm space-y-2">
