@@ -1,5 +1,6 @@
 "use client"
 
+import { Check } from "lucide-react"
 import { SHIPMENT_UI_STEPS } from "@/src/lib/shipping/shipment-ui-constants"
 
 type Props = {
@@ -23,7 +24,7 @@ export function ShipmentProgressTracker({ activeIndex }: Props) {
                   reached ? "bg-[#2DA66D] text-white" : "bg-[#E5E7EB] text-[#9CA3AF]"
                 } ${current ? "ring-2 ring-[#7B3010] ring-offset-2 ring-offset-white" : ""}`}
               >
-                {idx + 1}
+                {reached ? <Check className="h-3.5 w-3.5 stroke-[3]" /> : idx + 1}
               </div>
               <span
                 className={`max-w-[4.5rem] text-[9px] uppercase leading-tight sm:max-w-none sm:text-[10px] ${

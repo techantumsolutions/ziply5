@@ -13,9 +13,34 @@ type Props = {
   invoiceAvailable?: boolean
   downloadingInvoice?: boolean
   extraActions?: ReactNode
+  orderLifecycleStatus?: string | null
 }
 
-export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, invoiceAvailable = true, downloadingInvoice = false, extraActions }: Props) {
+function statusBadgeClass(label: string) {
+  const s = label.toLowerCase()
+  if (s.includes("delivered")) return "bg-emerald-50 text-emerald-800 ring-emerald-200"
+  if (s.includes("failed") || s.includes("lost") || s.includes("reject") || s.includes("cancel")) return "bg-red-50 text-red-700 ring-red-200"
+  if (s.includes("rto")) return "bg-amber-50 text-amber-900 ring-amber-200"
+  if (s.includes("out for")) return "bg-sky-50 text-sky-900 ring-sky-200"
+  if (s.includes("transit") || s.includes("picked") || s.includes("shipped")) return "bg-indigo-50 text-indigo-900 ring-indigo-200"
+  if (s.includes("awb")) return "bg-violet-50 text-violet-900 ring-violet-200"
+  return "bg-[#F3F4F6] text-[#374151] ring-[#E5E7EB]"
+}
+
+function prettyStatus(value: string) {
+  if (value.toLowerCase() === "confirmed") return "Accepted"
+  return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+export function OrderSummaryHeroCard({
+  order,
+  paymentStatus,
+  onDownloadInvoice,
+  invoiceAvailable = true,
+  downloadingInvoice = false,
+  extraActions,
+  orderLifecycleStatus,
+}: Props) {
   const invoiceNo = formatInvoiceNumber(order.id, order.createdAt)
 
   return (
@@ -44,9 +69,10 @@ export function OrderSummaryHeroCard({ order, paymentStatus, onDownloadInvoice, 
             const isRejected =
               order.status.toLowerCase() === "rejected" ||
               order.statusHistory?.some((h: any) => h.reasonCode === "admin_rejected" || h.toStatus?.toLowerCase() === "rejected")
-            const displayStatus = isRejected ? "REJECTED" : order.status
+            const rawStatus = isRejected ? "rejected" : (orderLifecycleStatus?.trim() || order.status || "")
+            const displayStatus = isRejected ? "REJECTED" : prettyStatus(rawStatus).toUpperCase()
             return (
-              <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase ring-1 ${isRejected ? "bg-red-50 text-red-700 ring-red-200" : "bg-[#F3F4F6] text-[#374151] ring-[#E5E7EB]"}`}>
+              <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase ring-1 ${statusBadgeClass(rawStatus)}`}>
                 {displayStatus}
               </span>
             )

@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
+import Link from "next/link"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { AlertTriangle, Ban, Check, Download, ExternalLink, FileText, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
+import { AlertTriangle, ArrowLeft, Ban, Check, Download, ExternalLink, FileText, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
@@ -716,11 +717,13 @@ export default function AdminOrderDetailPage() {
   return (
     <section className="w-full space-y-4 py-4">
       <div>
-        <p className="text-xs text-[#646464]">
-          <button type="button" onClick={() => router.push("/admin/orders")} className="hover:text-[#166534]">Orders</button>
-          <span className="mx-1.5">›</span>
-          <span className="text-[#111827]">Order details</span>
-        </p>
+        <Link
+          href="/admin/orders"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-[#646464] transition-colors hover:text-[#111827]"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span>Back to orders</span>
+        </Link>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

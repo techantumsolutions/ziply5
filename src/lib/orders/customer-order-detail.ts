@@ -8,6 +8,7 @@ export type CustomerOrderDetail = {
   subtotal?: string | number
   tax?: string | number
   discount?: string | number
+  couponCode?: string | null
   savingAmount?: string | number
   shipping?: string | number
   total: string | number
@@ -23,7 +24,20 @@ export type CustomerOrderDetail = {
     quantity: number
     unitPrice?: string | number
     lineTotal?: string | number
-    product?: { name?: string | null } | null
+    sku?: string | null
+    product?: {
+      name?: string | null
+      thumbnail?: string | null
+      image?: string | null
+      weight?: string | null
+      sku?: string | null
+    } | null
+    variant?: {
+      name?: string | null
+      weight?: string | null
+      sku?: string | null
+      hsnCode?: string | null
+    } | null
   }>
   statusHistory: Array<{ toStatus: string; changedAt: string }>
   transactions: Array<{ id: string; status: string; gateway: string; createdAt: string }>

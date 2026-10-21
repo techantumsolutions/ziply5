@@ -46,6 +46,15 @@ type Props = {
 
 const ACTIVITY_PAGE = 25
 
+export function ShipmentProgressCard({ activeIndex }: { activeIndex: number }) {
+  return (
+    <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Shipment progress</h2>
+      <ShipmentProgressTracker activeIndex={activeIndex} />
+    </div>
+  )
+}
+
 export function OrderShipmentPanel(props: Props) {
   const { tracking, isLoading, error, onRefreshFromShiprocket, orderLifecycleStatus } = props
   const [activityLimit, setActivityLimit] = useState(ACTIVITY_PAGE)
@@ -187,29 +196,7 @@ export function OrderShipmentPanel(props: Props) {
         </div>
       </div>
 
-      {!noShipmentYet && (
-        <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Shipment progress</h2>
-          <ShipmentProgressTracker activeIndex={tracking.progressIndex} />
-        </div>
-      )}
 
-      <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-        <h2 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Latest update</h2>
-        {tracking.latestActivity?.message ? (
-          <p className="text-sm text-[#2A1810]">{tracking.latestActivity.message}</p>
-        ) : noShipmentYet ? (
-          <p className="text-sm text-[#646464]">Tracking updates will appear soon.</p>
-        ) : (
-          <p className="text-sm text-[#646464]">No scan activity recorded yet — try refresh in a few minutes.</p>
-        )}
-        {tracking.latestActivity?.at ? (
-          <p className="mt-1 text-xs text-[#646464]">
-            {formatDateTime(tracking.latestActivity.at)}
-            {tracking.latestActivity.location ? ` · ${tracking.latestActivity.location}` : ""}
-          </p>
-        ) : null}
-      </div>
 
       {/* <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-[#4A1D1F]">Delivery estimates</h2>
