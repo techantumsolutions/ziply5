@@ -10,7 +10,7 @@ import { AlertTriangle, ArrowLeft, Ban, Check, Download, ExternalLink, FileText,
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
-import { orderStatusLabel } from "@/src/lib/orders/manual-order-status"
+import { orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status"
 import { toast } from "@/lib/toast"
 
 const STORAGE_KEY_SERVICEABLE = "ziply5_admin_serviceable_order_ids"
@@ -641,75 +641,39 @@ export default function AdminOrderDetailPage() {
   }
 
   const getOrderStatusBadge = (status: string) => {
-    const s = status.toLowerCase().trim();
+    const canonical = resolveCanonicalOrderStatus(status, order?.statusHistory);
 
-    if (s === "cancelled" || s === "rejected" || s === "failed") {
+    if (canonical === "rejected") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-          {s.replaceAll("_", " ")}
+          Rejected
         </span>
       );
     }
 
-    if (s === "delivered" || s === "completed") {
+    if (canonical === "cancelled") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs font-semibold text-gray-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
+          Cancelled
+        </span>
+      );
+    }
+
+    if (canonical === "accepted") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          {s.replaceAll("_", " ")}
-        </span>
-      );
-    }
-
-    if (s === "shipped") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-          Shipped
-        </span>
-      );
-    }
-
-    if (s === "in_transit" || s === "out_for_delivery" || s === "dispatched") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-          {s.replaceAll("_", " ")}
-        </span>
-      );
-    }
-
-    if (s === "confirmed" || s === "packed" || s === "processing") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
-          {s.replaceAll("_", " ")}
-        </span>
-      );
-    }
-
-    if (s === "admin_approval_pending" || s === "approval_pending") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          Pending
-        </span>
-      );
-    }
-
-    if (s === "new" || s === "pending" || s === "pending_payment" || s === "payment_success") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-          {s === "new" ? "New Order" : s.replaceAll("_", " ")}
+          Accepted
         </span>
       );
     }
 
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 capitalize">
-        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-        {s.replaceAll("_", " ")}
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 capitalize">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+        Pending
       </span>
     );
   };
@@ -732,25 +696,6 @@ export default function AdminOrderDetailPage() {
             Order #{order ? order.id.slice(0, 10).toUpperCase() : "--------"}
           </h1>
           {order ? getOrderStatusBadge(lifecycleStatus) : null}
-          {order ? (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-[#6B7280]">Update Status:</span>
-              <select
-                value={lifecycleStatus}
-                disabled={updatingStatus !== null || ["cancelled", "rejected"].includes(lifecycleStatus.toLowerCase())}
-                onChange={(e) => void handleUpdateOrderStatus(e.target.value)}
-                className="cursor-pointer rounded-lg border border-[#7B3010]/30 bg-[#FFF7ED] px-2.5 py-1 text-xs font-semibold text-[#7B3010] shadow-sm hover:border-[#7B3010] focus:outline-none focus:ring-1 focus:ring-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
-                title="Manually Change Order Status"
-              >
-                {getForwardOrderStatusOptions(lifecycleStatus).map((val) => (
-                  <option key={val} value={val}>
-                    {orderStatusLabel(val)}
-                  </option>
-                ))}
-              </select>
-              {updatingStatus === "order" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7B3010]" />}
-            </div>
-          ) : null}
         </div>
 
         <Button

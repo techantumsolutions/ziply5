@@ -6,6 +6,8 @@ import type { CustomerOrderDetail } from "@/src/lib/orders/customer-order-detail
 import { formatInvoiceNumber } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 
+import { resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status"
+
 type Props = {
   order: CustomerOrderDetail
   paymentStatus: string
@@ -14,22 +16,6 @@ type Props = {
   downloadingInvoice?: boolean
   extraActions?: ReactNode
   orderLifecycleStatus?: string | null
-}
-
-function statusBadgeClass(label: string) {
-  const s = label.toLowerCase()
-  if (s.includes("delivered")) return "bg-emerald-50 text-emerald-800 ring-emerald-200"
-  if (s.includes("failed") || s.includes("lost") || s.includes("reject") || s.includes("cancel")) return "bg-red-50 text-red-700 ring-red-200"
-  if (s.includes("rto")) return "bg-amber-50 text-amber-900 ring-amber-200"
-  if (s.includes("out for")) return "bg-sky-50 text-sky-900 ring-sky-200"
-  if (s.includes("transit") || s.includes("picked") || s.includes("shipped")) return "bg-indigo-50 text-indigo-900 ring-indigo-200"
-  if (s.includes("awb")) return "bg-violet-50 text-violet-900 ring-violet-200"
-  return "bg-[#F3F4F6] text-[#374151] ring-[#E5E7EB]"
-}
-
-function prettyStatus(value: string) {
-  if (value.toLowerCase() === "confirmed") return "Accepted"
-  return value.replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase())
 }
 
 export function OrderSummaryHeroCard({
@@ -66,14 +52,18 @@ export function OrderSummaryHeroCard({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {(() => {
-            const isRejected =
-              order.status.toLowerCase() === "rejected" ||
-              order.statusHistory?.some((h: any) => h.reasonCode === "admin_rejected" || h.toStatus?.toLowerCase() === "rejected")
-            const rawStatus = isRejected ? "rejected" : (orderLifecycleStatus?.trim() || order.status || "")
-            const displayStatus = isRejected ? "REJECTED" : prettyStatus(rawStatus).toUpperCase()
+            const canonical = resolveCanonicalOrderStatus(orderLifecycleStatus || order.status, order.statusHistory)
+            const badgeClass =
+              canonical === "rejected"
+                ? "bg-red-50 text-red-700 ring-red-200"
+                : canonical === "cancelled"
+                  ? "bg-gray-100 text-gray-700 ring-gray-200"
+                  : canonical === "accepted"
+                    ? "bg-emerald-50 text-emerald-800 ring-emerald-200"
+                    : "bg-amber-50 text-amber-800 ring-amber-200"
             return (
-              <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase ring-1 ${statusBadgeClass(rawStatus)}`}>
-                {displayStatus}
+              <span className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase ring-1 ${badgeClass}`}>
+                {canonical.toUpperCase()}
               </span>
             )
           })()}

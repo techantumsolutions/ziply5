@@ -2874,12 +2874,10 @@ export function ProductConsolePage({
                 <SelectValue placeholder="All Statuses" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all" className="capitalize">All Statuses</SelectItem>
-                {statuses.map((s) => (
-                  <SelectItem key={s} value={s} className="capitalize">
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </SelectItem>
-                ))}
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="published">Enabled</SelectItem>
+                <SelectItem value="archived">Disabled</SelectItem>
+                <SelectItem value="draft">Draft</SelectItem>
               </SelectContent>
             </Select>
 
@@ -3028,16 +3026,33 @@ export function ProductConsolePage({
                         })()}
                       </ConsoleTd>
                       <ConsoleTd className="align-middle">
-                        <Select value={rowStatus[p.id] ?? p.status} onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}>
-                          <SelectTrigger className="w-[112px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs capitalize" size="sm">
+                        <Select
+                          value={rowStatus[p.id] ?? p.status}
+                          onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}
+                        >
+                          <SelectTrigger className="w-[115px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs font-medium" size="sm">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {(p.status === "draft" ? (["draft", "published"] as const) : (["published", "archived"] as const)).map((s) => (
-                              <SelectItem key={s} value={s} className="capitalize">
-                                {s === "draft" ? "Draft" : s === "published" ? "Published" : "Archived"}
-                              </SelectItem>
-                            ))}
+                            {p.status === "draft" ? (
+                              <>
+                                <SelectItem value="draft" disabled className="text-gray-400">
+                                  Draft
+                                </SelectItem>
+                                <SelectItem value="published" className="text-emerald-700 font-medium">
+                                  Publish
+                                </SelectItem>
+                              </>
+                            ) : (
+                              <>
+                                <SelectItem value="published" className="text-emerald-700 font-medium">
+                                  Enabled
+                                </SelectItem>
+                                <SelectItem value="archived" className="text-gray-600 font-medium">
+                                  Disabled
+                                </SelectItem>
+                              </>
+                            )}
                           </SelectContent>
                         </Select>
                       </ConsoleTd>
