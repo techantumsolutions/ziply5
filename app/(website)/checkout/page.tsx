@@ -921,16 +921,23 @@ export default function CheckoutPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="hidden grid-cols-[minmax(0,2fr)_1fr_auto_1fr] gap-6 border-b pb-1 text-sm text-[#787878] md:grid">
+                <div className="hidden grid-cols-[48px_minmax(0,2fr)_1fr_auto_1fr] gap-6 border-b pb-1 text-sm text-[#787878] md:grid">
+                  <span>S.No.</span>
                   <span>Product Details</span>
                   <span>Price</span>
                   <span>Quantity</span>
                   <span>Total</span>
                 </div>
-                {validatedItems.map((item) => {
+                {validatedItems.map((item, index) => {
                   const showImage = item.image && item.image !== "/placeholder.svg" && !item.image.endsWith("/fallback-product.png")
                   return (
-                    <div key={item.id} className="grid grid-cols-1 items-center gap-3 border-b py-4 md:grid-cols-[minmax(0,2fr)_1fr_auto_1fr] md:gap-6 md:py-6">
+                    <div key={item.id} className="grid grid-cols-1 items-center gap-3 border-b py-4 md:grid-cols-[48px_minmax(0,2fr)_1fr_auto_1fr] md:gap-6 md:py-6">
+                      <div className="text-xs font-medium text-[#787878] md:text-sm md:text-black">
+                        <span className="inline-flex items-center gap-1 rounded bg-[#F5F1E6] px-2 py-0.5 font-semibold text-[#7B3010] md:bg-transparent md:p-0 md:font-medium md:text-black">
+                          <span className="md:hidden font-normal text-[11px] text-[#787878]">S.No. </span>
+                          {index + 1}
+                        </span>
+                      </div>
                       <div className="flex min-w-0 items-center gap-4 text-start">
                         {showImage ? (
                           <img src={item.image} alt={item.productName || item.name} className="h-16 w-16 shrink-0 rounded-lg object-contain" />

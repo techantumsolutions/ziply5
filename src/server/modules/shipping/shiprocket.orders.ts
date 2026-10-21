@@ -13,6 +13,7 @@ import { normalizeShiprocketErrorMessage } from "@/src/server/modules/shipping/s
 import { logger } from "@/lib/logger"
 import { withShiprocketOrderSyncLock, SHIPROCKET_SYNC_LOCK_TTL_MS } from "@/src/server/modules/shipping/shiprocket-sync-lock"
 import { syncShipmentTracking } from "@/src/server/modules/shipping/shiprocket.tracking"
+import { pgQuery } from "@/src/server/db/pg"
 
 const shipmentConsole = (step: string, details?: unknown) => {
   if (details === undefined) {
@@ -124,16 +125,85 @@ const persistAndValidateSnapshot = async (
 }
 
 export const getCourierOptions = async (orderId: string) => {
-  const result = await checkOrderServiceability(orderId)
-  return {
-    orderId,
-    availableCouriers: result.response.available_couriers,
-    weight: result.weight,
-    lengthCm: result.lengthCm,
-    widthCm: result.widthCm,
-    heightCm: result.heightCm,
-    deliveryPostcode: result.deliveryPostcode,
-    pickupPostcode: result.pickupPostcode,
+  try {
+    const result = await checkOrderServiceability(orderId)
+    const couriers = result.response.available_couriers ?? []
+    const isServiceable = couriers.length > 0
+
+    // Persist serviceability check result to order snapshot so refresh doesn't lose it
+    try {
+      const orderData = await getOrderByIdSupabaseBasic(orderId)
+      const currentRaw = (orderData?.shiprocketRawResponse && typeof orderData.shiprocketRawResponse === "object")
+        ? (orderData.shiprocketRawResponse as Record<string, unknown>)
+        : {}
+      const rawToSave = {
+        ...currentRaw,
+        serviceability: {
+          isServiceable,
+          serviceable: isServiceable,
+          availableCouriers: couriers.length,
+          courierCount: couriers.length,
+          checkedAt: new Date().toISOString(),
+          weight: result.weight,
+          lengthCm: result.lengthCm,
+          widthCm: result.widthCm,
+          heightCm: result.heightCm,
+          deliveryPostcode: result.deliveryPostcode,
+          pickupPostcode: result.pickupPostcode,
+        },
+      }
+      await upsertOrderShipmentSnapshotSupabase(orderId, {
+        shiprocketRawResponse: rawToSave,
+      }).catch(() => null)
+      await pgQuery(
+        `UPDATE "Order" SET "shiprocketRawResponse" = $1, "updatedAt" = now() WHERE "id" = $2`,
+        [JSON.stringify(rawToSave), orderId],
+      ).catch(() => null)
+    } catch (persistErr) {
+      shipmentConsole("serviceability.persist_failed", { orderId, error: String(persistErr) })
+    }
+
+    return {
+      orderId,
+      availableCouriers: result.response.available_couriers,
+      weight: result.weight,
+      lengthCm: result.lengthCm,
+      widthCm: result.widthCm,
+      heightCm: result.heightCm,
+      deliveryPostcode: result.deliveryPostcode,
+      pickupPostcode: result.pickupPostcode,
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/not serviceable|manual shipment|non-serviceable/i.test(msg)) {
+      try {
+        const orderData = await getOrderByIdSupabaseBasic(orderId)
+        const currentRaw = (orderData?.shiprocketRawResponse && typeof orderData.shiprocketRawResponse === "object")
+          ? (orderData.shiprocketRawResponse as Record<string, unknown>)
+          : {}
+        const rawToSave = {
+          ...currentRaw,
+          serviceability: {
+            isServiceable: false,
+            serviceable: false,
+            availableCouriers: 0,
+            courierCount: 0,
+            reason: msg,
+            checkedAt: new Date().toISOString(),
+          },
+        }
+        await upsertOrderShipmentSnapshotSupabase(orderId, {
+          shiprocketRawResponse: rawToSave,
+        }).catch(() => null)
+        await pgQuery(
+          `UPDATE "Order" SET "shiprocketRawResponse" = $1, "updatedAt" = now() WHERE "id" = $2`,
+          [JSON.stringify(rawToSave), orderId],
+        ).catch(() => null)
+      } catch {
+        // ignore
+      }
+    }
+    throw err
   }
 }
 
@@ -278,11 +348,11 @@ export const syncOrderShipmentToShiprocket = async (
       },
       "syncOrderShipmentToShiprocket_result_synced",
     ).catch(() => null)
-  } else if (result.status === "skipped") {
+  } else if ((result as any).status === "skipped") {
     logger.warn("shiprocket.sync.skipped", {
       orderId,
       skippedReason: (result as { skippedReason?: string }).skippedReason ?? "unknown",
-      reason: result.reason,
+      reason: (result as any).reason,
     })
   }
   shipmentConsole("service.sync_order.done", { orderId, status: result.status, reason: (result as { reason?: string }).reason ?? null })

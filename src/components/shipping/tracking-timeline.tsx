@@ -15,25 +15,72 @@ export function TrackingTimeline(props: {
   orderStatus?: string | null
   shipmentStatus?: string | null
   statusHistory?: Array<{ toStatus?: string; changedAt?: string }>
+  deliveryMethod?: string | null
+  trackingNumber?: string | null
+  courierName?: string | null
+  isPickupGenerated?: boolean | null
 }) {
   const history = props.statusHistory ?? []
   const reached = new Set(history.map((step) => String(step.toStatus ?? "").toLowerCase()))
   const shipmentStatus = String(props.shipmentStatus ?? "").toLowerCase()
   const orderStatus = String(props.orderStatus ?? "").toLowerCase()
 
-  const pickupGenerated = isConfirmedPickupRequest(props.shipmentStatus)
-  const shipped = ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(orderStatus) || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(shipmentStatus)
+  const hasDeliveryAndTracking = Boolean(
+    (props.deliveryMethod || props.courierName || props.trackingNumber) &&
+    !["pending", "failed", "cancelled", "rejected"].includes(orderStatus)
+  )
+
+  const shipped =
+    ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(orderStatus) ||
+    ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(shipmentStatus) ||
+    reached.has("shipped")
+
+  const inTransit =
+    shipmentStatus.includes("transit") ||
+    orderStatus === "in_transit" ||
+    reached.has("in_transit")
+
+  const outForDelivery =
+    shipmentStatus.includes("out_for_delivery") ||
+    shipmentStatus.includes("out for delivery") ||
+    orderStatus === "out_for_delivery" ||
+    reached.has("out_for_delivery")
+
+  const delivered =
+    reached.has("delivered") ||
+    orderStatus === "delivered" ||
+    shipmentStatus.includes("delivered")
+
+  const pickupGenerated =
+    Boolean(props.isPickupGenerated) ||
+    isConfirmedPickupRequest(props.shipmentStatus) ||
+    reached.has("pickup_generated") ||
+    reached.has("pickup_scheduled") ||
+    reached.has("pickup_completed") ||
+    shipped ||
+    inTransit ||
+    outForDelivery ||
+    delivered ||
+    hasDeliveryAndTracking
+
+  const confirmed =
+    reached.has("confirmed") ||
+    orderStatus === "confirmed" ||
+    pickupGenerated ||
+    shipped ||
+    !["pending", "failed", "cancelled", "rejected"].includes(orderStatus)
+
   const steps: TrackingStep[] = [
-    { key: "confirmed", label: "Order Confirmed", reached: reached.has("confirmed") || orderStatus === "confirmed" },
+    { key: "confirmed", label: "Order Confirmed", reached: confirmed },
     {
       key: "pickup_generated",
       label: "Pickup Generated",
       reached: pickupGenerated,
     },
     { key: "shipped", label: "Shipped", reached: shipped || reached.has("shipped") },
-    { key: "in_transit", label: "In Transit", reached: shipmentStatus.includes("transit") || orderStatus === "in_transit" || reached.has("in_transit") },
-    { key: "out_for_delivery", label: "Out For Delivery", reached: shipmentStatus.includes("out_for_delivery") || shipmentStatus.includes("out for delivery") || orderStatus === "out_for_delivery" || reached.has("out_for_delivery") },
-    { key: "delivered", label: "Delivered", reached: reached.has("delivered") || orderStatus === "delivered" || shipmentStatus.includes("delivered") },
+    { key: "in_transit", label: "In Transit", reached: inTransit },
+    { key: "out_for_delivery", label: "Out For Delivery", reached: outForDelivery },
+    { key: "delivered", label: "Delivered", reached: delivered },
   ]
 
   return (

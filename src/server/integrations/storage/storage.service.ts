@@ -51,6 +51,7 @@ const detectMime = (bytes: Uint8Array): AllowedMime | null => {
   // Video headers (simple check)
   if (bytes.length >= 8 && bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) return "video/mp4" as any;
   if (bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return "video/webm" as any;
+  if (looksLikePdf(bytes)) return "application/pdf" as any;
   
   return null
 }
@@ -79,7 +80,10 @@ const buildFileKey = (name: string) => {
 
 const RAW_UPLOAD_MAX_BYTES = Number(process.env.UPLOAD_RAW_MAX_BYTES ?? 512 * 1024)
 
-const rawAllowedExt = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico"])
+const rawAllowedExt = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".pdf"])
+
+const looksLikePdf = (buf: Uint8Array) =>
+  buf.length >= 4 && buf[0] === 0x25 && buf[1] === 0x50 && buf[2] === 0x44 && buf[3] === 0x46 // %PDF
 
 const looksLikeIco = (buf: Uint8Array) =>
   buf.length >= 4 && buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0
@@ -130,24 +134,28 @@ export const storageService = {
     if (!safeFolder) throw new Error("Invalid folder")
     if (!input.buffer?.byteLength) throw new Error("Empty upload")
     
-    // Check if it's a video to apply a higher limit
+    // Check if it's a video or document to apply higher limits
     const sniff = detectMime(input.buffer)
     const isVideo = sniff === ("video/mp4" as any) || sniff === ("video/webm" as any)
-    const limit = isVideo ? MAX_VIDEO_BYTES : RAW_UPLOAD_MAX_BYTES
+    const isPdf = looksLikePdf(input.buffer) || path.extname(input.originalName).toLowerCase() === ".pdf"
+    const MAX_DOC_BYTES = Number(process.env.UPLOAD_DOC_MAX_BYTES ?? 10 * 1024 * 1024)
+    const limit = isVideo ? MAX_VIDEO_BYTES : isPdf ? MAX_DOC_BYTES : Math.max(RAW_UPLOAD_MAX_BYTES, 2 * 1024 * 1024)
     
     if (input.buffer.byteLength > limit) {
-      throw new Error(`${isVideo ? "Video" : "File"} exceeds ${limit} bytes`)
+      throw new Error(`${isVideo ? "Video" : isPdf ? "PDF document" : "File"} exceeds ${limit} bytes`)
     }
 
     let ext = path.extname(input.originalName).toLowerCase()
-    const rawAllowedExt = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".mp4", ".webm"])
+    const rawAllowedExt = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico", ".mp4", ".webm", ".pdf"])
 
     if (!rawAllowedExt.has(ext)) {
       if (looksLikeIco(input.buffer)) ext = ".ico"
       else if (looksLikeSvg(input.buffer)) ext = ".svg"
+      else if (looksLikePdf(input.buffer)) ext = ".pdf"
       else if (sniff) {
           if (sniff === ("video/mp4" as any)) ext = ".mp4"
           else if (sniff === ("video/webm" as any)) ext = ".webm"
+          else if (sniff === ("application/pdf" as any)) ext = ".pdf"
           else ext = extForMime(sniff as AllowedMime)
       }
       else throw new Error("Unsupported file type for raw upload")

@@ -239,20 +239,24 @@ export default function CartPage() {
               <>
                 <div className="overflow-x-auto">
                   <div className="min-w-[700px]">
-                    <div className="mb-2 grid grid-cols-6 gap-10 border-b pb-1 text-sm text-[#787878]">
-                      <span className="col-span-2 text-left">Product Details</span>
+                    <div className="mb-2 grid grid-cols-[48px_minmax(0,2fr)_1fr_1fr_1fr_80px] gap-6 border-b pb-1 text-sm text-[#787878]">
+                      <span className="text-left">S.No.</span>
+                      <span className="text-left">Product Details</span>
                       <span className="text-left">Price</span>
                       <span className="text-left">Quantity</span>
                       <span className="text-left">Total</span>
                       <span></span>
                     </div>
 
-                    {cartItems.map((item) => (
+                    {cartItems.map((item, index) => (
                       <div
                         key={item.id}
-                        className="grid grid-cols-6 gap-10 items-center border-b py-6"
+                        className="grid grid-cols-[48px_minmax(0,2fr)_1fr_1fr_1fr_80px] gap-6 items-center border-b py-6"
                       >
-                        <div className="col-span-2 flex items-center gap-4 text-start">
+                        <span className="text-sm font-medium text-black">
+                          {index + 1}
+                        </span>
+                        <div className="flex items-center gap-4 text-start">
                           <div >
                             {item.image && item.image !== "/placeholder.svg" && !item.image.endsWith("/fallback-product.png") ? (
                               <img

@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto"
 import { pgQuery, pgTx } from "@/src/server/db/pg"
 import { getOrderById, latestLifecycleStatus, updateOrderStatus } from "./orders.service"
-import { upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
+import { getOrderByIdSupabaseBasic, upsertOrderShipmentSnapshotSupabase } from "@/src/lib/db/orders"
 import { isManualShipment, manualOrderStatusSteps, type ManualOrderStatus } from "@/src/lib/orders/manual-order-status"
 
 const SHIPMENT_STATUSES = ["shipped", "in_transit", "out_for_delivery", "delivered", "cancelled"] as const
@@ -154,9 +154,10 @@ export const createManualShipment = async (input: {
     courierName: courier,
     trackingNumber: trackingId,
     trackingUrl,
+    labelUrl: input.slipUrl ?? null,
     isShipmentCreated: true,
   }).catch(() => null)
-  return { shipmentId: shipment.id, trackingId, trackingUrl }
+  return { shipmentId: shipment.id, trackingId, trackingUrl, slipUrl: input.slipUrl ?? null }
 }
 
 export const setManualOrderStatus = async (orderId: string, orderStatus: string, actorId: string) => {
