@@ -116,6 +116,7 @@ export default function CheckoutPage() {
   }, [savedAddresses]);
   const [loadingAddresses, setLoadingAddresses] = useState(true);
   const [selectedAddressId, setSelectedAddressId] = useState<string>("manual");
+  const [addressPickerOpen, setAddressPickerOpen] = useState(false);
   const [originalAddress, setOriginalAddress] = useState<Addr | null>(null);
   const [billing, setBilling] = useState({
     firstName: "",
@@ -139,9 +140,23 @@ export default function CheckoutPage() {
 
       let initialSelectedId = "manual";
       let initialAddr: Addr | null = null;
+      let addedAddress: Addr | undefined;
+      try {
+        const knownRaw = window.sessionStorage.getItem("ziply5_checkout_known_address_ids");
+        if (knownRaw) {
+          window.sessionStorage.removeItem("ziply5_checkout_known_address_ids");
+          const known = new Set(JSON.parse(knownRaw) as string[]);
+          addedAddress = data.find((address) => !known.has(address.id));
+        }
+      } catch {
+        addedAddress = undefined;
+      }
 
       const defaultAddr = data.find((a) => a.isDefault);
-      if (defaultAddr) {
+      if (addedAddress) {
+        initialSelectedId = addedAddress.id;
+        initialAddr = addedAddress;
+      } else if (defaultAddr) {
         initialSelectedId = defaultAddr.id;
         initialAddr = defaultAddr;
       } else {
@@ -788,6 +803,8 @@ export default function CheckoutPage() {
     }
   };
 
+  const selectedAddress = sortedAddresses.find((address) => address.id === selectedAddressId) ?? null;
+
   return (
     <div>
       {/* Banner */}
@@ -799,10 +816,82 @@ export default function CheckoutPage() {
 
       {/* Main Section */}
       <section className="py-16 bg-[#F5F1E6]">
-        <div className="max-w-7xl mx-auto px-4 grid lg:grid-cols-3 gap-10">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="mb-8 rounded-2xl border border-[#E8DCC8] bg-white p-4 sm:p-5">
+            {loadingAddresses ? (
+              <div className="flex items-center justify-center py-4 text-[#7B3010]">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="ml-2 text-sm font-semibold">Loading saved addresses...</span>
+              </div>
+            ) : selectedAddress ? (
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <div className="mb-1 flex flex-wrap gap-2">
+                    {selectedAddress.isDefault ? (
+                      <span className="inline-block rounded-full bg-emerald-600/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                        Primary
+                      </span>
+                    ) : null}
+                    {selectedAddress.label ? (
+                      <span className="inline-block rounded-full bg-[#7B3010]/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-[#7B3010]">
+                        {selectedAddress.label}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="font-melon font-medium text-[#4A1D1F]">
+                    {[selectedAddress.firstName, selectedAddress.lastName].filter(Boolean).join(" ") || "Delivery address"}
+                    {selectedAddress.phone ? <span className="ml-2 text-sm font-semibold text-[#646464]">{selectedAddress.phone}</span> : null}
+                  </p>
+                  <p className="mt-1 text-sm text-[#333]">
+                    {selectedAddress.line1}
+                    {selectedAddress.line2 ? `, ${selectedAddress.line2.replaceAll(" || ", ", ")}` : ""}
+                  </p>
+                  <p className="text-sm font-medium text-[#646464]">
+                    {selectedAddress.city}, {selectedAddress.state} {selectedAddress.postalCode}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAddressPickerOpen(true)}
+                    className="cursor-pointer rounded-xl border border-[#7B3010] bg-white px-5 py-2.5 text-sm font-semibold text-[#7B3010] hover:bg-[#FFFBF3]"
+                  >
+                    Change
+                  </button>
+                  <Link
+                    href="/addresses/manage?next=/checkout"
+                    onClick={() => {
+                      window.sessionStorage.setItem("ziply5_checkout_known_address_ids", JSON.stringify(savedAddresses.map((address) => address.id)))
+                    }}
+                    className="rounded-xl border border-[#7B3010] bg-[#7B3010] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#5c240c]"
+                  >
+                    Add Address
+                  </Link>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="font-melon font-medium text-[#4A1D1F]">No delivery address saved</p>
+                  <p className="mt-1 text-sm text-[#646464]">Add an address to continue with this order.</p>
+                </div>
+                <Link
+                  href="/addresses/manage?next=/checkout"
+                  onClick={() => {
+                    window.sessionStorage.setItem("ziply5_checkout_known_address_ids", JSON.stringify(savedAddresses.map((address) => address.id)))
+                  }}
+                  className="shrink-0 rounded-xl border border-[#7B3010] bg-[#7B3010] px-5 py-2.5 text-center text-sm font-semibold text-white hover:bg-[#5c240c]"
+                >
+                  Add Address
+                </Link>
+              </div>
+            )}
+          </div>
+
+          <div className="grid lg:grid-cols-3 gap-10">
 
           {/* LEFT FORM */}
-          <div className="lg:col-span-2 flex flex-col gap-4 order-2 lg:order-1">
+          <div className="lg:col-span-2 flex flex-col gap-4">
 
             {/* Back Button */}
             <div>
@@ -813,157 +902,81 @@ export default function CheckoutPage() {
                 </button>
               </Link>
             </div>
-            {/* Billing */}
-            <div>
-              <h2 className="font-melon text-lg font-medium mb-4">
-                Billing Address:
-              </h2>
+            <div className="mb-4 flex items-center justify-between border-b pb-3 font-melon tracking-wide">
+              <h2 className="text-lg font-medium text-black">Items</h2>
+              <span className="font-medium text-black">
+                ({items.length.toString().padStart(2, "0")} - Items)
+              </span>
+            </div>
 
-              {loadingAddresses ? (
-                <div className="flex items-center justify-center p-8 rounded-2xl border border-[#E8DCC8] bg-white mb-4">
-                  <div className="flex items-center gap-2 text-[#7B3010]">
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                    <span className="text-sm font-semibold">Loading saved addresses...</span>
-                  </div>
-                </div>
-              ) : savedAddresses.length > 0 ? (
-                <div className="grid sm:grid-cols-2 gap-4 mb-4">
-                  {sortedAddresses.map((a) => (
-                    <div
-                      key={a.id}
-                      onClick={() => handleAddressSelect(a.id)}
-                      className={`cursor-pointer rounded-2xl border p-4 transition-all duration-200 relative ${selectedAddressId === a.id
-                        ? "border-[#7B3010] bg-[#FFFBF3] ring-1 ring-[#7B3010]"
-                        : "border-[#E8DCC8] bg-white hover:border-[#7B3010]/50"
-                        }`}
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex flex-wrap gap-2 mb-2">
-                            {a.isDefault && (
-                              <span className="inline-block rounded-full bg-emerald-600/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
-                                Primary
-                              </span>
-                            )}
-                            {a.label && (
-                              <span className="inline-block rounded-full bg-[#7B3010]/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-[#7B3010]">
-                                {a.label}
-                              </span>
-                            )}
-                          </div>
-                          <p className="font-melon font-medium text-[#4A1D1F]">
-                            {a.firstName} {a.lastName}
-                          </p>
-                          <p className="text-sm text-[#333] mt-1">{a.line1}</p>
-                          {a.line2 && <p className="text-sm text-[#333]">{a.line2.replace(" || ", ", ")}</p>}
-                          <p className="text-sm text-[#646464] font-medium">
-                            {a.city}, {a.state} {a.postalCode}
-                          </p>
-                          {a.phone && <p className="text-xs text-[#646464] mt-1 font-semibold">📞 {a.phone}</p>}
-                        </div>
-                        {selectedAddressId === a.id && (
-                          <div className="h-5 w-5 rounded-full bg-[#7B3010] flex items-center justify-center text-white text-xs font-bold shrink-0">
-                            ✓
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-[#E8DCC8] bg-white p-6 text-center text-sm text-[#646464] mb-4">
-                  No saved addresses found. Please add a billing address to proceed.
-                </div>
-              )}
-
-              <div className="mb-6">
-                <Link href="/addresses/manage?next=/checkout">
-                  <button className="flex items-center gap-2 rounded-xl border border-[#7B3010] bg-white px-5 py-2.5 text-sm font-semibold text-[#7B3010] hover:bg-[#FFFBF3] transition-colors cursor-pointer">
-                    + Add New Address
-                  </button>
+            {items.length === 0 ? (
+              <div className="rounded-2xl border border-[#E0E0E0] bg-white p-10 text-center">
+                <p className="text-[#646464]">Your cart is empty.</p>
+                <Link
+                  href="/products"
+                  className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white"
+                >
+                  Continue Shopping
                 </Link>
               </div>
-
-            </div>
-            <div className="mt-4 flex flex-col gap-4">
-              {/* Terms */}
-              <div className="text-center">
-                <p className="text-xs text-[#646464]">
-                  By clicking the button, you agree to the{" "}
-                  <Link href="/terms" className="text-primary underline">
-                    Terms and Conditions
-                  </Link>
-                </p>
-              </div>
-              {orderError && (
-                <p className="text-center text-sm text-red-600 mb-4">{orderError}</p>
-              )}
-
-              {items.length > 0 && total < minCartValue && (
-                <div className="rounded-2xl bg-white/60 p-3 text-center border border-red-200/50 mb-2">
-                  <p className="text-xs font-medium text-red-700">
-                    Add INR {(minCartValue - total).toFixed(2)} more to place order.
-                    <br />
-                    <span className="text-[10px] opacity-70">(Minimum order: INR {minCartValue.toFixed(2)})</span>
-                  </p>
+            ) : (
+              <div className="space-y-4">
+                <div className="hidden grid-cols-[minmax(0,2fr)_1fr_auto_1fr] gap-6 border-b pb-1 text-sm text-[#787878] md:grid">
+                  <span>Product Details</span>
+                  <span>Price</span>
+                  <span>Quantity</span>
+                  <span>Total</span>
                 </div>
-              )}
-
-              {/* Button */}
-              <button
-                type="button"
-                onClick={() => void goToPayment()}
-                disabled={placing || items.length === 0 || total < minCartValue}
-                className="bg-[#7B3010] shadow-2xl tracking-wide font-medium text-white w-full py-4 rounded-full font-melon disabled:opacity-60 disabled:cursor-not-allowed transition-all"
-              >
-                {placing ? "Please wait…" : "Place Order →"}
-              </button>
-            </div>
+                {validatedItems.map((item) => {
+                  const showImage = item.image && item.image !== "/placeholder.svg" && !item.image.endsWith("/fallback-product.png")
+                  return (
+                    <div key={item.id} className="grid grid-cols-1 items-center gap-3 border-b py-4 md:grid-cols-[minmax(0,2fr)_1fr_auto_1fr] md:gap-6 md:py-6">
+                      <div className="flex min-w-0 items-center gap-4 text-start">
+                        {showImage ? (
+                          <img src={item.image} alt={item.productName || item.name} className="h-16 w-16 shrink-0 rounded-lg object-contain" />
+                        ) : (
+                          <div className="h-16 w-16 shrink-0" />
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-melon font-medium tracking-wide text-black">{item.productName || item.name}</p>
+                          <p className="text-xs text-[#787878]">
+                            Weight: <span className="font-medium text-black">{item.weight || "—"}</span>
+                          </p>
+                          {item.variantLabel && item.variantLabel !== item.weight ? (
+                            <p className="text-xs text-[#787878]">
+                              Variant: <span className="font-medium text-black">{item.variantLabel}</span>
+                            </p>
+                          ) : null}
+                          {item.variantError ? <p className="text-[10px] text-red-700">Variant required</p> : null}
+                          {item.stock < item.quantity ? <p className="text-[10px] text-red-700">Out of stock</p> : null}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 md:contents">
+                        <p className="font-melon font-medium tracking-wide text-primary">
+                          <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Price</span>
+                          Rs.{item.price.toFixed(2)}
+                        </p>
+                        <p className="font-medium text-black">
+                          <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Quantity</span>
+                          {item.quantity}
+                        </p>
+                        <p className="font-melon font-medium tracking-wide text-black">
+                          <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Total</span>
+                          {item.basePrice && item.basePrice > item.price ? (
+                            <span className="mr-1 text-[10px] line-through opacity-50">Rs.{(item.basePrice * item.quantity).toFixed(2)}</span>
+                          ) : null}
+                          Rs.{(item.price * item.quantity).toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* RIGHT SUMMARY */}
-          <div className="bg-[#FFC222] rounded-3xl p-4 md:p-8 h-fit order-1 lg:order-2">
-
-            <div className="flex justify-between font-melon ">
-              <span>Items</span>
-              <span>Price</span>
-            </div>
-            <div className="w-full h-0.5 bg-black mt-4"></div>
-            <div
-              className="space-y-4 py-4 max-h-[320px] overflow-y-auto pr-2"
-              style={{
-                scrollbarWidth: 'thin',
-                scrollbarColor: '#7B3010 rgba(0,0,0,0.1)'
-              }}
-            >
-              {validatedItems.map((item) => (
-                <div key={item.id}>
-                  <div className="flex justify-between text-sm pb-2">
-                    <div>
-                      <p className="font-medium font-melon text-[#C03621] tracking-wide">
-                        {item.productName || item.name}
-                        {item.variantError && <span className="block text-[10px] text-red-700">! Variant required</span>}
-                        {item.stock < item.quantity && <span className="block text-[10px] text-red-700">! Out of stock</span>}
-                      </p>
-                      <p className="text-xs text-[#646464]">
-                        Qty: {item.quantity} | Net wt. {item.weight}
-                      </p>
-                    </div>
-
-                    <span className="text-[#C03621] font-medium font-melon tracking-wide">
-                      {item.basePrice && item.basePrice > item.price && (
-                        <span className="text-[10px] line-through mr-1 opacity-50">Rs.{(item.basePrice * item.quantity).toFixed(2)}</span>
-                      )}
-                      Rs.{(item.price * item.quantity).toFixed(2)}
-                    </span>
-                  </div>
-                  <div className="w-full h-0.5 bg-black"></div>
-                </div>
-              ))}
-              {items.length === 0 && (
-                <p className="text-sm text-[#646464] text-center py-4">No items in cart.</p>
-              )}
-            </div>
+          <div className="bg-[#FFC222] rounded-3xl p-4 md:p-8 h-fit">
 
             {/* Total */}
             <div className="flex justify-between text-[#C03621] font-medium font-melon tracking-wide">
@@ -1018,10 +1031,88 @@ export default function CheckoutPage() {
               </button>
               {couponError && <p className="text-xs text-red-700">{couponError}</p>}
             </div>
+            {orderError ? (
+              <p className="mt-4 text-center text-sm text-red-700">{orderError}</p>
+            ) : null}
+            {items.length > 0 && total < minCartValue ? (
+              <div className="mt-4 rounded-2xl border border-red-200/50 bg-white/60 p-3 text-center">
+                <p className="text-xs font-medium text-red-700">
+                  Add INR {(minCartValue - total).toFixed(2)} more to place order.
+                  <br />
+                  <span className="text-[10px] opacity-70">(Minimum order: INR {minCartValue.toFixed(2)})</span>
+                </p>
+              </div>
+            ) : null}
+            <p className="mt-4 text-center text-xs text-[#646464]">
+              By clicking the button, you agree to the{" "}
+              <Link href="/terms" className="text-primary underline">
+                Terms and Conditions
+              </Link>
+            </p>
+            <button
+              type="button"
+              onClick={() => void goToPayment()}
+              disabled={placing || items.length === 0 || total < minCartValue}
+              className="mt-4 w-full rounded-full bg-[#7B3010] py-4 font-melon font-medium tracking-wide text-white shadow-2xl transition-all disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {placing ? "Please wait…" : "Place Order →"}
+            </button>
 
           </div>
 
         </div>
+        </div>
+
+        {addressPickerOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="font-melon text-lg font-medium text-[#4A1D1F]">Choose a delivery address</h2>
+                <button type="button" onClick={() => setAddressPickerOpen(false)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">
+                  Close
+                </button>
+              </div>
+              {sortedAddresses.length === 0 ? (
+                <p className="text-sm text-[#646464]">No saved addresses found. Add an address to continue.</p>
+              ) : (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {sortedAddresses.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => {
+                        handleAddressSelect(a.id)
+                        setAddressPickerOpen(false)
+                      }}
+                      className={`cursor-pointer rounded-2xl border p-4 text-left transition-all duration-200 ${selectedAddressId === a.id
+                        ? "border-[#7B3010] bg-[#FFFBF3] ring-1 ring-[#7B3010]"
+                        : "border-[#E8DCC8] bg-white hover:border-[#7B3010]/50"
+                        }`}
+                    >
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        {a.isDefault ? (
+                          <span className="inline-block rounded-full bg-emerald-600/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                            Primary
+                          </span>
+                        ) : null}
+                        {a.label ? (
+                          <span className="inline-block rounded-full bg-[#7B3010]/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase text-[#7B3010]">
+                            {a.label}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="font-melon font-medium text-[#4A1D1F]">{a.firstName} {a.lastName}</p>
+                      <p className="mt-1 text-sm text-[#333]">{a.line1}</p>
+                      {a.line2 ? <p className="text-sm text-[#333]">{a.line2.replaceAll(" || ", ", ")}</p> : null}
+                      <p className="text-sm font-medium text-[#646464]">{a.city}, {a.state} {a.postalCode}</p>
+                      {a.phone ? <p className="mt-1 text-xs font-semibold text-[#646464]">{a.phone}</p> : null}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );

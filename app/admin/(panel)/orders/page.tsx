@@ -80,10 +80,8 @@ export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [canFetch, setCanFetch] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "shipped" | "in_transit" | "delivered" | "rejected" | "cancelled">("all");
+  const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "packed" | "shipped" | "in_transit" | "delivered" | "rejected" | "cancelled">("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
-  const [orderFilter, setOrderFilter] = useState("all");
-  const [shipmentFilter, setShipmentFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sortBy, setSortBy] = useState<"latest" | "oldest" | "amount_desc" | "amount_asc">("latest");
@@ -127,8 +125,6 @@ export default function AdminOrdersPage() {
     setSearchTerm("");
     setStatusTab("all");
     setPaymentFilter("all");
-    setOrderFilter("all");
-    setShipmentFilter("all");
     setDateFrom("");
     setDateTo("");
     setSortBy("latest");
@@ -176,7 +172,7 @@ export default function AdminOrdersPage() {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
         </span>
       );
     }
@@ -185,7 +181,7 @@ export default function AdminOrdersPage() {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
         </span>
       );
     }
@@ -203,7 +199,7 @@ export default function AdminOrdersPage() {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
         </span>
       );
     }
@@ -221,7 +217,7 @@ export default function AdminOrdersPage() {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
         </span>
       );
     }
@@ -239,7 +235,7 @@ export default function AdminOrdersPage() {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-          {s === "new" ? "New Order" : s.replaceAll("_", " ")}
+          {s === "new" ? "New Order" : orderStatusLabel(s)}
         </span>
       );
     }
@@ -247,7 +243,7 @@ export default function AdminOrdersPage() {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 capitalize">
         <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-        {s.replaceAll("_", " ")}
+        {orderStatusLabel(s)}
       </span>
     );
   };
@@ -257,7 +253,7 @@ export default function AdminOrdersPage() {
 
     if (s === "delivered") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold capitalize text-emerald-700">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-emerald-700">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
           Delivered
         </span>
@@ -266,7 +262,7 @@ export default function AdminOrdersPage() {
 
     if (s === "shipped") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs font-semibold capitalize text-blue-700">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-blue-700">
           <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
           Shipped
         </span>
@@ -275,25 +271,35 @@ export default function AdminOrdersPage() {
 
     if (s === "in_transit" || s === "out_for_delivery") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-semibold capitalize text-indigo-700">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-indigo-700">
           <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
         </span>
       );
     }
 
     if (s === "cancelled" || s === "returned" || s === "rto") {
       return (
-        <span className="inline-flex items-center gap-1 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-semibold capitalize text-rose-700">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-200 bg-rose-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-rose-700">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />
-          {s.replaceAll("_", " ")}
+          {orderStatusLabel(s)}
+        </span>
+      );
+    }
+
+    if (s === "shipment_created" || s === "manifest_generated" || s === "pickup_generated" || s === "ready_to_ship") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-cyan-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
+          {orderStatusLabel(s)}
         </span>
       );
     }
 
     return (
-      <span className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-medium capitalize text-slate-700">
-        {s.replaceAll("_", " ")}
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-medium capitalize text-slate-700">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+        {!s || s === "not_shipped" ? "Not Shipped" : orderStatusLabel(s)}
       </span>
     );
   };
@@ -368,6 +374,7 @@ export default function AdminOrdersPage() {
       all: rows.length,
       new: 0,
       confirmed: 0,
+      packed: 0,
       shipped: 0,
       in_transit: 0,
       delivered: 0,
@@ -384,8 +391,11 @@ export default function AdminOrdersPage() {
       if (["pending", "pending_payment", "payment_success", "admin_approval_pending", "new"].includes(lc)) {
         counts.new++;
       }
-      if (["confirmed", "packed"].includes(lc)) {
+      if (lc === "confirmed" && sh !== "packed") {
         counts.confirmed++;
+      }
+      if (lc === "packed" || sh === "packed") {
+        counts.packed++;
       }
       if ((lc === "shipped" || sh === "shipped") && !["in_transit", "out_for_delivery", "delivered"].includes(sh) && lc !== "in_transit" && lc !== "delivered") {
         counts.shipped++;
@@ -422,7 +432,8 @@ export default function AdminOrdersPage() {
         if (statusTab !== "all" && statusTab !== "cancelled") return false;
       } else if (statusTab !== "all") {
         if (statusTab === "new" && !["pending", "pending_payment", "payment_success", "admin_approval_pending", "new"].includes(lifecycle)) return false;
-        if (statusTab === "confirmed" && !["confirmed", "packed"].includes(lifecycle)) return false;
+        if (statusTab === "confirmed" && (lifecycle !== "confirmed" || ship === "packed")) return false;
+        if (statusTab === "packed" && lifecycle !== "packed" && ship !== "packed") return false;
         if (statusTab === "shipped" && (lifecycle !== "shipped" && ship !== "shipped" || ["in_transit", "out_for_delivery", "delivered"].includes(ship) || ["in_transit", "delivered"].includes(lifecycle))) return false;
         if (statusTab === "in_transit" && lifecycle !== "in_transit" && !["in_transit", "out_for_delivery"].includes(ship)) return false;
         if (statusTab === "delivered" && lifecycle !== "delivered" && ship !== "delivered" && !o.fulfillment?.deliveredAt) return false;
@@ -431,8 +442,6 @@ export default function AdminOrdersPage() {
       }
 
       if (paymentFilter !== "all" && payment !== paymentFilter) return false;
-      if (orderFilter !== "all" && lifecycle !== orderFilter) return false;
-      if (shipmentFilter !== "all" && ship !== shipmentFilter) return false;
       if (dateFrom && date < new Date(`${dateFrom}T00:00:00`)) return false;
       if (dateTo && date > new Date(`${dateTo}T23:59:59`)) return false;
       if (!rawTerm) return true;
@@ -477,7 +486,7 @@ export default function AdminOrdersPage() {
       return +new Date(b.createdAt) - +new Date(a.createdAt);
     });
     return list;
-  }, [rows, searchTerm, statusTab, paymentFilter, orderFilter, shipmentFilter, dateFrom, dateTo, sortBy, toPaymentStatus, lifecycleStatus, latestShipmentStatus]);
+  }, [rows, searchTerm, statusTab, paymentFilter, dateFrom, dateTo, sortBy, toPaymentStatus, lifecycleStatus, latestShipmentStatus]);
 
   const pagedRows = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -520,7 +529,7 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, paymentFilter, orderFilter, shipmentFilter, dateFrom, dateTo, sortBy, pageSize]);
+  }, [searchTerm, paymentFilter, dateFrom, dateTo, sortBy, pageSize]);
 
   // useRealtimeTables({
   //   tables: ["orders", "returns", "refunds", "shipments", "transactions"],
@@ -549,16 +558,34 @@ export default function AdminOrdersPage() {
         synced: number
         failed: number
         skipped: number
+        results?: Array<{ orderId: string; status: string; reason?: string; isUnserviceable?: boolean }>
       }>("/api/v1/orders/shiprocket/sync", {
         orderIds,
         generatePickup: false,
         retryFailedOnly,
       });
       setSyncProgress({ total: data.total, synced: data.synced, failed: data.failed, skipped: data.skipped });
+      if (Array.isArray(data.results)) {
+        for (const res of data.results) {
+          if (res.status === "failed") {
+            const reason = res.reason ?? "";
+            if (/not serviceable|manual shipment|non-serviceable/i.test(reason) || res.isUnserviceable) {
+              setUnserviceableIds((prev) => ({ ...prev, [res.orderId]: true }));
+              setRowActionError((prev) => ({ ...prev, [res.orderId]: "This order is not serviceable please proceed with manual shipment" }));
+            } else if (/firstly accept|not accepted|not confirmed|approval/i.test(reason)) {
+              setRowActionError((prev) => ({ ...prev, [res.orderId]: "Firstly accept order and check for serviceability" }));
+            } else if (reason) {
+              setRowActionError((prev) => ({ ...prev, [res.orderId]: reason }));
+            }
+          }
+        }
+      }
       setSelectedIds([]);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Bulk sync failed");
+      const msg = e instanceof Error ? e.message : "Bulk sync failed";
+      setError(msg);
+      toast.error("Bulk sync failed", msg);
     } finally {
       setBulkSyncBusy(false);
     }
@@ -646,17 +673,22 @@ export default function AdminOrdersPage() {
             return next;
           });
           setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
-          setUnserviceable({ orderId, reason: "No courier can deliver this pincode for the current payment type and package." });
+          const userMsg = "This order is not serviceable please proceed with manual shipment";
+          setUnserviceable({ orderId, reason: userMsg });
+          setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
+          toast.error("Not serviceable", userMsg);
         }
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Serviceability check failed";
         setServiceableIds((prev) => {
           const next = { ...prev };
           delete next[orderId];
           return next;
         });
         setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
-        setUnserviceable({ orderId, reason: msg });
+        const userMsg = "This order is not serviceable please proceed with manual shipment";
+        setUnserviceable({ orderId, reason: userMsg });
+        setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
+        toast.error("Not serviceable", userMsg);
       }
     });
 
@@ -790,8 +822,29 @@ export default function AdminOrdersPage() {
 
   const syncFromShiprocket = (orderId: string) =>
     runRow(orderId, "sync", async () => {
-      await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "sync_order", panelSync: true, generatePickup: false });
-      toast.success("Synced from Shiprocket", "Order status and shipment status now match Shiprocket. Finish AWB, pickup, and label in the Shiprocket panel, then sync again.");
+      try {
+        await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "sync_order", panelSync: true, generatePickup: false });
+        toast.success("Synced from Shiprocket", "Order status and shipment status now match Shiprocket. Finish AWB, pickup, and label in the Shiprocket panel, then sync again.");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : "Sync failed";
+        if (/firstly accept|not accepted|not confirmed|approval/i.test(msg)) {
+          const userMsg = "Firstly accept order and check for serviceability";
+          setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
+          toast.error("Order not accepted", userMsg);
+          throw new Error(userMsg);
+        } else if (/not serviceable|manual shipment|non-serviceable/i.test(msg)) {
+          const userMsg = "This order is not serviceable please proceed with manual shipment";
+          setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
+          setUnserviceable({ orderId, reason: userMsg });
+          toast.error("Not serviceable", userMsg);
+          throw new Error(userMsg);
+        } else {
+          setRowActionError((prev) => ({ ...prev, [orderId]: msg }));
+          toast.error("Sync failed", msg);
+          throw e;
+        }
+      }
     });
 
   const saveManualShipment = () => {
@@ -884,9 +937,6 @@ export default function AdminOrdersPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => load()} disabled={!canFetch} className="rounded-full bg-[#2DA66D] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:brightness-95 disabled:opacity-50">REFRESH</button>
-            <button type="button" onClick={() => void runBulkSync(filteredRows.filter((row) => row.isShipmentCreated || row.awbCode).map((row) => row.id))} disabled={bulkSyncBusy || filteredRows.length === 0} className="rounded-full bg-[#7B3010] px-5 py-2 text-xs font-bold uppercase tracking-wider text-white hover:brightness-95 disabled:opacity-50">
-              {bulkSyncBusy ? "SYNCING..." : "SYNC ORDERS TO SHIPROCKET"}
-            </button>
             <button type="button" onClick={exportCsv} className="inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-bold uppercase tracking-wider text-[#7B3010] hover:bg-[#FFFBF3]">
               <Download className="h-4 w-4" /> EXPORT CSV
             </button>
@@ -894,11 +944,12 @@ export default function AdminOrdersPage() {
         </div>
 
         {/* Status Filter Tabs */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-2xl border border-[#E8DCC8] bg-[#FFFBF3] p-2.5 shadow-xs">
+        <div className="mt-4 flex flex-nowrap items-center gap-2 overflow-x-auto rounded-2xl border border-[#E8DCC8] bg-[#FFFBF3] p-2.5 shadow-xs scrollbar-hide scroll-smooth">
           {[
             { id: "all" as const, label: "All Orders", count: statusTabCounts.all },
             { id: "new" as const, label: "New Orders", count: statusTabCounts.new },
-            { id: "confirmed" as const, label: "Confirmed", count: statusTabCounts.confirmed },
+            { id: "confirmed" as const, label: "Confirmed Orders", count: statusTabCounts.confirmed },
+            { id: "packed" as const, label: "Packed Orders", count: statusTabCounts.packed },
             { id: "shipped" as const, label: "Shipped", count: statusTabCounts.shipped },
             { id: "in_transit" as const, label: "In Transit", count: statusTabCounts.in_transit },
             { id: "delivered" as const, label: "Delivered", count: statusTabCounts.delivered },
@@ -914,7 +965,7 @@ export default function AdminOrdersPage() {
                   setStatusTab(tab.id);
                   setPage(1);
                 }}
-                className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition ${
+                className={`inline-flex shrink-0 whitespace-nowrap items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition cursor-pointer ${
                   active
                     ? "bg-[#7B3010] text-white shadow-md ring-1 ring-[#7B3010]"
                     : "border border-[#E8DCC8] bg-white text-[#4A1D1F] hover:bg-[#F9F5EC] hover:border-[#7B3010]/40 shadow-2xs"
@@ -935,8 +986,8 @@ export default function AdminOrdersPage() {
           })}
         </div>
 
-        {/* 8-Column Horizontal Filter Grid with Labels Above */}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4 xl:grid-cols-8 items-end">
+        {/* 6-Column Horizontal Filter Grid with Labels Above */}
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-end">
           <div>
             <label className="text-xs font-semibold text-[#646464]">Search</label>
             <div className="relative mt-1">
@@ -964,40 +1015,6 @@ export default function AdminOrdersPage() {
                   <SelectItem value="pending">Pending</SelectItem>
                   <SelectItem value="initiated">Initiated</SelectItem>
                   <SelectItem value="failed">Failed</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-[#646464]">Order Status</label>
-            <div className="mt-1">
-              <Select value={orderFilter} onValueChange={setOrderFilter}>
-                <SelectTrigger className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white px-3 text-xs text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
-                  <SelectValue placeholder="All order statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All order statuses</SelectItem>
-                  {Array.from(new Set(rows.map((o) => lifecycleStatus(o)))).map((status) => (
-                    <SelectItem key={status} value={status}>{status === "admin_approval_pending" || status === "approval_pending" ? "Pending" : status.replaceAll("_", " ")}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs font-semibold text-[#646464]">Shipment Status</label>
-            <div className="mt-1">
-              <Select value={shipmentFilter} onValueChange={setShipmentFilter}>
-                <SelectTrigger className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white px-3 text-xs text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
-                  <SelectValue placeholder="All shipment statuses" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All shipment statuses</SelectItem>
-                  {Array.from(new Set(rows.map((o) => latestShipmentStatus(o)))).map((status) => (
-                    <SelectItem key={status} value={status}>{status.replaceAll("_", " ")}</SelectItem>
-                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1201,52 +1218,12 @@ export default function AdminOrdersPage() {
                     </td>
                     <td className="px-2 py-2">
                       <div className="min-w-[130px]">
-                        {(() => {
-                          const currentStatus = lifecycleStatus(o);
-                          const options = (ADMIN_ORDER_STATUS_OPTIONS as readonly string[]).includes(currentStatus)
-                            ? ADMIN_ORDER_STATUS_OPTIONS
-                            : [currentStatus, ...ADMIN_ORDER_STATUS_OPTIONS];
-                          return (
-                            <select
-                              value={currentStatus}
-                              disabled={Boolean(rowActionBusy[o.id])}
-                              onChange={(e) => void changeOrderStatus(o.id, e.target.value)}
-                              className={`w-full cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold shadow-sm focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 transition ${getOrderStatusSelectClass(currentStatus)}`}
-                              title="Change Order Status"
-                            >
-                              {options.map((value) => (
-                                <option key={value} value={value} className="bg-white text-[#2A1810]">
-                                  {orderStatusLabel(value)}
-                                </option>
-                              ))}
-                            </select>
-                          );
-                        })()}
+                        {getOrderStatusBadge(lifecycleStatus(o))}
                       </div>
                     </td>
                     <td className="px-2 py-2">
-                      <div className="min-w-[130px] space-y-0.5">
-                        {(() => {
-                          const currentShipStatus = latestShipmentStatus(o);
-                          const options = (ADMIN_SHIPMENT_STATUS_OPTIONS as readonly string[]).includes(currentShipStatus)
-                            ? ADMIN_SHIPMENT_STATUS_OPTIONS
-                            : [currentShipStatus, ...ADMIN_SHIPMENT_STATUS_OPTIONS];
-                          return (
-                            <select
-                              value={currentShipStatus}
-                              disabled={Boolean(rowActionBusy[o.id])}
-                              onChange={(e) => void changeShipmentStatus(o.id, e.target.value)}
-                              className={`w-full cursor-pointer rounded-lg border px-2 py-1 text-[11px] font-semibold shadow-sm focus:outline-none focus:ring-1 disabled:cursor-not-allowed disabled:opacity-50 transition ${getShipmentStatusSelectClass(currentShipStatus)}`}
-                              title="Change Shipment Status"
-                            >
-                              {options.map((value) => (
-                                <option key={value} value={value} className="bg-white text-[#2A1810]">
-                                  {orderStatusLabel(value)}
-                                </option>
-                              ))}
-                            </select>
-                          );
-                        })()}
+                      <div className="min-w-[130px] space-y-1">
+                        <div>{getShipmentStatusBadge(latestShipmentStatus(o))}</div>
                         <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
                         <p className="text-[11px] text-[#646464]">AWB: {o.awbCode ?? o.shipments?.[0]?.trackingNo ?? "Pending"}</p>
                       </div>
@@ -1263,58 +1240,126 @@ export default function AdminOrdersPage() {
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </button>
-                        {latestShipmentStatus(o) !== "cancelled" && (
-                          <>
-                        {["confirmed", "packed"].includes(lifecycleStatus(o)) && !isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && !hasShipment(o) && !serviceableIds[o.id] && !unserviceableIds[o.id] && (
-                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => void checkServiceability(o.id)} className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
-                            {rowActionBusy[o.id] === "serviceability" ? "Checking..." : "Check serviceability"}
-                          </button>
-                        )}
-                        {["confirmed", "packed", "shipped", "in_transit", "out_for_delivery"].includes(lifecycleStatus(o)) && !isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod }) && (Boolean(serviceableIds[o.id]) || hasShipment(o)) && (
-                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => void syncFromShiprocket(o.id)} className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50">
-                            {rowActionBusy[o.id] === "sync" ? "Syncing..." : "Sync"}
-                          </button>
-                        )}
-                        {["confirmed", "packed"].includes(lifecycleStatus(o)) && !hasShipment(o) && Boolean(unserviceableIds[o.id]) && (
-                          <button type="button" disabled={Boolean(rowActionBusy[o.id])} onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "" })} className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50">
-                            Manual shipment
-                          </button>
-                        )}
-                        {lifecycleStatus(o) === "admin_approval_pending" && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={Boolean(rowActionBusy[o.id])}
-                              onClick={() => void handleApprovalAction(o.id, "approve_order")}
-                              title="Accept Order"
-                              className="inline-flex items-center justify-center rounded-full bg-[#2DA66D] p-1.5 text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
-                            >
-                              {rowActionBusy[o.id] === "approve_order" ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Check className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              disabled={Boolean(rowActionBusy[o.id])}
-                              onClick={() => {
-                                setRejectModalOrderId(o.id);
-                                setRejectReason("");
-                              }}
-                              title="Reject Order"
-                              className="inline-flex items-center justify-center rounded-full bg-[#A32A2A] p-1.5 text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
-                            >
-                              {rowActionBusy[o.id] === "reject_order" ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <X className="h-3.5 w-3.5" />
-                              )}
-                            </button>
-                          </>
-                        )}
-                          </>
-                        )}
+                        {(() => {
+                          const shipCancelled = latestShipmentStatus(o) === "cancelled";
+                          const lc = lifecycleStatus(o);
+                          const manual = isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod });
+                          if (shipCancelled || lc === "cancelled" || lc === "rejected" || manual) {
+                            return null;
+                          }
+
+                          // 1. Flow stage: ACCEPT (order not yet accepted by admin)
+                          if (lc === "admin_approval_pending" || ["pending", "new"].includes(lc)) {
+                            return (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={Boolean(rowActionBusy[o.id])}
+                                  onClick={() => void handleApprovalAction(o.id, "approve_order")}
+                                  title="Accept Order"
+                                  className="inline-flex items-center gap-1 rounded-full bg-[#2DA66D] px-2.5 py-1 text-[10px] font-bold uppercase text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
+                                >
+                                  {rowActionBusy[o.id] === "approve_order" ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Check className="h-3 w-3" />
+                                  )}
+                                  <span>Accept</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={Boolean(rowActionBusy[o.id])}
+                                  onClick={() => {
+                                    setRejectModalOrderId(o.id);
+                                    setRejectReason("");
+                                  }}
+                                  title="Reject Order"
+                                  className="inline-flex items-center gap-1 rounded-full bg-[#A32A2A] px-2 py-1 text-[10px] font-bold uppercase text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
+                                >
+                                  {rowActionBusy[o.id] === "reject_order" ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <X className="h-3 w-3" />
+                                  )}
+                                  <span>Reject</span>
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          // 4. Flow stage: REFRESH (shipment exists or order already synced/shipped)
+                          const hasExistingShipment = hasShipment(o) || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(lc);
+                          if (hasExistingShipment) {
+                            return (
+                              <button
+                                type="button"
+                                disabled={Boolean(rowActionBusy[o.id])}
+                                onClick={() => void syncFromShiprocket(o.id)}
+                                title="Refresh tracking & shipment status from Shiprocket"
+                                className="cursor-pointer rounded-full border border-[#16803C] bg-[#F0FDF4] px-2.5 py-1 text-[10px] font-bold uppercase text-[#16803C] hover:bg-[#16803C] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition inline-flex items-center gap-1"
+                              >
+                                {rowActionBusy[o.id] === "sync" ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span>Refreshing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <RefreshCw className="h-3 w-3" />
+                                    <span>Refresh</span>
+                                  </>
+                                )}
+                              </button>
+                            );
+                          }
+
+                          // If unserviceable -> MANUAL SHIPMENT button
+                          const isUnserviceable = Boolean(unserviceableIds[o.id]) ||
+                            Boolean(rowActionError[o.id] && /not serviceable|manual shipment|non-serviceable/i.test(rowActionError[o.id])) ||
+                            Boolean(o.statusHistory?.some((h) => /not serviceable|manual shipment|non-serviceable/i.test(h.notes || h.reasonCode || "")));
+                          if (isUnserviceable) {
+                            return (
+                              <button
+                                type="button"
+                                disabled={Boolean(rowActionBusy[o.id])}
+                                onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "" })}
+                                className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
+                              >
+                                Manual shipment
+                              </button>
+                            );
+                          }
+
+                          // 3. Flow stage: SYNC (serviceable verified, ready to sync to Shiprocket)
+                          if (Boolean(serviceableIds[o.id])) {
+                            return (
+                              <button
+                                type="button"
+                                disabled={Boolean(rowActionBusy[o.id])}
+                                onClick={() => void syncFromShiprocket(o.id)}
+                                className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition"
+                              >
+                                {rowActionBusy[o.id] === "sync" ? "Syncing..." : "Sync"}
+                              </button>
+                            );
+                          }
+
+                          // 2. Flow stage: CHECK SERVICEABILITY (accepted order, serviceability not checked yet)
+                          if (["confirmed", "packed"].includes(lc)) {
+                            return (
+                              <button
+                                type="button"
+                                disabled={Boolean(rowActionBusy[o.id])}
+                                onClick={() => void checkServiceability(o.id)}
+                                className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
+                              >
+                                {rowActionBusy[o.id] === "serviceability" ? "Checking..." : "Check serviceability"}
+                              </button>
+                            );
+                          }
+
+                          return null;
+                        })()}
                       </div>
                       {rowActionError[o.id] && (
                         <p className="mt-1 text-[10px] text-red-600">{rowActionError[o.id]}</p>

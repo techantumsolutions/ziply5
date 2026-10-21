@@ -34,6 +34,83 @@ const ADMIN_SHIPMENT_STATUS_OPTIONS = [
   "returned",
 ] as const
 
+const ORDER_STATUS_PROGRESSION: Record<string, number> = {
+  pending: 0,
+  new: 0,
+  pending_payment: 0,
+  payment_success: 0,
+  admin_approval_pending: 0,
+  approval_pending: 0,
+  confirmed: 1,
+  packed: 2,
+  shipped: 3,
+  in_transit: 4,
+  out_for_delivery: 5,
+  delivered: 6,
+  completed: 6,
+}
+
+const SHIPMENT_STATUS_PROGRESSION: Record<string, number> = {
+  not_shipped: 0,
+  pending: 0,
+  ready_to_ship: 1,
+  shipment_created: 1,
+  manifest_generated: 1,
+  pickup_generated: 2,
+  shipped: 3,
+  in_transit: 4,
+  out_for_delivery: 5,
+  delivered: 6,
+}
+
+const getForwardOrderStatusOptions = (currentStatus: string): string[] => {
+  const normCurrent = currentStatus.toLowerCase().trim()
+  const currentRank = ORDER_STATUS_PROGRESSION[normCurrent] ?? 0
+  const isTerminal = normCurrent === "delivered" || normCurrent === "cancelled" || normCurrent === "rejected"
+
+  return (ADMIN_ORDER_STATUS_OPTIONS as readonly string[]).filter((opt) => {
+    const normOpt = opt.toLowerCase().trim()
+    if (normOpt === normCurrent) return true
+    if (isTerminal) {
+      if (normCurrent === "delivered" && normOpt === "returned") return true
+      return false
+    }
+    if (normOpt === "cancelled") {
+      return currentRank < (ORDER_STATUS_PROGRESSION["shipped"] ?? 3)
+    }
+    if (normOpt === "returned") {
+      return currentRank >= (ORDER_STATUS_PROGRESSION["delivered"] ?? 6)
+    }
+    const optRank = ORDER_STATUS_PROGRESSION[normOpt]
+    if (optRank === undefined) return false
+    return optRank > currentRank
+  })
+}
+
+const getForwardShipmentStatusOptions = (currentStatus: string): string[] => {
+  const normCurrent = currentStatus.toLowerCase().trim()
+  const currentRank = SHIPMENT_STATUS_PROGRESSION[normCurrent] ?? 0
+  const isTerminal = normCurrent === "delivered" || normCurrent === "cancelled"
+
+  return (ADMIN_SHIPMENT_STATUS_OPTIONS as readonly string[]).filter((opt) => {
+    const normOpt = opt.toLowerCase().trim()
+    if (normOpt === normCurrent) return true
+    if (isTerminal) {
+      if (normCurrent === "delivered" && normOpt === "returned") return true
+      return false
+    }
+    if (normOpt === "cancelled") {
+      return currentRank < (SHIPMENT_STATUS_PROGRESSION["shipped"] ?? 3)
+    }
+    if (normOpt === "returned") {
+      return currentRank >= (SHIPMENT_STATUS_PROGRESSION["delivered"] ?? 6)
+    }
+    const optRank = SHIPMENT_STATUS_PROGRESSION[normOpt]
+    if (optRank === undefined) return false
+    return optRank > currentRank
+  })
+}
+
 type OrderDetail = {
   id: string
   status: string
@@ -44,7 +121,6 @@ type OrderDetail = {
   discount?: string | number
   currency: string
   createdAt: string
-  discount?: string | number
   couponCode?: string | null
   paymentMethod?: string | null
   items: Array<{
@@ -101,56 +177,6 @@ const progressRank = (status: string) => {
   return 0
 }
 
-function OrderProgress({
-  status,
-  createdAt,
-  history,
-}: {
-  status: string
-  createdAt: string
-  history?: Array<{ toStatus: string; changedAt: string; notes?: string | null }>
-}) {
-  const rank = progressRank(status)
-  const steps = [
-    { label: "Order placed", hint: "", rank: 0 },
-    { label: "Confirmed", hint: "", rank: 1 },
-    { label: "Processing", hint: "Your order is being prepared", rank: 2 },
-    { label: "Shipped", hint: "", rank: 3 },
-    { label: "Delivered", hint: "", rank: 4 },
-  ]
-  const when = (stepRank: number, fallback?: string) => {
-    if (stepRank === 0) return createdAt
-    const match = [...(history ?? [])].reverse().find((entry) => progressRank(entry.toStatus) >= stepRank && progressRank(entry.toStatus) < stepRank + 1)
-      ?? (history ?? []).find((entry) => progressRank(entry.toStatus) === stepRank)
-    if (match?.changedAt) return match.changedAt
-    return fallback ?? null
-  }
-  return (
-    <div className="rounded-xl border border-[#E5E7EB] bg-white px-4 py-5 shadow-sm">
-      <div className="grid grid-cols-5 gap-2">
-        {steps.map((step, index) => {
-          const done = rank >= step.rank
-          const current = rank === step.rank
-          const date = done ? when(step.rank, index === 0 ? createdAt : undefined) : null
-          return (
-            <div key={step.label} className="relative text-center">
-              {index < steps.length - 1 ? (
-                <span className={`absolute left-1/2 top-3 h-0.5 w-full ${rank > step.rank ? "bg-[#16803C]" : "bg-[#E5E7EB]"}`} />
-              ) : null}
-              <span className={`relative mx-auto flex h-6 w-6 items-center justify-center rounded-full border-2 ${done ? "border-[#16803C] bg-[#16803C] text-white" : "border-[#D1D5DB] bg-white text-[#9CA3AF]"}`}>
-                {done ? <Check className="h-3.5 w-3.5" /> : <span className="h-2 w-2 rounded-full bg-[#D1D5DB]" />}
-              </span>
-              <p className={`mt-2 text-xs font-semibold ${current || done ? "text-[#111827]" : "text-[#9CA3AF]"}`}>{step.label}</p>
-              <p className="text-[11px] text-[#6B7280]">{date ? formatOrderDateTime(date) : ""}</p>
-              {current && step.hint ? <p className="text-[11px] text-[#16803C]">{step.hint}</p> : null}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 export default function AdminOrderDetailPage() {
   const params = useParams() as { id?: string }
   const router = useRouter()
@@ -161,6 +187,7 @@ export default function AdminOrderDetailPage() {
   const [note, setNote] = useState("")
   const [savingNote, setSavingNote] = useState(false)
   const [shiprocketBusy, setShiprocketBusy] = useState<string | null>(null)
+  const busy = (action: string) => shiprocketBusy === action
   const [serviceabilitySummary, setServiceabilitySummary] = useState<string>("")
   const [serviceable, setServiceable] = useState(false)
   const [downloadingInvoice, setDownloadingInvoice] = useState(false)
@@ -178,27 +205,35 @@ export default function AdminOrderDetailPage() {
     progressRank(lifecycleStatus) >= 3 ||
     progressRank(order?.status ?? "") >= 3 ||
     ["shipped", "in_transit", "out_for_delivery", "dispatched", "delivered", "completed"].includes(shipmentState)
+  const isOrderAccepted = ["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered", "completed"].includes(lifecycleStatus.toLowerCase())
 
-  const [downloadingShiprocketInvoice, setDownloadingShiprocketInvoice] = useState(false)
+  const [manualModal, setManualModal] = useState<{ courier: string; trackingId: string; trackingUrl: string } | null>(null)
+  const [savingManual, setSavingManual] = useState(false)
 
-  // Fetches and opens/downloads official Shiprocket PDF invoice.
-  const handleDownloadShiprocketInvoice = async () => {
-    if (!order) return
-    setDownloadingShiprocketInvoice(true)
+  const saveManualShipment = async () => {
+    if (!manualModal || !order?.id) return
+    const courier = manualModal.courier.trim()
+    const trackingId = manualModal.trackingId.trim()
+    const trackingUrl = manualModal.trackingUrl.trim()
+    if (!courier || !trackingId) {
+      toast.error("Manual shipment", "Courier name and tracking ID are required.")
+      return
+    }
+    setSavingManual(true)
     try {
-      const res = await authedPost<{ invoiceUrl?: string }>(`/api/v1/orders/${order.id}/shiprocket`, {
-        action: "fetch_invoice",
+      await authedPost(`/api/v1/orders/${order.id}/fulfillment`, {
+        action: "manual_shipment",
+        courierName: courier,
+        trackingId,
+        trackingUrl,
       })
-      if (res?.invoiceUrl) {
-        window.open(res.invoiceUrl, "_blank")
-        toast.success("Success", "Shiprocket invoice fetched successfully")
-      } else {
-        toast.error("Invoice Error", "Could not fetch Shiprocket invoice URL")
-      }
-    } catch (err) {
-      toast.error("Shiprocket Invoice Error", err instanceof Error ? err.message : "Failed to fetch Shiprocket invoice")
+      setManualModal(null)
+      toast.success("Manual shipment saved", "Order fulfillment updated.")
+      await loadOrder({ silent: true })
+    } catch (e) {
+      toast.error("Manual shipment failed", e instanceof Error ? e.message : "Failed to save manual shipment")
     } finally {
-      setDownloadingShiprocketInvoice(false)
+      setSavingManual(false)
     }
   }
 
@@ -250,6 +285,26 @@ export default function AdminOrderDetailPage() {
 
   const handleUpdateOrderStatus = async (nextStatus: string) => {
     if (!order?.id || updatingStatus) return
+    const currentStatus = lifecycleStatus.toLowerCase().trim()
+    const normNext = nextStatus.toLowerCase().trim()
+    if (normNext === currentStatus) return
+
+    const currentRank = ORDER_STATUS_PROGRESSION[currentStatus] ?? 0
+    const nextRank = ORDER_STATUS_PROGRESSION[normNext]
+
+    if (currentStatus === "cancelled" || currentStatus === "rejected") {
+      toast.error("Status update not allowed", `Cannot change status of a ${currentStatus} order.`)
+      return
+    }
+    if (normNext !== "cancelled" && normNext !== "returned" && nextRank !== undefined && nextRank < currentRank) {
+      toast.error("Invalid status transition", "Order status can only move forward, not backward.")
+      return
+    }
+    if (normNext === "cancelled" && currentRank >= (ORDER_STATUS_PROGRESSION["shipped"] ?? 3)) {
+      toast.error("Status update not allowed", "Cannot cancel an order that has already shipped or delivered.")
+      return
+    }
+
     setUpdatingStatus("order")
     try {
       await authedPost(`/api/v1/orders/${order.id}/fulfillment`, {
@@ -267,6 +322,22 @@ export default function AdminOrderDetailPage() {
 
   const handleUpdateShipmentStatus = async (nextStatus: string) => {
     if (!order?.id || updatingStatus) return
+    const currentStatus = (shipmentState || "not_shipped").toLowerCase().trim()
+    const normNext = nextStatus.toLowerCase().trim()
+    if (normNext === currentStatus) return
+
+    const currentRank = SHIPMENT_STATUS_PROGRESSION[currentStatus] ?? 0
+    const nextRank = SHIPMENT_STATUS_PROGRESSION[normNext]
+
+    if (currentStatus === "cancelled") {
+      toast.error("Status update not allowed", "Cannot change status of a cancelled shipment.")
+      return
+    }
+    if (normNext !== "cancelled" && normNext !== "returned" && nextRank !== undefined && nextRank < currentRank) {
+      toast.error("Invalid status transition", "Shipment status can only move forward, not backward.")
+      return
+    }
+
     setUpdatingStatus("shipment")
     try {
       await authedPost(`/api/v1/orders/${order.id}/fulfillment`, {
@@ -371,10 +442,14 @@ export default function AdminOrderDetailPage() {
               const minimum = courier.min_weight_kg != null ? `, courier minimum ${courier.min_weight_kg} kg` : ""
               return `${courier.name} (${eta}${charge}${minimum} • Rs.${courier.rate})`
             }).join(" | ")}`
-          : "No courier can deliver this pincode"
+          : "This order is not serviceable please proceed with manual shipment"
         setServiceabilitySummary(summary)
         setServiceable(top.length > 0)
-        toast.success("Serviceability", summary)
+        if (top.length > 0) {
+          toast.success("Serviceability", summary)
+        } else {
+          toast.error("Not serviceable", summary)
+        }
         return
       }
       const labels: Record<string, string> = {
@@ -474,108 +549,150 @@ export default function AdminOrderDetailPage() {
 
   return (
     <section className="w-full space-y-4 py-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-xs text-[#646464]">
-            <button type="button" onClick={() => router.push("/admin/orders")} className="hover:text-[#166534]">Orders</button>
-            <span className="mx-1.5">›</span>
-            <span className="text-[#111827]">Order details</span>
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-[#111827]">
-              Order #{order ? order.id.slice(0, 10).toUpperCase() : "--------"}
-            </h1>
-            {order ? getOrderStatusBadge(lifecycleStatus) : null}
-            {order ? (
-              <div className="flex items-center gap-1.5">
-                <span className="text-xs text-[#6B7280]">Update Status:</span>
-                <select
-                  value={lifecycleStatus}
-                  disabled={updatingStatus !== null}
-                  onChange={(e) => void handleUpdateOrderStatus(e.target.value)}
-                  className="cursor-pointer rounded-lg border border-[#7B3010]/30 bg-[#FFF7ED] px-2.5 py-1 text-xs font-semibold text-[#7B3010] shadow-sm hover:border-[#7B3010] focus:outline-none focus:ring-1 focus:ring-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
-                  title="Manually Change Order Status"
-                >
-                  {((ADMIN_ORDER_STATUS_OPTIONS as readonly string[]).includes(lifecycleStatus)
-                    ? ADMIN_ORDER_STATUS_OPTIONS
-                    : [lifecycleStatus, ...ADMIN_ORDER_STATUS_OPTIONS]
-                  ).map((val) => (
-                    <option key={val} value={val}>
-                      {orderStatusLabel(val)}
-                    </option>
-                  ))}
-                </select>
-                {updatingStatus === "order" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7B3010]" />}
-              </div>
-            ) : null}
-          </div>
-          <p className="mt-1 text-xs text-[#6B7280]">
-            {order
-              ? `Placed on ${formatOrderDateTime(order.createdAt)}`
-              : "Loading"}
-            {order ? `  |  Channel: Online Store` : ""}
-            {order?.paymentStatus ? `  |  Payment: ${order.paymentStatus}` : ""}
-            {order?.paymentMethod ? ` (${order.paymentMethod.replaceAll("_", " ")})` : ""}
-          </p>
+      <div>
+        <p className="text-xs text-[#646464]">
+          <button type="button" onClick={() => router.push("/admin/orders")} className="hover:text-[#166534]">Orders</button>
+          <span className="mx-1.5">›</span>
+          <span className="text-[#111827]">Order details</span>
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-[#111827]">
+            Order #{order ? order.id.slice(0, 10).toUpperCase() : "--------"}
+          </h1>
+          {order ? getOrderStatusBadge(lifecycleStatus) : null}
+          {order ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-[#6B7280]">Update Status:</span>
+              <select
+                value={lifecycleStatus}
+                disabled={updatingStatus !== null || ["cancelled", "rejected"].includes(lifecycleStatus.toLowerCase())}
+                onChange={(e) => void handleUpdateOrderStatus(e.target.value)}
+                className="cursor-pointer rounded-lg border border-[#7B3010]/30 bg-[#FFF7ED] px-2.5 py-1 text-xs font-semibold text-[#7B3010] shadow-sm hover:border-[#7B3010] focus:outline-none focus:ring-1 focus:ring-[#7B3010] disabled:cursor-not-allowed disabled:opacity-50"
+                title="Manually Change Order Status"
+              >
+                {getForwardOrderStatusOptions(lifecycleStatus).map((val) => (
+                  <option key={val} value={val}>
+                    {orderStatusLabel(val)}
+                  </option>
+                ))}
+              </select>
+              {updatingStatus === "order" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#7B3010]" />}
+            </div>
+          ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {lifecycleStatus === "admin_approval_pending" ? (
-            <Button className="bg-[#16803C] text-white hover:bg-[#146C33]" disabled={actionBusy === "approve_order"} onClick={() => void runAction("approve_order")}>
-              <Check className="mr-1.5 h-4 w-4" />
-              {actionBusy === "approve_order" ? "Working..." : "Accept order"}
-            </Button>
-          ) : null}
-          <Button variant="outline" onClick={() => void loadOrder()} disabled={!order || loading}>
-            {loading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-            Refresh
-          </Button>
-          {lifecycleStatus === "admin_approval_pending" ? (
-            <Button variant="outline" disabled={actionBusy === "reject_order"} onClick={() => void runAction("reject_order")}>
-              {actionBusy === "reject_order" ? "Working..." : "Reject order"}
-            </Button>
-          ) : null}
-          {lifecycleStatus === "cancel_requested" ? (
-            <>
-              <Button variant="outline" disabled={actionBusy === "approve_cancel"} onClick={() => void runAction("approve_cancel")}>{actionBusy === "approve_cancel" ? "Working..." : "Approve cancel"}</Button>
-              <Button variant="outline" disabled={actionBusy === "reject_cancel"} onClick={() => void runAction("reject_cancel")}>{actionBusy === "reject_cancel" ? "Working..." : "Reject cancel"}</Button>
-            </>
-          ) : null}
-          {lifecycleStatus === "return_requested" ? (
-            <>
-              <Button variant="outline" disabled={actionBusy === "approve_return"} onClick={() => void runAction("approve_return")}>{actionBusy === "approve_return" ? "Working..." : "Approve return"}</Button>
-              <Button variant="outline" disabled={actionBusy === "reject_return"} onClick={() => void runAction("reject_return")}>{actionBusy === "reject_return" ? "Working..." : "Reject return"}</Button>
-            </>
-          ) : null}
-          {refundStatus === "initiated" ? (
-            <Button variant="outline" disabled={actionBusy === "trigger_refund"} onClick={() => void runAction("trigger_refund")}>{actionBusy === "trigger_refund" ? "Working..." : "Trigger refund"}</Button>
-          ) : null}
-          {["failed", "rejected"].includes(refundStatus) ? (
-            <Button variant="outline" disabled={actionBusy === "retry_refund"} onClick={() => void runAction("retry_refund")}>{actionBusy === "retry_refund" ? "Working..." : "Retry refund"}</Button>
-          ) : null}
-          <Button variant="outline" onClick={() => void handleSyncOrder()} disabled={!order || syncingOrder}>
-            {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-            Sync order
-          </Button>
-          <Button variant="outline" onClick={() => void handleDownloadInvoice()} disabled={!order || downloadingInvoice || !["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered", "completed"].includes(lifecycleStatus)}>
-            {downloadingInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
-            Ziply5 invoice
-          </Button>
+
+        <Button
+          variant="outline"
+          onClick={() => void loadOrder()}
+          disabled={!order || loading}
+          className="ml-auto rounded-xl border-[#E5E7EB] bg-white px-3.5 py-1.5 text-xs font-semibold shadow-xs hover:bg-[#F9FAFB]"
+        >
+          {loading ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+          Refresh
+        </Button>
+      </div>
+
+      <p className="-mt-2 text-xs text-[#6B7280]">
+        {order
+          ? `Placed on ${formatOrderDateTime(order.createdAt)}`
+          : "Loading"}
+        {order ? `  |  Channel: Online Store` : ""}
+        {order?.paymentStatus ? `  |  Payment: ${order.paymentStatus}` : ""}
+        {order?.paymentMethod ? ` (${order.paymentMethod.replaceAll("_", " ")})` : ""}
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          className="bg-[#16803C] text-white hover:bg-[#146C33] disabled:opacity-50"
+          disabled={isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || actionBusy === "approve_order"}
+          onClick={() => void runAction("approve_order")}
+        >
+          <Check className="mr-1.5 h-4 w-4" />
+          {actionBusy === "approve_order" ? "Working..." : isOrderAccepted ? "Order accepted" : "Accept order"}
+        </Button>
+
+        <Button
+          variant="outline"
+          disabled={!isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || Boolean(shiprocketBusy)}
+          onClick={() => void runShiprocketAction("serviceability")}
+          title={!isOrderAccepted ? "Accept order first to check serviceability" : "Check courier serviceability"}
+        >
+          {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+          {busy("serviceability") ? "Checking..." : "Check serviceability"}
+        </Button>
+
+        <Button
+          variant="outline"
+          disabled={!isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || syncingOrder || Boolean(shiprocketBusy)}
+          onClick={() => void handleSyncOrder()}
+          title={!isOrderAccepted ? "Accept order first to sync" : "Sync order to Shiprocket"}
+        >
+          {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+          Sync now
+        </Button>
+
+        <Button
+          variant="outline"
+          disabled={!isOrderAccepted || actionBusy === "reject_order" || ["cancelled", "rejected"].includes(lifecycleStatus)}
+          onClick={() => void runAction("reject_order")}
+          title={!isOrderAccepted ? "Accept order first to reject" : "Reject order"}
+        >
+          {actionBusy === "reject_order" ? "Working..." : "Reject order"}
+        </Button>
+
+        {serviceable === false && Boolean(serviceabilitySummary) && (
           <Button
             variant="outline"
-            onClick={() => void handleDownloadShiprocketInvoice()}
-            disabled={!order || downloadingShiprocketInvoice || !orderShipped}
-            title={orderShipped ? "Download the Shiprocket invoice" : "Available after the order is shipped"}
+            className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+            onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "" })}
           >
-            {downloadingShiprocketInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
-            Shiprocket invoice
+            Manual shipment
           </Button>
-          {order?.status !== "cancelled" ? (
-            <Button className="border border-red-300 bg-white text-red-600 hover:bg-red-50" onClick={() => setShowCancelModal(true)} disabled={actionBusy === "admin_cancel"}>
-              <Ban className="mr-1.5 h-4 w-4" />
-              Cancel order
-            </Button>
-          ) : null}
-        </div>
+        )}
+
+        {lifecycleStatus === "cancel_requested" ? (
+          <>
+            <Button variant="outline" disabled={actionBusy === "approve_cancel"} onClick={() => void runAction("approve_cancel")}>{actionBusy === "approve_cancel" ? "Working..." : "Approve cancel"}</Button>
+            <Button variant="outline" disabled={actionBusy === "reject_cancel"} onClick={() => void runAction("reject_cancel")}>{actionBusy === "reject_cancel" ? "Working..." : "Reject cancel"}</Button>
+          </>
+        ) : null}
+        {lifecycleStatus === "return_requested" ? (
+          <>
+            <Button variant="outline" disabled={actionBusy === "approve_return"} onClick={() => void runAction("approve_return")}>{actionBusy === "approve_return" ? "Working..." : "Approve return"}</Button>
+            <Button variant="outline" disabled={actionBusy === "reject_return"} onClick={() => void runAction("reject_return")}>{actionBusy === "reject_return" ? "Working..." : "Reject return"}</Button>
+          </>
+        ) : null}
+        {refundStatus === "initiated" ? (
+          <Button variant="outline" disabled={actionBusy === "trigger_refund"} onClick={() => void runAction("trigger_refund")}>{actionBusy === "trigger_refund" ? "Working..." : "Trigger refund"}</Button>
+        ) : null}
+        {["failed", "rejected"].includes(refundStatus) ? (
+          <Button variant="outline" disabled={actionBusy === "retry_refund"} onClick={() => void runAction("retry_refund")}>{actionBusy === "retry_refund" ? "Working..." : "Retry refund"}</Button>
+        ) : null}
+
+        <Button
+          variant="outline"
+          onClick={() => void handleDownloadInvoice()}
+          disabled={!isOrderAccepted || downloadingInvoice}
+          title={!isOrderAccepted ? "Available after order is accepted" : "Download Ziply5 invoice"}
+        >
+          {downloadingInvoice ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Download className="mr-1.5 h-4 w-4" />}
+          Ziply5 invoice
+        </Button>
+
+        {order?.status !== "cancelled" && lifecycleStatus !== "cancelled" ? (
+          <Button
+            className="border border-red-300 bg-white text-red-600 hover:bg-red-50"
+            onClick={() => setShowCancelModal(true)}
+            disabled={!isOrderAccepted || actionBusy === "admin_cancel" || orderShipped}
+            title={!isOrderAccepted ? "Available after order is accepted" : "Cancel order"}
+          >
+            <Ban className="mr-1.5 h-4 w-4" />
+            Cancel order
+          </Button>
+        ) : null}
       </div>
 
       {error ? <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p> : null}
@@ -593,8 +710,6 @@ export default function AdminOrderDetailPage() {
               </p>
             </div>
           ) : null}
-
-          <OrderProgress status={lifecycleStatus} createdAt={order.createdAt} history={order.statusHistory} />
 
           <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.85fr)]">
             <div className="space-y-4">
@@ -742,7 +857,6 @@ export default function AdminOrderDetailPage() {
                 const linkedShipment = Boolean(activeShipment)
                 const pickupStatusText = order.pickupStatus || activeShipment?.pickupStatus || activeShipment?.shipmentStatus || order.shipmentStatus || ""
                 const pickupDone = Boolean(order.isPickupGenerated) && isConfirmedPickupRequest(pickupStatusText)
-                const busy = (action: string) => shiprocketBusy === action
                 const buttonClass = "cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1.5 text-[11px] font-semibold text-[#7B3010] shadow-sm transition hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#FFF7ED] disabled:hover:text-[#7B3010]"
                 return (
                   <>
@@ -752,15 +866,12 @@ export default function AdminOrderDetailPage() {
                         <span className="text-xs text-[#6B7280]">Shipment Status:</span>
                         <select
                           value={shipmentState || "not_shipped"}
-                          disabled={updatingStatus !== null}
+                          disabled={updatingStatus !== null || shipmentState === "cancelled"}
                           onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
                           className="cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C] disabled:cursor-not-allowed disabled:opacity-50"
                           title="Manually Change Shipment Status"
                         >
-                          {((ADMIN_SHIPMENT_STATUS_OPTIONS as readonly string[]).includes(shipmentState || "not_shipped")
-                            ? ADMIN_SHIPMENT_STATUS_OPTIONS
-                            : [shipmentState || "not_shipped", ...ADMIN_SHIPMENT_STATUS_OPTIONS]
-                          ).map((val) => (
+                          {getForwardShipmentStatusOptions(shipmentState || "not_shipped").map((val) => (
                             <option key={val} value={val}>
                               {orderStatusLabel(val)}
                             </option>
@@ -772,10 +883,17 @@ export default function AdminOrderDetailPage() {
                     <div className="flex flex-wrap gap-2">
                       {shipmentState === "cancelled" ? null : (
                         <>
-                      <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
-                      {(linkedShipment || serviceable) && (
-                        <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("sync_order")} className={buttonClass}>{busy("sync_order") ? "Syncing..." : "Sync"}</button>
-                      )}
+                          <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
+                          {(linkedShipment || serviceable) && (
+                            <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("sync_order")} className={buttonClass}>
+                              {busy("sync_order") ? (linkedShipment ? "Refreshing..." : "Syncing...") : (linkedShipment ? "Refresh" : "Sync")}
+                            </button>
+                          )}
+                          {!linkedShipment && serviceable === false && Boolean(serviceabilitySummary) && (
+                            <button type="button" onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "" })} className={buttonClass}>
+                              Manual shipment
+                            </button>
+                          )}
                         </>
                       )}
                     </div>
@@ -893,6 +1011,56 @@ export default function AdminOrderDetailPage() {
                   </>
                 ) : (
                   "Confirm Cancel"
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {manualModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
+            <h2 className="text-lg font-bold text-[#4A1D1F]">Manual shipment</h2>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Courier
+              <input
+                value={manualModal.courier}
+                onChange={(e) => setManualModal({ ...manualModal, courier: e.target.value })}
+                placeholder="e.g. DTDC, BlueDart, Delhivery"
+                className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Tracking id
+              <input
+                value={manualModal.trackingId}
+                onChange={(e) => setManualModal({ ...manualModal, trackingId: e.target.value })}
+                placeholder="e.g. TRK12345678"
+                className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+              />
+            </label>
+            <label className="block text-xs font-semibold text-[#4A1D1F]">
+              Tracking URL
+              <input
+                value={manualModal.trackingUrl}
+                onChange={(e) => setManualModal({ ...manualModal, trackingUrl: e.target.value })}
+                placeholder="https://..."
+                className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+              />
+            </label>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setManualModal(null)} disabled={savingManual}>
+                Cancel
+              </Button>
+              <Button className="bg-[#7B3010] text-white hover:bg-[#5E230B] font-semibold" onClick={() => void saveManualShipment()} disabled={savingManual}>
+                {savingManual ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  "Save shipment"
                 )}
               </Button>
             </div>
