@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { createPortal } from "react-dom"
 import { useMasterValues } from "@/hooks/useMasterData"
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { authedFetch, authedPatch, authedPost } from "@/lib/dashboard-fetch"
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable"
@@ -29,6 +29,7 @@ import {
   Image as ImageIcon,
   ImagePlus,
   Info as InfoIcon,
+  Layers,
   Leaf,
   Package,
   Pencil,
@@ -167,6 +168,10 @@ const foodTypeOfTag = (tag: { name?: string | null; slug?: string | null }): "ve
   if (keys.some((k) => FOOD_TYPE_TAG_KEYS["non-veg"].includes(k))) return "non-veg"
   if (keys.some((k) => FOOD_TYPE_TAG_KEYS.veg.includes(k))) return "veg"
   return null
+}
+
+const isMultiVariantProduct = (p: ProductDetail): boolean => {
+  return Boolean(Array.isArray(p.variants) && p.variants.length > 1)
 }
 const preparationTypes = ["ready_to_eat", "ready_to_cook"] as const
 const spiceLevels = ["mild", "medium", "hot", "extra_hot"] as const
@@ -838,6 +843,13 @@ export function ProductConsolePage({
     }
   }
   const [rowStatus, setRowStatus] = useState<Record<string, string>>({})
+  const [expandedProductIds, setExpandedProductIds] = useState<Record<string, boolean>>({})
+  const toggleProductAccordion = (id: string) => {
+    setExpandedProductIds((prev) => ({
+      ...prev,
+      [id]: !prev[id],
+    }))
+  }
   const [features, setFeatures] = useState<Array<{ title: string; icon?: string | null }>>([])
   const [featureCatalog, setFeatureCatalog] = useState<Array<{ id: string; title: string; icon: string | null; isActive: boolean }>>([])
   const [selectedFeatureDefinitionIds, setSelectedFeatureDefinitionIds] = useState<string[]>([])
@@ -2643,9 +2655,9 @@ export function ProductConsolePage({
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">Products</h1>
-              {/* <p className="text-sm text-[#646464]">
-                <span className="font-semibold">Combos</span>{filteredCombos.length} combos.
-              </p> */}
+              <p className="text-sm text-[#646464]">
+                Manage standalone products and bundle combos.
+              </p>
             </div>
             <div className="flex gap-2">
               <Link
@@ -2844,20 +2856,22 @@ export function ProductConsolePage({
             </button>
           </div>
         </div>
-        <div className="flex gap-2 w-full flex-wrap lg:flex-nowrap">
-          <div className="flex gap-2 w-full">
+
+        <div className="flex flex-col gap-2.5 w-full xl:flex-row xl:items-center">
+          <div className="relative w-full xl:w-72 2xl:w-80 shrink-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#7A7A7A] pointer-events-none" />
             <Input
               type="text"
               placeholder="Search by ID, name, SKU, or price..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="max-w-sm bg-white rounded-lg"
+              className="w-full pl-9 bg-white rounded-lg border border-[#D9D9D1] text-sm focus:border-[#7B3010]"
             />
           </div>
-          <div className="flex flex-wrap lg:flex-nowrap gap-2 w-full">
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
             <Select value={filterStatus} onValueChange={(value) => setFilterStatus(value as "all" | "draft" | "published" | "archived")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
-                <SelectValue placeholder="Filter By Status" />
+              <SelectTrigger className="w-full sm:w-[135px] rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="All Statuses" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all" className="capitalize">All Statuses</SelectItem>
@@ -2870,7 +2884,7 @@ export function ProductConsolePage({
             </Select>
 
             <Select value={filterType} onValueChange={(value) => setFilterType(value as "all" | "single" | "multiple")}>
-              <SelectTrigger className="w-44 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+              <SelectTrigger className="w-full sm:w-[145px] rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
                 <SelectValue placeholder="All Variant Types" />
               </SelectTrigger>
               <SelectContent>
@@ -2881,8 +2895,8 @@ export function ProductConsolePage({
             </Select>
 
             <Select value={filterCategory} onValueChange={(value) => setFilterCategory(value)}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
-                <SelectValue placeholder="Filter By Category" />
+              <SelectTrigger className="w-full sm:w-[140px] rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="All Categories" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all" className="capitalize">All Categories</SelectItem>
@@ -2895,8 +2909,8 @@ export function ProductConsolePage({
             </Select>
 
             <Select value={filterStockStatus} onValueChange={(value) => setFilterStockStatus(value as "all" | "in_stock" | "out_of_stock")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
-                <SelectValue placeholder="Filter By Stock Status" />
+              <SelectTrigger className="w-full sm:w-[140px] rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+                <SelectValue placeholder="All Stock Statuses" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all" className="capitalize">All Stock Statuses</SelectItem>
@@ -2906,7 +2920,7 @@ export function ProductConsolePage({
             </Select>
 
             <Select value={sortPrice || undefined} onValueChange={(value) => setSortPrice(value as "low_to_high" | "high_to_low")}>
-              <SelectTrigger className="w-40 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
+              <SelectTrigger className="w-full sm:w-[135px] rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-sm capitalize">
                 <SelectValue placeholder="Price Sort" />
               </SelectTrigger>
               <SelectContent>
@@ -2929,7 +2943,9 @@ export function ProductConsolePage({
         {loading && <p className="text-sm text-[#646464]">Loading...</p>}
         {!loading && (
           <>
-          <ConsoleTable headers={["S.No", "Product ID", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}>
+          <ConsoleTable
+            headers={["S.No", "Product ID", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}
+          >
             {filteredRows.length === 0 ? (
               <tr>
                 <ConsoleTd colSpan={9} className="py-8 text-center text-[#646464]">
@@ -2937,85 +2953,347 @@ export function ProductConsolePage({
                 </ConsoleTd>
               </tr>
             ) : (
-              pagedRows.map((p, idx) => (
-                <tr key={p.id} className="hover:bg-[#FFFBF3]/80">
-                  <ConsoleTd className="align-middle w-14 text-[#646464]">
-                    {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <code className="text-[11px] font-bold text-[#7B3010] font-mono">{p.id}</code>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
-                    {formatCreatedAt(p.createdAt)}
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <code className="text-[11px]">{p.sku}</code>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
-                      {p.name}
-                    </Link>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <span className="text-[12px] font-semibold text-[#2A1810]">
-                      {p.type === "variant"
-                        ? (p.variants ?? []).reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
-                        : Number(p.totalStock ?? 0)}
-                    </span>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle font-semibold text-[11px]">
-                    {p.type === "variant"
-                      ? p.variants?.map(v => `Rs.${Number(v.price).toFixed(2)}`).join(", ") || "—"
-                      : p.price
-                        ? `Rs.${Number(p.price).toFixed(2)}`
-                        : "—"}
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <Select value={rowStatus[p.id] ?? p.status} onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}>
-                      <SelectTrigger className="w-[112px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs capitalize" size="sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(p.status === "draft" ? (["draft", "published"] as const) : (["published", "archived"] as const)).map((s) => (
-                          <SelectItem key={s} value={s} className="capitalize">
-                            {s === "draft" ? "Draft" : s === "published" ? "Published" : "Archived"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </ConsoleTd>
-                  <ConsoleTd className="align-middle">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`${basePath}/${p.id}`}
-                        aria-label={`View ${p.name}`}
-                        title="View"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Link>
-                      <Link
-                        href={`${basePath}/${p.id}/edit`}
-                        aria-label={`Edit ${p.name}`}
-                        title="Edit"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => saveRowStatus(p.id)}
-                        disabled={saving || (rowStatus[p.id] ?? p.status) === p.status}
-                        aria-label={`Save ${p.name}`}
-                        title="Save"
-                        className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#7B3010] text-white disabled:opacity-40"
-                      >
-                        <Save className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </ConsoleTd>
-                </tr>
-              ))
+              pagedRows.map((p, idx) => {
+                const isMulti = isMultiVariantProduct(p)
+                const isExpanded = Boolean(expandedProductIds[p.id])
+                const variants = p.variants ?? []
+
+                return (
+                  <Fragment key={p.id}>
+                    <tr className={`hover:bg-[#FFFBF3]/80 transition-colors ${isExpanded ? "bg-[#FFFBF3]/60" : ""}`}>
+                      <ConsoleTd className="align-middle w-14 text-[#646464]">
+                        {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        <code className="text-[11px] font-bold text-[#7B3010] font-mono">{p.id}</code>
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
+                        {formatCreatedAt(p.createdAt)}
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        <code className="text-[11px] font-medium text-[#2A1810]">{p.sku}</code>
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        <div className="flex flex-col">
+                          <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
+                            {p.name}
+                          </Link>
+                          {isMulti && (
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => toggleProductAccordion(p.id)}
+                                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
+                                  isExpanded
+                                    ? "bg-[#7B3010] text-white shadow-2xs"
+                                    : "bg-[#7B3010]/10 text-[#7B3010] hover:bg-[#7B3010]/20"
+                                }`}
+                                title={isExpanded ? "Collapse variants" : "Expand variant details"}
+                              >
+                                <Layers className="h-3 w-3" />
+                                <span>{variants.length} Variants</span>
+                                <ChevronDown
+                                  className={`h-3 w-3 transition-transform duration-200 ${
+                                    isExpanded ? "rotate-180" : ""
+                                  }`}
+                                />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        {isMulti ? (
+                          <div className="flex flex-col">
+                            <span className="text-[12px] font-semibold text-[#2A1810]">
+                              {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}
+                            </span>
+                            <span className="text-[10px] text-[#7A7A7A] whitespace-nowrap">
+                              in {variants.length} variants
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-[12px] font-semibold text-[#2A1810]">
+                            {p.type === "variant" && variants.length > 0
+                              ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+                              : Number(p.totalStock ?? 0)}
+                          </span>
+                        )}
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle font-semibold text-[11px]">
+                        {(() => {
+                          const defaultVariant = variants.find((v) => v.isDefault) ?? variants[0]
+                          const displayPrice = defaultVariant?.price != null ? defaultVariant.price : p.price
+                          return displayPrice != null && displayPrice !== "" ? `Rs.${Number(displayPrice).toFixed(2)}` : "—"
+                        })()}
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        <Select value={rowStatus[p.id] ?? p.status} onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}>
+                          <SelectTrigger className="w-[112px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs capitalize" size="sm">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {(p.status === "draft" ? (["draft", "published"] as const) : (["published", "archived"] as const)).map((s) => (
+                              <SelectItem key={s} value={s} className="capitalize">
+                                {s === "draft" ? "Draft" : s === "published" ? "Published" : "Archived"}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </ConsoleTd>
+                      <ConsoleTd className="align-middle">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`${basePath}/${p.id}`}
+                            aria-label={`View ${p.name}`}
+                            title="View"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Link>
+                          <Link
+                            href={`${basePath}/${p.id}/edit`}
+                            aria-label={`Edit ${p.name}`}
+                            title="Edit"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => saveRowStatus(p.id)}
+                            disabled={saving || (rowStatus[p.id] ?? p.status) === p.status}
+                            aria-label={`Save ${p.name}`}
+                            title="Save"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#7B3010] text-white disabled:opacity-40"
+                          >
+                            <Save className="h-4 w-4" />
+                          </button>
+                        </div>
+                      </ConsoleTd>
+                    </tr>
+                    {isMulti && isExpanded && (
+                      <tr key={`${p.id}-accordion-panel`} className="bg-[#FFFBF3]/40 border-y border-[#E8DCC8]">
+                        <ConsoleTd colSpan={9} className="p-0">
+                          <div className="border-y-2 border-[#7B3010]/20 bg-gradient-to-b from-[#FFFDF9] via-[#FAF6EE] to-[#FFFBF3] p-4 md:p-6 shadow-inner">
+                            {/* Accordion Header */}
+                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#E8DCC8] pb-3">
+                              <div className="flex items-center gap-3">
+                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#7B3010] text-white shadow-sm">
+                                  <Layers className="h-5 w-5" />
+                                </div>
+                                <div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <h4 className="font-melon text-base font-bold text-[#4A1D1F]">
+                                      Variant Details &amp; Inventory
+                                    </h4>
+                                    <span className="rounded-full bg-[#7B3010]/15 px-2.5 py-0.5 text-xs font-bold text-[#7B3010]">
+                                      {variants.length} Variants
+                                    </span>
+                                    <span className="text-xs text-[#7A7A7A]">
+                                      for <strong className="text-[#2A1810] font-medium">{p.name}</strong>
+                                    </span>
+                                  </div>
+                                  <p className="mt-0.5 text-xs text-[#646464]">
+                                    Product ID: <code className="font-mono font-bold text-[#7B3010]">{p.id}</code> · Base SKU: <code className="font-mono text-[#2A1810]">{p.sku}</code>
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Link
+                                  href={`${basePath}/${p.id}/edit?step=3`}
+                                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#7B3010] bg-white px-3 py-1.5 text-xs font-semibold text-[#7B3010] hover:bg-[#FFFBF3] transition-colors shadow-2xs"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                  <span>Edit Variants</span>
+                                </Link>
+                                <button
+                                  type="button"
+                                  onClick={() => toggleProductAccordion(p.id)}
+                                  className="inline-flex items-center gap-1 rounded-lg border border-[#D9D9D1] bg-white px-3 py-1.5 text-xs font-semibold text-[#646464] hover:bg-neutral-50 transition-colors"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  <span>Close</span>
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Quick KPI Stats Bar */}
+                            <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 md:gap-3">
+                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Total Stock</p>
+                                <p className="mt-1 text-base font-bold text-[#2A1810]">
+                                  {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}{" "}
+                                  <span className="text-xs font-normal text-[#646464]">units</span>
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Price Range</p>
+                                <p className="mt-1 text-base font-bold text-[#7B3010]">
+                                  {(() => {
+                                    const prices = variants.map((v) => Number(v.price)).filter((n) => !isNaN(n))
+                                    if (prices.length === 0) return "—"
+                                    const min = Math.min(...prices)
+                                    const max = Math.max(...prices)
+                                    return min === max
+                                      ? `₹${min.toFixed(2)}`
+                                      : `₹${min.toFixed(2)} – ₹${max.toFixed(2)}`
+                                  })()}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Default Variant</p>
+                                <p className="mt-1 text-sm font-semibold text-[#2A1810] truncate">
+                                  {variants.find((v) => v.isDefault)?.name || variants[0]?.name || "—"}
+                                </p>
+                              </div>
+                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Stock Health</p>
+                                <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold">
+                                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                    {variants.filter((v) => Number(v.stock ?? 0) > 0).length} In Stock
+                                  </span>
+                                  {variants.some((v) => Number(v.stock ?? 0) <= 0) && (
+                                    <span className="inline-flex items-center gap-1 text-rose-700 ml-1">
+                                      <span className="h-2 w-2 rounded-full bg-rose-500" />
+                                      {variants.filter((v) => Number(v.stock ?? 0) <= 0).length} OOS
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Variants Table */}
+                            <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+                              <table className="w-full text-left text-xs">
+                                <thead className="border-b border-[#E8DCC8] bg-[#F5F1E6] text-[11px] font-semibold uppercase tracking-wider text-[#4A1D1F]">
+                                  <tr>
+                                    <th className="px-3 py-2.5 text-center w-10">#</th>
+                                    <th className="px-3 py-2.5">Variant Title / Weight</th>
+                                    <th className="px-3 py-2.5">Variant SKU</th>
+                                    <th className="px-3 py-2.5">MRP</th>
+                                    <th className="px-3 py-2.5">Variant Price</th>
+                                    <th className="px-3 py-2.5">Discount</th>
+                                    <th className="px-3 py-2.5">Stock</th>
+                                    <th className="px-3 py-2.5">HSN Code</th>
+                                    <th className="px-3 py-2.5">EAN / Barcode</th>
+                                    <th className="px-3 py-2.5 text-center">Default</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-[#E8DCC8]/60 text-[#2A1810]">
+                                  {variants.map((v, vIdx) => {
+                                    const priceNum = Number(v.price)
+                                    const mrpNum = v.mrp != null ? Number(v.mrp) : null
+                                    const stockNum = Number(v.stock ?? 0)
+                                    const discount =
+                                      v.discountPercent != null
+                                        ? Number(v.discountPercent)
+                                        : mrpNum && mrpNum > priceNum
+                                        ? Math.round(((mrpNum - priceNum) / mrpNum) * 100)
+                                        : 0
+                                    const isOutOfStock = stockNum <= 0
+                                    const isLowStock = stockNum > 0 && stockNum <= 10
+
+                                    return (
+                                      <tr
+                                        key={v.id || v.sku || vIdx}
+                                        className={`transition-colors hover:bg-[#FFFBF3] ${
+                                          v.isDefault ? "bg-[#FFFBF3]/50 font-medium" : ""
+                                        }`}
+                                      >
+                                        <td className="px-3 py-2.5 text-center text-[#7A7A7A] font-mono">
+                                          {vIdx + 1}
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-semibold text-[#4A1D1F]">{v.name}</span>
+                                            {v.weight && v.weight !== v.name && (
+                                              <span className="rounded-sm bg-neutral-100 px-1.5 py-0.5 text-[10px] text-[#646464]">
+                                                {v.weight}
+                                              </span>
+                                            )}
+                                            {v.isDefault && (
+                                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                                <Check className="h-3 w-3" />
+                                                Default
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <code className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-[#2A1810]">
+                                            {v.sku}
+                                          </code>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-[#646464]">
+                                          {mrpNum != null && !isNaN(mrpNum) ? (
+                                            <span className={discount > 0 ? "line-through text-neutral-400" : ""}>
+                                              ₹{mrpNum.toFixed(2)}
+                                            </span>
+                                          ) : (
+                                            "—"
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <span className="font-bold text-[#7B3010] text-[13px]">
+                                            {!isNaN(priceNum) ? `₹${priceNum.toFixed(2)}` : "—"}
+                                          </span>
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          {discount > 0 ? (
+                                            <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                                              {discount}% OFF
+                                            </span>
+                                          ) : (
+                                            <span className="text-neutral-400 text-xs">—</span>
+                                          )}
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div className="flex items-center gap-1.5">
+                                            <span
+                                              className={`h-2 w-2 rounded-full ${
+                                                isOutOfStock
+                                                  ? "bg-red-500"
+                                                  : isLowStock
+                                                  ? "bg-amber-500"
+                                                  : "bg-emerald-500"
+                                              }`}
+                                            />
+                                            <span className="font-semibold">{stockNum}</span>
+                                            <span className="text-[10px] text-[#7A7A7A]">
+                                              {isOutOfStock ? "(Out)" : isLowStock ? "(Low)" : "units"}
+                                            </span>
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
+                                          {v.hsnCode || (v as any).hsn_code || "—"}
+                                        </td>
+                                        <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
+                                          {v.eanCode || (v as any).ean_code || "—"}
+                                        </td>
+                                        <td className="px-3 py-2.5 text-center">
+                                          {v.isDefault ? (
+                                            <span className="inline-block rounded-full bg-emerald-500 p-0.5 text-white" title="Default Variant">
+                                              <Check className="h-3 w-3" />
+                                            </span>
+                                          ) : (
+                                            <span className="text-neutral-300">—</span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </ConsoleTd>
+                      </tr>
+                    )}
+                  </Fragment>
+                )
+              })
             )}
           </ConsoleTable>
           {filteredRows.length > 0 ? (

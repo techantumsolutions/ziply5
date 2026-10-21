@@ -729,7 +729,7 @@ export const checkOrderServiceability = async (orderId: string, packageOverride?
   if (!deliveryPostcode) {
     shipmentConsole("serviceability.invalid_delivery_postcode", { orderId, address: order.customerAddress ?? null })
     shipmentLog("warn", "serviceability.skipped", { orderId, skippedReason: "invalid_address", reason: "delivery_postcode_missing" })
-    throw new Error("Non-serviceable pincode: delivery postcode missing")
+    throw new Error("This order is not serviceable please proceed with manual shipment")
   }
   const items = Array.isArray(order.items) ? (order.items as any[]) : []
   const weight = Math.round(
@@ -780,7 +780,7 @@ export const checkOrderServiceability = async (orderId: string, packageOverride?
       pickupPostcode,
       codRequired,
     })
-    throw new Error("Non-serviceable pincode")
+    throw new Error("This order is not serviceable please proceed with manual shipment")
   }
   shipmentLog("info", "serviceability.success", {
     orderId,
@@ -1610,7 +1610,7 @@ const getOrderSyncEligibility = async (orderId: string) => {
   })
 
   if (!["confirmed", "packed", "shipped"].includes(latest)) {
-    return { eligible: false as const, reason: "Order is not confirmed" }
+    return { eligible: false as const, reason: "Firstly accept order and check for serviceability" }
   }
   if (isShipmentFullySynced(order)) {
     return { eligible: false as const, reason: "shipment already exists" }
@@ -1649,11 +1649,6 @@ const getOrderSyncEligibility = async (orderId: string) => {
       validationPayload,
     }
   }
-  if (latest === "admin_approval_pending") {
-    return { eligible: false as const, reason: "admin approval pending" }
-  }
-  const accepted = ["confirmed", "packed", "shipped"].includes(latest)
-  if (!accepted) return { eligible: false as const, reason: "order not confirmed" }
   const prepaidPaid =
     order.txPaid === true ||
     ["SUCCESS", "PAID", "CAPTURED", "COMPLETED", "SUCCEEDED"].includes(payment)
@@ -1735,9 +1730,18 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
   shipmentLog("info", "sync.started", { orderId, actorId, generatePickup: options?.generatePickup !== false })
   const eligibility = await getOrderSyncEligibility(orderId)
   if (!eligibility.eligible) {
+    if (eligibility.reason === "Firstly accept order and check for serviceability") {
+      return {
+        status: "failed" as const,
+        orderId,
+        reason: "Firstly accept order and check for serviceability",
+        stage: "precheck",
+        syncTime: new Date().toISOString(),
+      }
+    }
     const panelRefresh =
       options?.panelSync === true &&
-      (eligibility.reason === "shipment already exists" || eligibility.reason === "Order is not confirmed")
+      eligibility.reason === "shipment already exists"
     if (panelRefresh) {
       const pulled = await pullShiprocketPanelStatus(orderId, actorId)
       if (pulled.shipmentStatus) {
@@ -1762,7 +1766,7 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
           : {},
     })
     return {
-      status: "skipped" as const,
+      status: "failed" as const,
       orderId,
       reason: eligibility.reason,
       skippedReason: resolveSkippedReason(eligibility.reason),
@@ -1792,9 +1796,58 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
     let awb: Awaited<ReturnType<typeof assignAwbForOrderShipment>> | null = null
     let pickup: Awaited<ReturnType<typeof generatePickupForOrderShipment>> | null = null
 
+    if (current.stage === "NO_SHIPMENT") {
+      try {
+        const serviceability = await checkOrderServiceability(orderId)
+        if (!serviceability?.response?.available_couriers?.length) {
+          return {
+            status: "failed" as const,
+            orderId,
+            reason: "This order is not serviceable please proceed with manual shipment",
+            isUnserviceable: true,
+            stage: "serviceability",
+            syncTime: new Date().toISOString(),
+          }
+        }
+      } catch (err) {
+        return {
+          status: "failed" as const,
+          orderId,
+          reason: "This order is not serviceable please proceed with manual shipment",
+          isUnserviceable: true,
+          stage: "serviceability",
+          error: err instanceof Error ? err.message : String(err),
+          syncTime: new Date().toISOString(),
+        }
+      }
+    }
+
     if (options?.panelSync) {
       if (current.stage === "NO_SHIPMENT") {
-        created = await runWithTransientRetry(() => createShiprocketShipmentForOrder(orderId, actorId, { panelDefaults: true }), 1)
+        try {
+          created = await runWithTransientRetry(() => createShiprocketShipmentForOrder(orderId, actorId, { panelDefaults: true }), 1)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown"
+          if (/not serviceable|manual shipment|non-serviceable|serviceability|pincode|courier|no courier|delivery postcode missing/i.test(message)) {
+            return {
+              status: "failed" as const,
+              orderId,
+              reason: "This order is not serviceable please proceed with manual shipment",
+              isUnserviceable: true,
+              stage: "create_shipment",
+              error: message,
+              syncTime: new Date().toISOString(),
+            }
+          }
+          return {
+            status: "failed" as const,
+            orderId,
+            reason: message,
+            stage: "create_shipment",
+            error: message,
+            syncTime: new Date().toISOString(),
+          }
+        }
       }
       const pulled = await pullShiprocketPanelStatus(orderId, actorId)
       return {
@@ -1828,8 +1881,25 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
             nextStage: "continue_from_existing_shipment",
             reason: "duplicate_shipment_detected",
           })
+        } else if (/not serviceable|manual shipment|non-serviceable|serviceability|pincode|courier|no courier|delivery postcode missing/i.test(message)) {
+          return {
+            status: "failed" as const,
+            orderId,
+            reason: "This order is not serviceable please proceed with manual shipment",
+            isUnserviceable: true,
+            stage: "create_shipment",
+            error: message,
+            syncTime: new Date().toISOString(),
+          }
         } else {
-          throw error
+          return {
+            status: "failed" as const,
+            orderId,
+            reason: message,
+            stage: "create_shipment",
+            error: message,
+            syncTime: new Date().toISOString(),
+          }
         }
       }
       current = await fetchLatestSyncState(orderId)

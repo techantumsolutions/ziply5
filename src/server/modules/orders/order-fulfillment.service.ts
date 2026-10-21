@@ -162,6 +162,39 @@ export const createManualShipment = async (input: {
 export const setManualOrderStatus = async (orderId: string, orderStatus: string, actorId: string) => {
   const normalizedStatus = orderStatus.toLowerCase() === "new" ? "pending" : orderStatus.toLowerCase()
 
+  const existing = await getOrderByIdSupabaseBasic(orderId)
+  if (!existing) throw new Error("Order not found")
+  const fromStatus = (existing.status ?? "pending").toLowerCase()
+
+  const ORDER_STATUS_PROGRESSION: Record<string, number> = {
+    pending: 0,
+    new: 0,
+    pending_payment: 0,
+    payment_success: 0,
+    admin_approval_pending: 0,
+    approval_pending: 0,
+    confirmed: 1,
+    packed: 2,
+    shipped: 3,
+    in_transit: 4,
+    out_for_delivery: 5,
+    delivered: 6,
+    completed: 6,
+  }
+
+  const currentRank = ORDER_STATUS_PROGRESSION[fromStatus] ?? 0
+  const nextRank = ORDER_STATUS_PROGRESSION[normalizedStatus]
+
+  if (fromStatus === "cancelled" || fromStatus === "rejected") {
+    throw new Error(`Cannot change status of a ${fromStatus} order`)
+  }
+  if (normalizedStatus !== "cancelled" && normalizedStatus !== "returned" && nextRank !== undefined && nextRank < currentRank) {
+    throw new Error(`Order status cannot go backward. Current status: "${fromStatus}", attempted: "${normalizedStatus}".`)
+  }
+  if (normalizedStatus === "cancelled" && currentRank >= (ORDER_STATUS_PROGRESSION["shipped"] ?? 3)) {
+    throw new Error("Cannot cancel an order that has already shipped or delivered")
+  }
+
   // Update order status directly in orders service with force: true so any valid admin transition is permitted
   await updateOrderStatus(orderId, normalizedStatus as any, actorId, {
     reasonCode: "admin_manual_update",

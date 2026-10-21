@@ -1,13 +1,24 @@
 import type { ReactNode } from "react"
 
-export function ConsoleTable({ headers, children }: { headers: string[]; children: ReactNode }) {
+export function ConsoleTable({
+  headers,
+  children,
+  headerClassNames,
+}: {
+  headers: string[]
+  children: ReactNode
+  headerClassNames?: Record<number, string>
+}) {
   return (
     <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
       <table className="w-full min-w-[560px] text-left text-sm">
         <thead className="bg-[#4A1D1F] text-[11px] font-semibold uppercase tracking-wide text-[#F5F1E6]">
           <tr>
             {headers.map((h, idx) => (
-              <th key={`${h || "col"}-${idx}`} className="px-3 py-2.5 md:px-4">
+              <th
+                key={`${h || "col"}-${idx}`}
+                className={`px-3 py-2.5 md:px-4 ${headerClassNames?.[idx] ?? ""}`}
+              >
                 {h}
               </th>
             ))}
