@@ -13,6 +13,7 @@ const contentTypeForExt = (ext: string) => {
     ".svg": "image/svg+xml",
     ".mp4": "video/mp4",
     ".webm": "video/webm",
+    ".pdf": "application/pdf",
   }
   return map[ext.toLowerCase()] ?? "application/octet-stream"
 }

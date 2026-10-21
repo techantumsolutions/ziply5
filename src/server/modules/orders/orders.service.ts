@@ -993,7 +993,7 @@ export const getOrderById = async (id: string) => {
     ...order,
     paymentStatus: deriveEffectivePaymentStatus(order as any),
   }
-  const shipments = await listOrderShipmentsSupabase(String(hydrated.id)).catch(() => [])
+  const shipments = ((await listOrderShipmentsSupabase(String(hydrated.id)).catch(() => [])) || []) as Array<Record<string, any>>
   const activeShipment = shipments.find((shipment) => {
     const status = String(shipment.shipmentStatus ?? shipment.shipment_status ?? "").toLowerCase()
     return status !== "cancelled" && !shipment.cancelledAt && !shipment.cancelled_at
@@ -1004,6 +1004,7 @@ export const getOrderById = async (id: string) => {
     awbCode: (hydrated as { awbCode?: string | null }).awbCode || activeShipment?.awbCode || activeShipment?.trackingNo || null,
     trackingNumber: (hydrated as { trackingNumber?: string | null }).trackingNumber || activeShipment?.trackingNumber || activeShipment?.trackingNo || null,
     trackingUrl: (hydrated as { trackingUrl?: string | null }).trackingUrl || activeShipment?.trackingUrl || null,
+    labelUrl: (hydrated as { labelUrl?: string | null }).labelUrl || activeShipment?.labelUrl || (activeShipment as any)?.label_url || null,
     shipmentStatus: (hydrated as { shipmentStatus?: string | null }).shipmentStatus || activeShipment?.shipmentStatus || null,
     pickupStatus: (hydrated as { pickupStatus?: string | null }).pickupStatus || activeShipment?.pickupStatus || null,
     estimatedDeliveryDate: (hydrated as { estimatedDeliveryDate?: string | null }).estimatedDeliveryDate || activeShipment?.estimatedDeliveryDate || null,
@@ -1012,7 +1013,7 @@ export const getOrderById = async (id: string) => {
   const codMethod = String((hydrated as { paymentMethod?: string | null }).paymentMethod ?? "").toLowerCase()
   const codPaid = String((hydrated as { paymentStatus?: string | null }).paymentStatus ?? "").toUpperCase() === "SUCCESS"
   const codLifecycle = latestLifecycleStatus(hydrated as { status?: string | null; statusHistory?: Array<{ toStatus?: string | null }> })
-  if (codMethod === "cod" && !codPaid && codLifecycle !== "cancelled" && codLifecycle !== "rejected") {
+  if (codMethod === "cod" && !codPaid && codLifecycle !== "cancelled" && (codLifecycle as string) !== "rejected") {
     const { ensureCodPaymentLink } = await import("@/src/server/modules/payments/cod-payment-link.service")
     const link = await ensureCodPaymentLink(String(hydrated.id)).catch(() => null)
     if (link && "url" in link) {

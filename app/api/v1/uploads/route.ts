@@ -46,9 +46,10 @@ export async function POST(request: NextRequest) {
       if (!file.name) continue
       const bytes = new Uint8Array(await file.arrayBuffer())
       
-      // Determine if we should use raw upload (favicons OR videos)
+      // Determine if we should use raw upload (favicons, videos, PDFs, documents, or orders folder)
       const isVideo = file.type.startsWith("video/")
-      const useRaw = useRawFaviconUpload || isVideo
+      const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+      const useRaw = useRawFaviconUpload || isVideo || isPdf || folder.startsWith("orders/") || file.type.startsWith("application/")
       
       if (useRaw) {
         const saved = await storageService.saveRawUpload({
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
         uploaded.push({
           name: file.name,
           size: file.size,
-          type: file.type,
+          type: file.type || (isPdf ? "application/pdf" : "application/octet-stream"),
           relativePath: saved.relativePath,
           url,
           variants: { original: url, medium: url, thumbnail: url },

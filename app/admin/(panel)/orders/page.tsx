@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch";
 import { useRealtimeTables } from "@/hooks/useRealtimeTables";
-import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search } from "lucide-react";
+import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search, FileText } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from "@/src/lib/datetime";
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status";
@@ -17,6 +17,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+
+const STORAGE_KEY_SERVICEABLE = "ziply5_admin_serviceable_order_ids";
+const STORAGE_KEY_UNSERVICEABLE = "ziply5_admin_unserviceable_order_ids";
+
+const parseRawResponse = (raw: unknown): Record<string, any> | null => {
+  if (!raw) return null;
+  if (typeof raw === "object") return raw as Record<string, any>;
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
 
 type OrderRow = {
   id: string;
@@ -39,6 +61,7 @@ type OrderRow = {
   trackingUrl?: string | null;
   labelUrl?: string | null;
   shipmentId?: string | null;
+  shiprocketOrderId?: string | null;
   shipmentStatus?: string | null;
   shipmentNo?: string | null;
   shippingMethod?: string | null;
@@ -49,6 +72,17 @@ type OrderRow = {
   fulfillment?: { fulfillmentStatus: string; deliveredAt?: string | null; shippedAt?: string | null } | null;
   statusHistory?: Array<{ toStatus: string; reasonCode?: string | null; notes?: string | null; changedAt: string }>;
   user?: { id: string; name: string; email: string };
+  shiprocketRawResponse?: {
+    serviceability?: {
+      isServiceable?: boolean;
+      serviceable?: boolean;
+      availableCouriers?: number;
+      courierCount?: number;
+      checkedAt?: string;
+      reason?: string;
+    } | null;
+    [key: string]: unknown;
+  } | null;
 };
 
 const ADMIN_ORDER_STATUS_OPTIONS = [
@@ -95,9 +129,115 @@ export default function AdminOrdersPage() {
   const [copiedTxId, setCopiedTxId] = useState<string | null>(null);
   const [rejectModalOrderId, setRejectModalOrderId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [serviceableIds, setServiceableIds] = useState<Record<string, true>>({});
-  const [unserviceableIds, setUnserviceableIds] = useState<Record<string, true>>({});
-  const [manualModal, setManualModal] = useState<{ orderId: string; courier: string; trackingId: string; trackingUrl: string } | null>(null);
+  const [serviceableIds, setServiceableIds] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_SERVICEABLE);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [unserviceableIds, setUnserviceableIds] = useState<Record<string, boolean>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_UNSERVICEABLE);
+      return stored ? JSON.parse(stored) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  useEffect(() => {
+    try {
+      const storedS = localStorage.getItem(STORAGE_KEY_SERVICEABLE);
+      if (storedS) {
+        const parsed = JSON.parse(storedS);
+        if (parsed && typeof parsed === "object") setServiceableIds((prev) => ({ ...prev, ...parsed }));
+      }
+      const storedU = localStorage.getItem(STORAGE_KEY_UNSERVICEABLE);
+      if (storedU) {
+        const parsed = JSON.parse(storedU);
+        if (parsed && typeof parsed === "object") setUnserviceableIds((prev) => ({ ...prev, ...parsed }));
+      }
+    } catch {}
+  }, []);
+
+  const isOrderServiceable = useCallback((o: OrderRow) => {
+    if (serviceableIds[o.id]) return true;
+    const raw = parseRawResponse(o.shiprocketRawResponse ?? (o as any).shiprocket_raw_response);
+    const s = raw?.serviceability ?? raw?.response?.serviceability ?? raw?.data?.serviceability;
+    if (s) {
+      if (s.isServiceable === true || s.serviceable === true || (Array.isArray(s.availableCouriers) && s.availableCouriers.length > 0) || (typeof s.availableCouriers === "number" && s.availableCouriers > 0) || (typeof s.courierCount === "number" && s.courierCount > 0)) {
+        return true;
+      }
+    }
+    if (raw?.isServiceable === true || raw?.serviceable === true) return true;
+    return false;
+  }, [serviceableIds]);
+
+  const isOrderUnserviceable = useCallback((o: OrderRow) => {
+    if (unserviceableIds[o.id]) return true;
+    if (rowActionError[o.id] && /not serviceable|manual shipment|non-serviceable/i.test(rowActionError[o.id])) return true;
+    if (o.statusHistory?.some((h) => /not serviceable|manual shipment|non-serviceable/i.test(h.notes || h.reasonCode || ""))) return true;
+    const raw = parseRawResponse(o.shiprocketRawResponse ?? (o as any).shiprocket_raw_response);
+    const s = raw?.serviceability ?? raw?.response?.serviceability ?? raw?.data?.serviceability;
+    if (s) {
+      if (s.isServiceable === false || s.serviceable === false || (Array.isArray(s.availableCouriers) && s.availableCouriers.length === 0) || s.availableCouriers === 0 || s.courierCount === 0) {
+        return true;
+      }
+    }
+    if (raw?.isServiceable === false || raw?.serviceable === false) return true;
+    return false;
+  }, [unserviceableIds, rowActionError]);
+  const [manualModal, setManualModal] = useState<{
+    orderId: string;
+    courier: string;
+    trackingId: string;
+    trackingUrl: string;
+    slipUrl?: string;
+    slipName?: string;
+  } | null>(null);
+  const [uploadingSlip, setUploadingSlip] = useState(false);
+
+  const handleSlipUpload = async (file: File) => {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error("File too large", "File size must be 2MB or less.");
+      return;
+    }
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+    const isImage = file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(file.name);
+    if (!isPdf && !isImage) {
+      toast.error("Invalid file format", "Only image files (JPG, PNG, WEBP) and PDF are allowed.");
+      return;
+    }
+
+    setUploadingSlip(true);
+    try {
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("ziply5_access_token") : null;
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("folder", "orders/manual-shipments");
+      const res = await fetch("/api/v1/uploads", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || "Failed to upload shipment slip");
+      }
+      const url = data.data?.files?.[0]?.url;
+      if (!url) throw new Error("No URL returned from upload");
+      setManualModal((prev) => (prev ? { ...prev, slipUrl: url, slipName: file.name } : null));
+      toast.success("Shipment slip uploaded");
+    } catch (err) {
+      toast.error("Upload failed", err instanceof Error ? err.message : "Failed to upload shipment slip");
+    } finally {
+      setUploadingSlip(false);
+    }
+  };
   const [courierModal, setCourierModal] = useState<{
     orderId: string;
     packageWeightKg: number | null;
@@ -506,7 +646,41 @@ export default function AdminOrdersPage() {
     setLoading(true);
     setError("");
     authedFetch<{ items: OrderRow[] }>("/api/v1/orders?page=1&limit=1000")
-      .then((d) => setRows(d.items))
+      .then((d) => {
+        setRows(d.items);
+        const newServiceable: Record<string, boolean> = {};
+        const newUnserviceable: Record<string, boolean> = {};
+        for (const item of d.items) {
+          const raw = parseRawResponse(item.shiprocketRawResponse ?? (item as any).shiprocket_raw_response);
+          const s = raw?.serviceability ?? raw?.response?.serviceability ?? raw?.data?.serviceability;
+          if (s) {
+            if (s.isServiceable === true || s.serviceable === true || (Array.isArray(s.availableCouriers) && s.availableCouriers.length > 0) || (typeof s.availableCouriers === "number" && s.availableCouriers > 0) || (typeof s.courierCount === "number" && s.courierCount > 0)) {
+              newServiceable[item.id] = true;
+            } else if (s.isServiceable === false || s.serviceable === false || (Array.isArray(s.availableCouriers) && s.availableCouriers.length === 0) || s.availableCouriers === 0 || s.courierCount === 0) {
+              newUnserviceable[item.id] = true;
+            }
+          }
+          if (raw?.isServiceable === true || raw?.serviceable === true) {
+            newServiceable[item.id] = true;
+          } else if (raw?.isServiceable === false || raw?.serviceable === false) {
+            newUnserviceable[item.id] = true;
+          }
+        }
+        if (Object.keys(newServiceable).length > 0) {
+          setServiceableIds((prev) => {
+            const merged = { ...prev, ...newServiceable };
+            try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+        if (Object.keys(newUnserviceable).length > 0) {
+          setUnserviceableIds((prev) => {
+            const merged = { ...prev, ...newUnserviceable };
+            try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(merged)); } catch {}
+            return merged;
+          });
+        }
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
   }, [canFetch]);
@@ -570,7 +744,17 @@ export default function AdminOrdersPage() {
           if (res.status === "failed") {
             const reason = res.reason ?? "";
             if (/not serviceable|manual shipment|non-serviceable/i.test(reason) || res.isUnserviceable) {
-              setUnserviceableIds((prev) => ({ ...prev, [res.orderId]: true }));
+              setUnserviceableIds((prev) => {
+                const next = { ...prev, [res.orderId]: true };
+                try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)); } catch {}
+                return next;
+              });
+              setServiceableIds((prev) => {
+                const next = { ...prev };
+                delete next[res.orderId];
+                try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
+                return next;
+              });
               setRowActionError((prev) => ({ ...prev, [res.orderId]: "This order is not serviceable please proceed with manual shipment" }));
             } else if (/firstly accept|not accepted|not confirmed|approval/i.test(reason)) {
               setRowActionError((prev) => ({ ...prev, [res.orderId]: "Firstly accept order and check for serviceability" }));
@@ -658,21 +842,57 @@ export default function AdminOrdersPage() {
         const data = await authedPost<{ availableCouriers?: unknown[] }>(`/api/v1/orders/${orderId}/shiprocket`, { action: "serviceability" });
         const count = data.availableCouriers?.length ?? 0;
         if (count > 0) {
-          setServiceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setServiceableIds((prev) => {
+            const next = { ...prev, [orderId]: true };
+            try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
+            return next;
+          });
           setUnserviceableIds((prev) => {
             const next = { ...prev };
             delete next[orderId];
+            try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)); } catch {}
             return next;
           });
+          setRows((prev) =>
+            prev.map((r) =>
+              r.id === orderId
+                ? {
+                    ...r,
+                    shiprocketRawResponse: {
+                      ...(typeof r.shiprocketRawResponse === "object" && r.shiprocketRawResponse ? r.shiprocketRawResponse : {}),
+                      serviceability: { isServiceable: true, serviceable: true, courierCount: count },
+                    },
+                  }
+                : r
+            )
+          );
           setUnserviceable(null);
           toast.success("Serviceable", `${count} courier${count === 1 ? "" : "s"} can deliver this order.`);
         } else {
           setServiceableIds((prev) => {
             const next = { ...prev };
             delete next[orderId];
+            try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
             return next;
           });
-          setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setUnserviceableIds((prev) => {
+            const next = { ...prev, [orderId]: true };
+            try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)); } catch {}
+            return next;
+          });
+          setRows((prev) =>
+            prev.map((r) =>
+              r.id === orderId
+                ? {
+                    ...r,
+                    shiprocketRawResponse: {
+                      ...(typeof r.shiprocketRawResponse === "object" && r.shiprocketRawResponse ? r.shiprocketRawResponse : {}),
+                      serviceability: { isServiceable: false, serviceable: false, courierCount: 0 },
+                    },
+                  }
+                : r
+            )
+          );
           const userMsg = "This order is not serviceable please proceed with manual shipment";
           setUnserviceable({ orderId, reason: userMsg });
           setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
@@ -682,9 +902,27 @@ export default function AdminOrdersPage() {
         setServiceableIds((prev) => {
           const next = { ...prev };
           delete next[orderId];
+          try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
           return next;
         });
-        setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+        setUnserviceableIds((prev) => {
+          const next = { ...prev, [orderId]: true };
+          try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)); } catch {}
+          return next;
+        });
+        setRows((prev) =>
+          prev.map((r) =>
+            r.id === orderId
+              ? {
+                  ...r,
+                  shiprocketRawResponse: {
+                    ...(typeof r.shiprocketRawResponse === "object" && r.shiprocketRawResponse ? r.shiprocketRawResponse : {}),
+                    serviceability: { isServiceable: false, serviceable: false, courierCount: 0 },
+                  },
+                }
+              : r
+          )
+        );
         const userMsg = "This order is not serviceable please proceed with manual shipment";
         setUnserviceable({ orderId, reason: userMsg });
         setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
@@ -824,6 +1062,12 @@ export default function AdminOrdersPage() {
     runRow(orderId, "sync", async () => {
       try {
         await authedPost(`/api/v1/orders/${orderId}/shiprocket`, { action: "sync_order", panelSync: true, generatePickup: false });
+        setServiceableIds((prev) => {
+          const next = { ...prev };
+          delete next[orderId];
+          try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
+          return next;
+        });
         toast.success("Synced from Shiprocket", "Order status and shipment status now match Shiprocket. Finish AWB, pickup, and label in the Shiprocket panel, then sync again.");
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Sync failed";
@@ -834,7 +1078,17 @@ export default function AdminOrdersPage() {
           throw new Error(userMsg);
         } else if (/not serviceable|manual shipment|non-serviceable/i.test(msg)) {
           const userMsg = "This order is not serviceable please proceed with manual shipment";
-          setUnserviceableIds((prev) => ({ ...prev, [orderId]: true }));
+          setServiceableIds((prev) => {
+            const next = { ...prev };
+            delete next[orderId];
+            try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)); } catch {}
+            return next;
+          });
+          setUnserviceableIds((prev) => {
+            const next = { ...prev, [orderId]: true };
+            try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)); } catch {}
+            return next;
+          });
           setRowActionError((prev) => ({ ...prev, [orderId]: userMsg }));
           setUnserviceable({ orderId, reason: userMsg });
           toast.error("Not serviceable", userMsg);
@@ -852,6 +1106,7 @@ export default function AdminOrdersPage() {
     const courier = manualModal.courier.trim();
     const trackingId = manualModal.trackingId.trim();
     const trackingUrl = manualModal.trackingUrl.trim();
+    const slipUrl = manualModal.slipUrl?.trim() || undefined;
     if (!courier || !trackingId) {
       toast.error("Manual shipment", "Courier name and tracking id are required.");
       return;
@@ -863,6 +1118,7 @@ export default function AdminOrdersPage() {
         courierName: courier,
         trackingId,
         trackingUrl,
+        slipUrl,
       });
       setManualModal(null);
       setUnserviceable(null);
@@ -928,7 +1184,8 @@ export default function AdminOrdersPage() {
   };
 
   return (
-    <section className="w-full space-y-5">
+    <TooltipProvider delayDuration={150}>
+      <section className="w-full space-y-5">
       <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -1232,14 +1489,22 @@ export default function AdminOrdersPage() {
                     <td className="px-2 py-2 text-center font-medium">{itemsCount(o)}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/admin/orders/${o.id}`)}
-                          title="View Order Details"
-                          className="inline-flex items-center justify-center rounded-full border border-[#7B3010] bg-[#FFF7EA] p-1.5 text-[#7B3010] shadow-sm hover:bg-[#7B3010] hover:text-white transition cursor-pointer"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => router.push(`/admin/orders/${o.id}`)}
+                              title="View Order Details"
+                              aria-label="View Order Details"
+                              className="inline-flex items-center justify-center rounded-full border border-[#7B3010] bg-[#FFF7EA] p-1.5 text-[#7B3010] shadow-sm hover:bg-[#7B3010] hover:text-white transition cursor-pointer"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p className="text-xs font-semibold">View Order Details</p>
+                          </TooltipContent>
+                        </Tooltip>
                         {(() => {
                           const shipCancelled = latestShipmentStatus(o) === "cancelled";
                           const lc = lifecycleStatus(o);
@@ -1249,22 +1514,23 @@ export default function AdminOrdersPage() {
                           }
 
                           // 1. Flow stage: ACCEPT (order not yet accepted by admin)
-                          if (lc === "admin_approval_pending" || ["pending", "new"].includes(lc)) {
+                          const isNewOrder = ["pending", "pending_payment", "payment_success", "admin_approval_pending", "new"].includes(lc);
+                          if (isNewOrder) {
                             return (
-                              <div className="inline-flex items-center gap-1">
+                              <div className="inline-flex items-center gap-1.5 justify-end">
                                 <button
                                   type="button"
                                   disabled={Boolean(rowActionBusy[o.id])}
                                   onClick={() => void handleApprovalAction(o.id, "approve_order")}
                                   title="Accept Order"
-                                  className="inline-flex items-center gap-1 rounded-full bg-[#2DA66D] px-2.5 py-1 text-[10px] font-bold uppercase text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
+                                  aria-label="Accept Order"
+                                  className="h-7 w-7 inline-flex items-center justify-center rounded-full bg-[#2DA66D] text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer shrink-0"
                                 >
                                   {rowActionBusy[o.id] === "approve_order" ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                   ) : (
-                                    <Check className="h-3 w-3" />
+                                    <Check className="h-3.5 w-3.5" />
                                   )}
-                                  <span>Accept</span>
                                 </button>
                                 <button
                                   type="button"
@@ -1274,14 +1540,14 @@ export default function AdminOrdersPage() {
                                     setRejectReason("");
                                   }}
                                   title="Reject Order"
-                                  className="inline-flex items-center gap-1 rounded-full bg-[#A32A2A] px-2 py-1 text-[10px] font-bold uppercase text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
+                                  aria-label="Reject Order"
+                                  className="h-7 w-7 inline-flex items-center justify-center rounded-full bg-[#A32A2A] text-white shadow-sm hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer shrink-0"
                                 >
                                   {rowActionBusy[o.id] === "reject_order" ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                                   ) : (
-                                    <X className="h-3 w-3" />
+                                    <X className="h-3.5 w-3.5" />
                                   )}
-                                  <span>Reject</span>
                                 </button>
                               </div>
                             );
@@ -1314,15 +1580,13 @@ export default function AdminOrdersPage() {
                           }
 
                           // If unserviceable -> MANUAL SHIPMENT button
-                          const isUnserviceable = Boolean(unserviceableIds[o.id]) ||
-                            Boolean(rowActionError[o.id] && /not serviceable|manual shipment|non-serviceable/i.test(rowActionError[o.id])) ||
-                            Boolean(o.statusHistory?.some((h) => /not serviceable|manual shipment|non-serviceable/i.test(h.notes || h.reasonCode || "")));
-                          if (isUnserviceable) {
+                          if (isOrderUnserviceable(o)) {
                             return (
                               <button
                                 type="button"
                                 disabled={Boolean(rowActionBusy[o.id])}
-                                onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "" })}
+                                onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "", slipUrl: "", slipName: "" })}
+                                title="Order is not serviceable via Shiprocket. Proceed with manual shipment."
                                 className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
                               >
                                 Manual shipment
@@ -1331,15 +1595,26 @@ export default function AdminOrdersPage() {
                           }
 
                           // 3. Flow stage: SYNC (serviceable verified, ready to sync to Shiprocket)
-                          if (Boolean(serviceableIds[o.id])) {
+                          if (isOrderServiceable(o)) {
                             return (
                               <button
                                 type="button"
                                 disabled={Boolean(rowActionBusy[o.id])}
                                 onClick={() => void syncFromShiprocket(o.id)}
-                                className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition"
+                                title="Sync order to Shiprocket"
+                                className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition inline-flex items-center gap-1 shadow-sm"
                               >
-                                {rowActionBusy[o.id] === "sync" ? "Syncing..." : "Sync"}
+                                {rowActionBusy[o.id] === "sync" ? (
+                                  <>
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span>Syncing...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <RefreshCw className="h-3 w-3" />
+                                    <span>Sync now</span>
+                                  </>
+                                )}
                               </button>
                             );
                           }
@@ -1351,9 +1626,17 @@ export default function AdminOrdersPage() {
                                 type="button"
                                 disabled={Boolean(rowActionBusy[o.id])}
                                 onClick={() => void checkServiceability(o.id)}
+                                title="Check courier serviceability with Shiprocket"
                                 className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
                               >
-                                {rowActionBusy[o.id] === "serviceability" ? "Checking..." : "Check serviceability"}
+                                {rowActionBusy[o.id] === "serviceability" ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <span>Checking...</span>
+                                  </span>
+                                ) : (
+                                  "Check serviceability"
+                                )}
                               </button>
                             );
                           }
@@ -1388,7 +1671,7 @@ export default function AdminOrdersPage() {
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setUnserviceable(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Close</button>
               <button type="button" onClick={() => { const id = unserviceable.orderId; setUnserviceable(null); void checkServiceability(id); }} className="cursor-pointer rounded-full border border-[#7B3010] px-4 py-2 text-xs font-semibold text-[#7B3010]">Recheck</button>
-              <button type="button" onClick={() => { setManualModal({ orderId: unserviceable.orderId, courier: "", trackingId: "", trackingUrl: "" }); setUnserviceable(null); }} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white">Manual shipment</button>
+              <button type="button" onClick={() => { setManualModal({ orderId: unserviceable.orderId, courier: "", trackingId: "", trackingUrl: "", slipUrl: "", slipName: "" }); setUnserviceable(null); }} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white">Manual shipment</button>
             </div>
           </div>
         </div>
@@ -1410,9 +1693,66 @@ export default function AdminOrdersPage() {
               Tracking URL
               <input value={manualModal.trackingUrl} onChange={(e) => setManualModal({ ...manualModal, trackingUrl: e.target.value })} className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm" />
             </label>
+            <div>
+              <label className="block text-xs font-semibold text-[#4A1D1F] mb-1">
+                Upload Shipment Slip
+              </label>
+              {manualModal.slipUrl ? (
+                <div className="flex items-center justify-between rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <FileText className="h-4 w-4 shrink-0 text-[#7B3010]" />
+                    <a
+                      href={manualModal.slipUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="truncate text-xs font-medium text-[#7B3010] hover:underline"
+                    >
+                      {manualModal.slipName || "View uploaded slip"}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setManualModal({ ...manualModal, slipUrl: "", slipName: "" })}
+                    className="ml-2 text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="flex items-center justify-between rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 text-xs hover:border-[#7B3010] transition-colors cursor-pointer">
+                    <div className="flex items-center gap-2.5">
+                      <span className="rounded-full bg-[#7B3010] px-3 py-1 font-semibold text-white shadow-xs">
+                        Choose file
+                      </span>
+                      <span className="text-[#787878] text-[11px]">
+                        Image (JPG, PNG) or PDF • Max 2MB
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf,.pdf"
+                    disabled={uploadingSlip}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) void handleSlipUpload(file);
+                      e.target.value = "";
+                    }}
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                  {uploadingSlip && (
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-[#7B3010]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Uploading shipment slip...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setManualModal(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Cancel</button>
-              <button type="button" disabled={Boolean(rowActionBusy[manualModal.orderId])} onClick={saveManualShipment} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+              <button type="button" disabled={Boolean(rowActionBusy[manualModal.orderId]) || uploadingSlip} onClick={saveManualShipment} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
                 {rowActionBusy[manualModal.orderId] === "manual" ? "Saving..." : "Save shipment"}
               </button>
             </div>
@@ -1572,5 +1912,6 @@ export default function AdminOrdersPage() {
         </div>
       )}
     </section>
+    </TooltipProvider>
   );
 }

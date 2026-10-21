@@ -1,16 +1,32 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { AlertTriangle, Ban, Check, Download, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
+import { AlertTriangle, Ban, Check, Download, ExternalLink, FileText, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, XCircle } from "lucide-react"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
 import { orderStatusLabel } from "@/src/lib/orders/manual-order-status"
 import { toast } from "@/lib/toast"
+
+const STORAGE_KEY_SERVICEABLE = "ziply5_admin_serviceable_order_ids"
+const STORAGE_KEY_UNSERVICEABLE = "ziply5_admin_unserviceable_order_ids"
+
+const parseRawResponse = (raw: unknown): Record<string, any> | null => {
+  if (!raw) return null
+  if (typeof raw === "object") return raw as Record<string, any>
+  if (typeof raw === "string") {
+    try {
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  }
+  return null
+}
 
 const ADMIN_ORDER_STATUS_OPTIONS = [
   "pending",
@@ -137,7 +153,7 @@ type OrderDetail = {
   statusHistory?: Array<{ toStatus: string; changedAt: string; notes?: string | null; reasonCode?: string | null; changedById?: string | null }>
   notes?: Array<{ id: string; note: string; isInternal: boolean; createdAt: string }>
   user?: { id: string; name: string; email: string }
-  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null; courierName?: string | null; shipmentNo?: string | null; cancelledAt?: string | null }>
+  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null; courierName?: string | null; shipmentNo?: string | null; cancelledAt?: string | null; labelUrl?: string | null }>
   awbCode?: string | null
   courierName?: string | null
   trackingNumber?: string | null
@@ -147,6 +163,8 @@ type OrderDetail = {
   isPickupGenerated?: boolean | null
   estimatedDeliveryDate?: string | null
   lastTrackingSyncAt?: string | null
+  labelUrl?: string | null
+  shiprocketRawResponse?: any
   returnRequests?: Array<{ id: string; status: string; reason: string | null }>
   refunds?: Array<{ id: string; status: string; amount: string | number }>
   paymentStatus?: string | null
@@ -207,14 +225,121 @@ export default function AdminOrderDetailPage() {
     ["shipped", "in_transit", "out_for_delivery", "dispatched", "delivered", "completed"].includes(shipmentState)
   const isOrderAccepted = ["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered", "completed"].includes(lifecycleStatus.toLowerCase())
 
-  const [manualModal, setManualModal] = useState<{ courier: string; trackingId: string; trackingUrl: string } | null>(null)
+  const [serviceableIds, setServiceableIds] = useState<Record<string, boolean>>({})
+  const [unserviceableIds, setUnserviceableIds] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    try {
+      const storedS = localStorage.getItem(STORAGE_KEY_SERVICEABLE)
+      if (storedS) {
+        const parsed = JSON.parse(storedS)
+        if (parsed && typeof parsed === "object") setServiceableIds(parsed)
+      }
+      const storedU = localStorage.getItem(STORAGE_KEY_UNSERVICEABLE)
+      if (storedU) {
+        const parsed = JSON.parse(storedU)
+        if (parsed && typeof parsed === "object") setUnserviceableIds(parsed)
+      }
+    } catch {}
+  }, [])
+
+  const isUnserviceable = useMemo(() => {
+    if (!order?.id) return false
+    if ((order as any)?.shippingMethod === "manual" || (order as any)?.shipping_method === "manual") return true
+    if (unserviceableIds[order.id]) return true
+    if (serviceable === false && Boolean(serviceabilitySummary)) return true
+    if (/not serviceable|manual shipment|non-serviceable/i.test(serviceabilitySummary)) return true
+    if (order.statusHistory?.some((h) => /not serviceable|manual shipment|non-serviceable/i.test(h.notes || h.reasonCode || ""))) return true
+    const raw = parseRawResponse((order as any).shiprocketRawResponse || (order as any).shiprocket_raw_response)
+    if (raw?.serviceability && (raw.serviceability.isServiceable === false || raw.serviceability.serviceable === false)) {
+      return true
+    }
+    return false
+  }, [order, unserviceableIds, serviceable, serviceabilitySummary])
+
+  const activeShipment = useMemo(
+    () => (order?.shipments ?? []).find((shipment) => String(shipment.shipmentStatus ?? "").toLowerCase() !== "cancelled" && !shipment.cancelledAt) ?? null,
+    [order?.shipments]
+  )
+  const courier = order?.courierName || activeShipment?.courierName || activeShipment?.carrier || null
+  const trackingNumber = order?.awbCode || order?.trackingNumber || activeShipment?.awbCode || activeShipment?.trackingNo || null
+  const trackingUrl = order?.trackingUrl || activeShipment?.trackingUrl || null
+  const pickupStatusText = order?.pickupStatus || activeShipment?.pickupStatus || activeShipment?.shipmentStatus || order?.shipmentStatus || ""
+
+  const isShippedOrBeyond = useMemo(() => {
+    const s1 = String(lifecycleStatus || "").toLowerCase()
+    const s2 = String(shipmentState || "").toLowerCase()
+    const targets = ["shipped", "in_transit", "out_for_delivery", "delivered"]
+    return targets.includes(s1) || targets.includes(s2)
+  }, [lifecycleStatus, shipmentState])
+
+  const isManualShipmentDone = useMemo(() => {
+    const hasDetails = Boolean(courier && trackingNumber)
+    const isManualMethod = (order as any)?.shippingMethod === "manual" || (order as any)?.shipping_method === "manual"
+    return hasDetails || isManualMethod || (isUnserviceable && Boolean(courier || trackingNumber || isShippedOrBeyond))
+  }, [courier, trackingNumber, order, isUnserviceable, isShippedOrBeyond])
+
+  const pickupDone = Boolean(
+    (order?.isPickupGenerated && isConfirmedPickupRequest(pickupStatusText)) ||
+    isShippedOrBeyond ||
+    (courier && trackingNumber)
+  )
+
+  const [manualModal, setManualModal] = useState<{
+    courier: string
+    trackingId: string
+    trackingUrl: string
+    slipUrl?: string
+    slipName?: string
+  } | null>(null)
+  const [uploadingSlip, setUploadingSlip] = useState(false)
   const [savingManual, setSavingManual] = useState(false)
+
+  const handleSlipUpload = async (file: File) => {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error("File too large", "File size must be 2MB or less.")
+      return
+    }
+    const isPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")
+    const isImage = file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(file.name)
+    if (!isPdf && !isImage) {
+      toast.error("Invalid file format", "Only image files (JPG, PNG, WEBP) and PDF are allowed.")
+      return
+    }
+
+    setUploadingSlip(true)
+    try {
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("ziply5_access_token") : null
+      const formData = new FormData()
+      formData.append("file", file)
+      formData.append("folder", "orders/manual-shipments")
+      const res = await fetch("/api/v1/uploads", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      })
+      const data = await res.json()
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || "Failed to upload shipment slip")
+      }
+      const url = data.data?.files?.[0]?.url
+      if (!url) throw new Error("No URL returned from upload")
+      setManualModal((prev) => (prev ? { ...prev, slipUrl: url, slipName: file.name } : null))
+      toast.success("Shipment slip uploaded")
+    } catch (err) {
+      toast.error("Upload failed", err instanceof Error ? err.message : "Failed to upload shipment slip")
+    } finally {
+      setUploadingSlip(false)
+    }
+  }
 
   const saveManualShipment = async () => {
     if (!manualModal || !order?.id) return
     const courier = manualModal.courier.trim()
     const trackingId = manualModal.trackingId.trim()
     const trackingUrl = manualModal.trackingUrl.trim()
+    const slipUrl = manualModal.slipUrl?.trim() || undefined
     if (!courier || !trackingId) {
       toast.error("Manual shipment", "Courier name and tracking ID are required.")
       return
@@ -226,6 +351,7 @@ export default function AdminOrderDetailPage() {
         courierName: courier,
         trackingId,
         trackingUrl,
+        slipUrl,
       })
       setManualModal(null)
       toast.success("Manual shipment saved", "Order fulfillment updated.")
@@ -272,7 +398,20 @@ export default function AdminOrderDetailPage() {
     if (!options?.silent) setLoading(true)
     if (!options?.silent) setError("")
     return authedFetch<OrderDetail>(`/api/v1/orders/${params.id}`)
-      .then((data) => setOrder(data))
+      .then((data) => {
+        setOrder(data)
+        const raw = parseRawResponse((data as any).shiprocketRawResponse || (data as any).shiprocket_raw_response)
+        if (raw?.serviceability) {
+          if (raw.serviceability.isServiceable === false || raw.serviceability.serviceable === false) {
+            setServiceable(false)
+            if (!serviceabilitySummary) {
+              setServiceabilitySummary("This order is not serviceable please proceed with manual shipment")
+            }
+          } else if (raw.serviceability.isServiceable === true || raw.serviceability.serviceable === true) {
+            setServiceable(true)
+          }
+        }
+      })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false))
   }
@@ -435,7 +574,8 @@ export default function AdminOrderDetailPage() {
           result.weight != null ? `package ${result.weight} kg` : null,
           result.lengthCm && result.widthCm && result.heightCm ? `${result.lengthCm}×${result.widthCm}×${result.heightCm} cm` : null,
         ].filter(Boolean).join(", ")
-        const summary = top.length
+        const isServ = top.length > 0
+        const summary = isServ
           ? `${packageLine ? `${packageLine}: ` : ""}${top.map((courier) => {
               const eta = courier.eta_days > 0 ? `${courier.eta_days}d` : "eta unavailable"
               const charge = courier.charge_weight_kg != null ? `, chargeable ${courier.charge_weight_kg} kg` : ""
@@ -444,11 +584,37 @@ export default function AdminOrderDetailPage() {
             }).join(" | ")}`
           : "This order is not serviceable please proceed with manual shipment"
         setServiceabilitySummary(summary)
-        setServiceable(top.length > 0)
-        if (top.length > 0) {
+        setServiceable(isServ)
+        if (isServ) {
           toast.success("Serviceability", summary)
+          if (params.id) {
+            setServiceableIds((prev) => {
+              const next = { ...prev, [params.id!]: true }
+              try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)) } catch {}
+              return next
+            })
+            setUnserviceableIds((prev) => {
+              const next = { ...prev }
+              delete next[params.id!]
+              try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)) } catch {}
+              return next
+            })
+          }
         } else {
           toast.error("Not serviceable", summary)
+          if (params.id) {
+            setUnserviceableIds((prev) => {
+              const next = { ...prev, [params.id!]: true }
+              try { localStorage.setItem(STORAGE_KEY_UNSERVICEABLE, JSON.stringify(next)) } catch {}
+              return next
+            })
+            setServiceableIds((prev) => {
+              const next = { ...prev }
+              delete next[params.id!]
+              try { localStorage.setItem(STORAGE_KEY_SERVICEABLE, JSON.stringify(next)) } catch {}
+              return next
+            })
+          }
         }
         return
       }
@@ -605,52 +771,68 @@ export default function AdminOrderDetailPage() {
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          className="bg-[#16803C] text-white hover:bg-[#146C33] disabled:opacity-50"
-          disabled={isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || actionBusy === "approve_order"}
-          onClick={() => void runAction("approve_order")}
-        >
-          <Check className="mr-1.5 h-4 w-4" />
-          {actionBusy === "approve_order" ? "Working..." : isOrderAccepted ? "Order accepted" : "Accept order"}
-        </Button>
+        {!isOrderAccepted && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+          <>
+            <Button
+              className="bg-[#16803C] text-white hover:bg-[#146C33] disabled:opacity-50"
+              disabled={actionBusy === "approve_order"}
+              onClick={() => void runAction("approve_order")}
+            >
+              <Check className="mr-1.5 h-4 w-4" />
+              {actionBusy === "approve_order" ? "Working..." : "Accept order"}
+            </Button>
 
-        <Button
-          variant="outline"
-          disabled={!isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || Boolean(shiprocketBusy)}
-          onClick={() => void runShiprocketAction("serviceability")}
-          title={!isOrderAccepted ? "Accept order first to check serviceability" : "Check courier serviceability"}
-        >
-          {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
-          {busy("serviceability") ? "Checking..." : "Check serviceability"}
-        </Button>
+            <Button
+              variant="outline"
+              disabled={actionBusy === "reject_order"}
+              onClick={() => void runAction("reject_order")}
+              title="Reject order"
+            >
+              {actionBusy === "reject_order" ? "Working..." : "Reject order"}
+            </Button>
+          </>
+        )}
 
-        <Button
-          variant="outline"
-          disabled={!isOrderAccepted || ["cancelled", "rejected"].includes(lifecycleStatus) || syncingOrder || Boolean(shiprocketBusy)}
-          onClick={() => void handleSyncOrder()}
-          title={!isOrderAccepted ? "Accept order first to sync" : "Sync order to Shiprocket"}
-        >
-          {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-          Sync now
-        </Button>
+        {isOrderAccepted && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+          <>
+            <Button
+              variant="outline"
+              disabled={Boolean(shiprocketBusy) || isManualShipmentDone}
+              onClick={() => void runShiprocketAction("serviceability")}
+              title={isManualShipmentDone ? "Shipment details already added" : "Check courier serviceability"}
+              className={isManualShipmentDone ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200" : ""}
+            >
+              {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+              {busy("serviceability") ? "Checking..." : "Check serviceability"}
+            </Button>
 
-        <Button
-          variant="outline"
-          disabled={!isOrderAccepted || actionBusy === "reject_order" || ["cancelled", "rejected"].includes(lifecycleStatus)}
-          onClick={() => void runAction("reject_order")}
-          title={!isOrderAccepted ? "Accept order first to reject" : "Reject order"}
-        >
-          {actionBusy === "reject_order" ? "Working..." : "Reject order"}
-        </Button>
-
-        {serviceable === false && Boolean(serviceabilitySummary) && (
-          <Button
-            variant="outline"
-            className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-            onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "" })}
-          >
-            Manual shipment
-          </Button>
+            {isUnserviceable ? (
+              <Button
+                variant="outline"
+                disabled={isManualShipmentDone}
+                className={
+                  isManualShipmentDone
+                    ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200"
+                    : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                }
+                onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "", slipUrl: "", slipName: "" })}
+                title={isManualShipmentDone ? "Manual shipment details already added" : "Enter manual shipment details"}
+              >
+                Manual shipment
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                disabled={syncingOrder || Boolean(shiprocketBusy) || isManualShipmentDone}
+                onClick={() => void handleSyncOrder()}
+                title={isManualShipmentDone ? "Order already shipped" : "Sync order to Shiprocket"}
+                className={isManualShipmentDone ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200" : ""}
+              >
+                {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+                Sync now
+              </Button>
+            )}
+          </>
         )}
 
         {lifecycleStatus === "cancel_requested" ? (
@@ -849,94 +1031,98 @@ export default function AdminOrderDetailPage() {
 
             <div className="space-y-4">
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
-              {(() => {
-                const activeShipment = (order.shipments ?? []).find((shipment) => String(shipment.shipmentStatus ?? "").toLowerCase() !== "cancelled" && !shipment.cancelledAt) ?? null
-                const courier = order.courierName || activeShipment?.courierName || activeShipment?.carrier || null
-                const trackingNumber = order.awbCode || order.trackingNumber || activeShipment?.awbCode || activeShipment?.trackingNo || null
-                const trackingUrl = order.trackingUrl || activeShipment?.trackingUrl || null
-                const linkedShipment = Boolean(activeShipment)
-                const pickupStatusText = order.pickupStatus || activeShipment?.pickupStatus || activeShipment?.shipmentStatus || order.shipmentStatus || ""
-                const pickupDone = Boolean(order.isPickupGenerated) && isConfirmedPickupRequest(pickupStatusText)
-                const buttonClass = "cursor-pointer rounded-lg border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1.5 text-[11px] font-semibold text-[#7B3010] shadow-sm transition hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-[#FFF7ED] disabled:hover:text-[#7B3010]"
-                return (
-                  <>
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                      <h2 className="text-sm font-semibold text-[#111827]">Delivery details</h2>
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs text-[#6B7280]">Shipment Status:</span>
-                        <select
-                          value={shipmentState || "not_shipped"}
-                          disabled={updatingStatus !== null || shipmentState === "cancelled"}
-                          onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
-                          className="cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C] disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Manually Change Shipment Status"
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm font-semibold text-[#111827]">Delivery details</h2>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-[#6B7280]">Shipment Status:</span>
+                  <select
+                    value={shipmentState || "not_shipped"}
+                    disabled={updatingStatus !== null || shipmentState === "cancelled"}
+                    onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
+                    className="cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C] disabled:cursor-not-allowed disabled:opacity-50"
+                    title="Manually Change Shipment Status"
+                  >
+                    {getForwardShipmentStatusOptions(shipmentState || "not_shipped").map((val) => (
+                      <option key={val} value={val}>
+                        {orderStatusLabel(val)}
+                      </option>
+                    ))}
+                  </select>
+                  {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
+                </div>
+              </div>
+              {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
+              <div className="mt-3">
+                <TrackingTimeline
+                  orderStatus={lifecycleStatus}
+                  shipmentStatus={pickupDone ? (order?.pickupStatus || activeShipment?.pickupStatus || "pickup_generated") : (activeShipment?.shipmentStatus ?? order?.shipmentStatus ?? null)}
+                  statusHistory={order?.statusHistory}
+                  deliveryMethod={courier}
+                  trackingNumber={trackingNumber}
+                  courierName={courier}
+                  isPickupGenerated={pickupDone}
+                />
+              </div>
+              <div className="mt-4 space-y-3 border-t border-[#F3F4F6] pt-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Delivery method</span>
+                  <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
+                    <Truck className="h-4 w-4 text-[#166534]" />
+                    {courier || "Not assigned"}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Estimated delivery</span>
+                  <span className="font-medium text-[#111827]">{order?.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not scheduled"}</span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Tracking number</span>
+                  <span className="font-medium text-[#111827]">{trackingNumber || "Not yet shipped"}</span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Tracking link</span>
+                  {trackingUrl ? (
+                    <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="cursor-pointer font-medium text-[#166534] hover:underline">Open tracking</a>
+                  ) : (
+                    <span className="text-[#111827]">—</span>
+                  )}
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[#6B7280]">Shipment</span>
+                  <span className="font-medium text-[#111827]">{activeShipment?.shipmentNo || activeShipment?.id || "Not created"}</span>
+                </div>
+                {Boolean(order?.labelUrl || activeShipment?.labelUrl) && (
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-[#6B7280]">Shipment slip</span>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <a
+                        href={(order?.labelUrl || activeShipment?.labelUrl)!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-md border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] hover:bg-[#DCFCE7]"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                        <span>View shipment slip</span>
+                        <ExternalLink className="h-3 w-3" />
+                      </a>
+                      {/\.(jpg|jpeg|png|webp|gif)($|\?)/i.test((order?.labelUrl || activeShipment?.labelUrl)!) && (
+                        <a
+                          href={(order?.labelUrl || activeShipment?.labelUrl)!}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-1 block overflow-hidden rounded-lg border border-[#E5E7EB] hover:opacity-90"
                         >
-                          {getForwardShipmentStatusOptions(shipmentState || "not_shipped").map((val) => (
-                            <option key={val} value={val}>
-                              {orderStatusLabel(val)}
-                            </option>
-                          ))}
-                        </select>
-                        {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {shipmentState === "cancelled" ? null : (
-                        <>
-                          <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("serviceability")} className={buttonClass}>{busy("serviceability") ? "Checking..." : "Check Serviceability"}</button>
-                          {(linkedShipment || serviceable) && (
-                            <button type="button" disabled={Boolean(shiprocketBusy)} onClick={() => void runShiprocketAction("sync_order")} className={buttonClass}>
-                              {busy("sync_order") ? (linkedShipment ? "Refreshing..." : "Syncing...") : (linkedShipment ? "Refresh" : "Sync")}
-                            </button>
-                          )}
-                          {!linkedShipment && serviceable === false && Boolean(serviceabilitySummary) && (
-                            <button type="button" onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "" })} className={buttonClass}>
-                              Manual shipment
-                            </button>
-                          )}
-                        </>
+                          <img
+                            src={(order?.labelUrl || activeShipment?.labelUrl)!}
+                            alt="Shipment Slip"
+                            className="h-16 w-24 object-cover"
+                          />
+                        </a>
                       )}
                     </div>
-                    {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}
-                    <div className="mt-3">
-                      <TrackingTimeline
-                        orderStatus={lifecycleStatus}
-                        shipmentStatus={pickupDone ? (order.pickupStatus || activeShipment?.pickupStatus || "pickup_generated") : (activeShipment?.shipmentStatus ?? order.shipmentStatus ?? null)}
-                        statusHistory={order.statusHistory}
-                      />
-                    </div>
-                    <div className="mt-4 space-y-3 border-t border-[#F3F4F6] pt-3 text-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[#6B7280]">Delivery method</span>
-                        <span className="inline-flex items-center gap-1.5 font-medium text-[#111827]">
-                          <Truck className="h-4 w-4 text-[#166534]" />
-                          {courier || "Not assigned"}
-                        </span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[#6B7280]">Estimated delivery</span>
-                        <span className="font-medium text-[#111827]">{order.estimatedDeliveryDate ? new Date(order.estimatedDeliveryDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "Not scheduled"}</span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[#6B7280]">Tracking number</span>
-                        <span className="font-medium text-[#111827]">{trackingNumber || "Not yet shipped"}</span>
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[#6B7280]">Tracking link</span>
-                        {trackingUrl ? (
-                          <a href={trackingUrl} target="_blank" rel="noopener noreferrer" className="cursor-pointer font-medium text-[#166534] hover:underline">Open tracking</a>
-                        ) : (
-                          <span className="text-[#111827]">—</span>
-                        )}
-                      </div>
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="text-[#6B7280]">Shipment</span>
-                        <span className="font-medium text-[#111827]">{activeShipment?.shipmentNo || activeShipment?.id || "Not created"}</span>
-                      </div>
-                    </div>
-                  </>
-                )
-              })()}
+                  </div>
+                )}
+              </div>
             </div>
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-sm font-semibold text-[#111827]">Notes</h2>
@@ -1049,11 +1235,68 @@ export default function AdminOrderDetailPage() {
                 className="mt-1 w-full rounded-lg border border-[#E8DCC8] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
               />
             </label>
+            <div>
+              <label className="block text-xs font-semibold text-[#4A1D1F] mb-1">
+                Upload Shipment Slip
+              </label>
+              {manualModal.slipUrl ? (
+                <div className="flex items-center justify-between rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                  <div className="flex items-center gap-2 overflow-hidden">
+                    <FileText className="h-4 w-4 shrink-0 text-[#7B3010]" />
+                    <a
+                      href={manualModal.slipUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="truncate text-xs font-medium text-[#7B3010] hover:underline"
+                    >
+                      {manualModal.slipName || "View uploaded slip"}
+                    </a>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setManualModal({ ...manualModal, slipUrl: "", slipName: "" })}
+                    className="ml-2 text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="flex items-center justify-between rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 text-xs hover:border-[#7B3010] transition-colors cursor-pointer">
+                    <div className="flex items-center gap-2.5">
+                      <span className="rounded-full bg-[#7B3010] px-3 py-1 font-semibold text-white shadow-xs">
+                        Choose file
+                      </span>
+                      <span className="text-[#787878] text-[11px]">
+                        Image (JPG, PNG) or PDF • Max 2MB
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf,.pdf"
+                    disabled={uploadingSlip}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0]
+                      if (file) void handleSlipUpload(file)
+                      e.target.value = ""
+                    }}
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                  {uploadingSlip && (
+                    <div className="mt-1 flex items-center gap-1.5 text-xs text-[#7B3010]">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Uploading shipment slip...</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setManualModal(null)} disabled={savingManual}>
+              <Button variant="outline" onClick={() => setManualModal(null)} disabled={savingManual || uploadingSlip}>
                 Cancel
               </Button>
-              <Button className="bg-[#7B3010] text-white hover:bg-[#5E230B] font-semibold" onClick={() => void saveManualShipment()} disabled={savingManual}>
+              <Button className="bg-[#7B3010] text-white hover:bg-[#5E230B] font-semibold" onClick={() => void saveManualShipment()} disabled={savingManual || uploadingSlip}>
                 {savingManual ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
