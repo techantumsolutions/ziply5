@@ -9,7 +9,7 @@ import { toast } from "@/lib/toast";
 import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from "@/src/lib/datetime";
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status";
 import { assessPackageMeasures, awbQuoteWarning } from "@/src/server/modules/shipping/package-measures";
-import { isManualShipment, MANUAL_ORDER_STATUSES, orderStatusLabel } from "@/src/lib/orders/manual-order-status";
+import { isManualShipment, MANUAL_ORDER_STATUSES, orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status";
 import {
   Select,
   SelectContent,
@@ -305,85 +305,40 @@ export default function AdminOrdersPage() {
     return o.id;
   };
 
-  const getOrderStatusBadge = (status: string) => {
-    const s = status.toLowerCase().trim();
+  const getOrderStatusBadge = (status: string, statusHistory?: OrderRow["statusHistory"]) => {
+    const canonical = resolveCanonicalOrderStatus(status, statusHistory);
 
-    if (s === "cancelled" || s === "rejected" || s === "failed") {
+    if (canonical === "rejected") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-          {orderStatusLabel(s)}
+          Rejected
         </span>
       );
     }
 
-    if (s === "delivered" || s === "completed") {
+    if (canonical === "cancelled") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-0.5 text-xs font-semibold text-gray-700 capitalize">
+          <span className="h-1.5 w-1.5 rounded-full bg-gray-500" />
+          Cancelled
+        </span>
+      );
+    }
+
+    if (canonical === "accepted") {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 capitalize">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          {orderStatusLabel(s)}
-        </span>
-      );
-    }
-
-    if (s === "shipped") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-          Shipped
-        </span>
-      );
-    }
-
-    if (s === "in_transit" || s === "out_for_delivery" || s === "dispatched") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-0.5 text-xs font-semibold text-indigo-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
-          {orderStatusLabel(s)}
-        </span>
-      );
-    }
-
-    if (s === "confirmed") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
           Accepted
         </span>
       );
     }
 
-    if (s === "packed" || s === "processing") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-0.5 text-xs font-semibold text-cyan-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-500" />
-          {orderStatusLabel(s)}
-        </span>
-      );
-    }
-
-    if (s === "admin_approval_pending" || s === "approval_pending") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-          Pending
-        </span>
-      );
-    }
-
-    if (s === "new" || s === "pending" || s === "pending_payment" || s === "payment_success") {
-      return (
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-200 bg-sky-50 px-2.5 py-0.5 text-xs font-semibold text-sky-700 capitalize">
-          <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
-          {s === "new" ? "New Order" : orderStatusLabel(s)}
-        </span>
-      );
-    }
-
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700 capitalize">
-        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
-        {orderStatusLabel(s)}
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 capitalize">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+        Pending
       </span>
     );
   };
@@ -1169,7 +1124,7 @@ export default function AdminOrdersPage() {
       o.user?.email ?? "",
       o.paymentMethod ?? "",
       toPaymentStatus(o),
-      lifecycleStatus(o),
+      resolveCanonicalOrderStatus(lifecycleStatus(o), o.statusHistory),
       latestShipmentStatus(o),
       Number(o.total).toFixed(2),
       itemsCount(o),
@@ -1475,7 +1430,7 @@ export default function AdminOrdersPage() {
                     </td>
                     <td className="px-2 py-2">
                       <div className="min-w-[130px]">
-                        {getOrderStatusBadge(lifecycleStatus(o))}
+                        {getOrderStatusBadge(lifecycleStatus(o), o.statusHistory)}
                       </div>
                     </td>
                     <td className="px-2 py-2">

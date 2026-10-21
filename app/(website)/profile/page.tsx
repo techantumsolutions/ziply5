@@ -19,7 +19,7 @@ import {
   orderHistoryHasCancelRequested,
   shouldRenderCustomerCancelOrderButton,
 } from "@/src/lib/orders/order-cancel-policy"
-import { orderStatusLabel } from "@/src/lib/orders/manual-order-status"
+import { orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status"
 import { getReturnIneligibilityReason } from "@/src/lib/returns/return-eligibility"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 
@@ -1092,6 +1092,8 @@ function ProfilePageContent() {
                       const previewItems = order.items.slice(0, 2)
                       const moreItems = Math.max(order.items.length - 2, 0)
                       const latestLifecycle = deriveLatestLifecycleToStatus(order.statusHistory, order.status)
+                      const canonicalStatus = resolveCanonicalOrderStatus(latestLifecycle || order.status, order.statusHistory)
+                      const isAccepted = canonicalStatus === "accepted"
                       const cancelRequested = orderHistoryHasCancelRequested(order.statusHistory)
                       const showCancel = shouldRenderCustomerCancelOrderButton({
                         latestLifecycle,
@@ -1111,21 +1113,38 @@ function ProfilePageContent() {
                               Order created on {formatOrderDateTime(order.createdAt)}
                             </p>
                           </div>
-                          <div className="flex flex-col items-end gap-1">
-                            {latestLifecycle === "rejected" ? (
+                          <div className="flex flex-col items-end gap-1.5">
+                            {canonicalStatus === "rejected" ? (
                               <>
                                 <span className="rounded-full bg-red-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-red-700 ring-1 ring-red-200">
-                                  Order Status: rejected
+                                  Order Status: Rejected
                                 </span>
                                 {(() => {
-                                  const rej = order.statusHistory?.find((h) => String((h as any).reasonCode ?? "").toLowerCase() === "admin_rejected" || String(h.toStatus).toLowerCase() === "rejected")
+                                  const rej = order.statusHistory?.find(
+                                    (h) =>
+                                      String((h as any).reasonCode ?? "").toLowerCase() === "admin_rejected" ||
+                                      String(h.toStatus).toLowerCase() === "rejected"
+                                  )
                                   const noteText = (rej as any)?.notes || (order.statusHistory?.[0] as any)?.notes
                                   return noteText ? <p className="text-[11px] font-medium text-red-600">Reason: {noteText}</p> : null
                                 })()}
                               </>
+                            ) : canonicalStatus === "cancelled" ? (
+                              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold uppercase text-gray-700 ring-1 ring-gray-200">
+                                Order Status: Cancelled
+                              </span>
+                            ) : canonicalStatus === "accepted" ? (
+                              <>
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-emerald-800 ring-1 ring-emerald-200">
+                                  Order Status: Accepted
+                                </span>
+                                <span className="rounded-full bg-[#FDF0E6] px-2.5 py-1 text-[10px] font-semibold uppercase text-[#7B3010] ring-1 ring-[#E8DCC8]">
+                                  Shipment Status: {orderStatusLabel(order.shipmentStatus || order.shipments?.[0]?.shipmentStatus || "Preparing Shipment")}
+                                </span>
+                              </>
                             ) : (
-                              <span className="rounded-full bg-[#FDF0E6] px-2.5 py-1 text-[10px] font-semibold uppercase text-[#7B3010]">
-                                Order Status: {orderStatusLabel(latestLifecycle || order.status)}
+                              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold uppercase text-amber-800 ring-1 ring-amber-200">
+                                Order Status: Pending
                               </span>
                             )}
                           </div>
@@ -1204,7 +1223,7 @@ function ProfilePageContent() {
                               Review
                             </button>
                           )}
-                          {order.status.toLowerCase() !== "cancelled" && (
+                          {isAccepted && (
                             <button
                               type="button"
                               onClick={() => router.push(`/orders/${order.id}/track`)}

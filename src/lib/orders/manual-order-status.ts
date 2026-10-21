@@ -38,3 +38,45 @@ export const manualOrderStatusSteps = (from: string, to: string) => {
   if (end < start) throw new Error("Order status cannot move backward")
   return MANUAL_ORDER_STATUSES.slice(start + 1, end + 1)
 }
+
+export type CanonicalOrderStatus = "pending" | "accepted" | "rejected" | "cancelled"
+
+export const resolveCanonicalOrderStatus = (
+  rawStatus?: string | null,
+  statusHistory?: Array<{ toStatus?: string; reasonCode?: string | null }>
+): CanonicalOrderStatus => {
+  const s = String(rawStatus ?? "").trim().toLowerCase()
+  if (
+    s === "rejected" ||
+    statusHistory?.some(
+      (h) => h.reasonCode === "admin_rejected" || String(h.toStatus).toLowerCase() === "rejected"
+    )
+  ) {
+    return "rejected"
+  }
+  if (
+    s === "cancelled" ||
+    s === "cancel_requested" ||
+    statusHistory?.some((h) => String(h.toStatus).toLowerCase() === "cancelled")
+  ) {
+    return "cancelled"
+  }
+  if (
+    [
+      "confirmed",
+      "accepted",
+      "packed",
+      "shipped",
+      "in_transit",
+      "out_for_delivery",
+      "delivered",
+      "completed",
+    ].includes(s) ||
+    statusHistory?.some((h) =>
+      ["confirmed", "accepted", "shipped", "delivered"].includes(String(h.toStatus).toLowerCase())
+    )
+  ) {
+    return "accepted"
+  }
+  return "pending"
+}
