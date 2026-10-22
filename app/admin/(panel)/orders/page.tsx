@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch";
 import { useRealtimeTables } from "@/hooks/useRealtimeTables";
-import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search, FileText } from "lucide-react";
+import { Download, Copy, Check, X, Eye, RefreshCw, Loader2, Search, FileText, Info, Image as ImageIcon } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from "@/src/lib/datetime";
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status";
@@ -197,8 +197,74 @@ export default function AdminOrdersPage() {
     trackingUrl: string;
     slipUrl?: string;
     slipName?: string;
+    packageImages?: string[];
   } | null>(null);
   const [uploadingSlip, setUploadingSlip] = useState(false);
+  const [uploadingPackageImages, setUploadingPackageImages] = useState(false);
+
+  const handlePackageImagesUpload = async (files: FileList | File[]) => {
+    const fileList = Array.from(files);
+    if (!fileList.length) return;
+
+    const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
+    const validFiles: File[] = [];
+
+    for (const file of fileList) {
+      const isImg = file.type.startsWith("image/") || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(file.name);
+      if (!isImg) {
+        toast.error("Invalid file format", `"${file.name}" is not an image file. Only JPG, PNG, WEBP are allowed.`);
+        continue;
+      }
+      if (file.size > MAX_FILE_SIZE) {
+        toast.error("File too large", `"${file.name}" exceeds 2MB limit. Each image must be 2MB or less.`);
+        continue;
+      }
+      validFiles.push(file);
+    }
+
+    if (!validFiles.length) return;
+
+    setUploadingPackageImages(true);
+    try {
+      const token = typeof window !== "undefined" ? window.localStorage.getItem("ziply5_access_token") : null;
+      const formData = new FormData();
+      for (const f of validFiles) {
+        formData.append("file", f);
+      }
+      formData.append("folder", "orders/package-images");
+
+      const res = await fetch("/api/v1/uploads", {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok || data.success === false) {
+        throw new Error(data.message || "Failed to upload package images");
+      }
+      const urls: string[] = (data.data?.files ?? []).map((f: any) => f.url).filter(Boolean);
+      if (!urls.length) throw new Error("No image URLs returned from upload");
+
+      setManualModal((prev) => {
+        if (!prev) return null;
+        const existing = prev.packageImages ?? [];
+        return { ...prev, packageImages: [...existing, ...urls] };
+      });
+      toast.success("Images uploaded", `${urls.length} package image${urls.length > 1 ? "s" : ""} added.`);
+    } catch (err) {
+      toast.error("Upload failed", err instanceof Error ? err.message : "Failed to upload package images");
+    } finally {
+      setUploadingPackageImages(false);
+    }
+  };
+
+  const removePackageImage = (indexToRemove: number) => {
+    setManualModal((prev) => {
+      if (!prev) return null;
+      const nextImages = (prev.packageImages ?? []).filter((_, i) => i !== indexToRemove);
+      return { ...prev, packageImages: nextImages };
+    });
+  };
 
   const handleSlipUpload = async (file: File) => {
     const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
@@ -1076,6 +1142,7 @@ export default function AdminOrdersPage() {
     const trackingId = manualModal.trackingId.trim();
     const trackingUrl = manualModal.trackingUrl.trim();
     const slipUrl = manualModal.slipUrl?.trim() || undefined;
+    const packageImages = manualModal.packageImages ?? [];
     if (!courier || !trackingId) {
       toast.error("Manual shipment", "Courier name and tracking id are required.");
       return;
@@ -1088,6 +1155,7 @@ export default function AdminOrdersPage() {
         trackingId,
         trackingUrl,
         slipUrl,
+        packageImages,
       });
       setManualModal(null);
       setUnserviceable(null);
@@ -1656,7 +1724,7 @@ export default function AdminOrdersPage() {
 
       {manualModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl border border-[#E8DCC8] bg-white p-6 shadow-xl space-y-4">
             <h2 className="font-melon text-lg font-bold text-[#4A1D1F]">Manual shipment</h2>
             <label className="block text-xs font-semibold text-[#4A1D1F]">
               Courier
@@ -1727,9 +1795,104 @@ export default function AdminOrdersPage() {
                 </div>
               )}
             </div>
-            <div className="flex justify-end gap-2">
+
+            {/* Package Img Before Handover to Courier Partner */}
+            <div className="space-y-2 pt-1 border-t border-[#F2E6DD]">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-semibold text-[#4A1D1F]">
+                  Package Img (Before Handover to Courier Partner)
+                </label>
+                {(manualModal.packageImages?.length ?? 0) > 0 && (
+                  <span className="text-[11px] font-semibold text-[#7B3010]">
+                    {manualModal.packageImages?.length} {manualModal.packageImages?.length === 1 ? "photo" : "photos"} added
+                  </span>
+                )}
+              </div>
+
+              {/* Explaining Info Box */}
+              <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+                <Info className="h-4 w-4 shrink-0 text-amber-700 mt-0.5" />
+                <div className="space-y-0.5">
+                  <p className="font-semibold text-amber-900">Package Verification Before Handover</p>
+                  <p className="text-[11px] leading-relaxed text-amber-800">
+                    Capture clear photos of the packed parcel showing the sealed package and shipping label / AWB before handing it over to the courier partner. These serve as verified proof of packaging condition for courier damage claims and dispute protection.
+                  </p>
+                </div>
+              </div>
+
+              {/* Uploaded Package Photos Preview Grid */}
+              {(manualModal.packageImages?.length ?? 0) > 0 && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {manualModal.packageImages?.map((url, idx) => (
+                    <div
+                      key={idx}
+                      className="group relative h-16 w-16 overflow-hidden rounded-lg border border-[#E8DCC8] bg-neutral-100 shadow-2xs"
+                    >
+                      <img
+                        src={url}
+                        alt={`Package photo ${idx + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                      <a
+                        href={url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition"
+                        title="View full image"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removePackageImage(idx)}
+                        className="absolute right-1 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-black/75 text-white opacity-0 transition group-hover:opacity-100 hover:bg-red-600 cursor-pointer z-10"
+                        title="Remove photo"
+                      >
+                        <X className="h-2.5 w-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Multi-Image File Input */}
+              <div className="relative">
+                <div className="flex items-center justify-between rounded-lg border border-dashed border-[#C5A880] bg-[#FFFDF9] px-3 py-2 text-xs hover:border-[#7B3010] transition-colors cursor-pointer">
+                  <div className="flex items-center gap-2.5">
+                    <span className="rounded-full bg-[#7B3010] px-3 py-1 font-semibold text-white shadow-xs">
+                      + Add package photos
+                    </span>
+                    <span className="text-[#787878] text-[11px]">
+                      Max 2MB per image • Multiple photos allowed (JPG, PNG, WEBP)
+                    </span>
+                  </div>
+                </div>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,image/jpg"
+                  disabled={uploadingPackageImages}
+                  onChange={(e) => {
+                    if (e.target.files) void handlePackageImagesUpload(e.target.files);
+                    e.target.value = "";
+                  }}
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
+                {uploadingPackageImages && (
+                  <div className="mt-1 flex items-center gap-1.5 text-xs text-[#7B3010]">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>Uploading package photos...</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#F2E6DD]">
               <button type="button" onClick={() => setManualModal(null)} className="cursor-pointer rounded-full border px-4 py-2 text-xs font-semibold">Cancel</button>
-              <button type="button" disabled={Boolean(rowActionBusy[manualModal.orderId]) || uploadingSlip} onClick={saveManualShipment} className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+              <button
+                type="button"
+                disabled={Boolean(rowActionBusy[manualModal.orderId]) || uploadingSlip || uploadingPackageImages}
+                onClick={saveManualShipment}
+                className="cursor-pointer rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
                 {rowActionBusy[manualModal.orderId] === "manual" ? "Saving..." : "Save shipment"}
               </button>
             </div>

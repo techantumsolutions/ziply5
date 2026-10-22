@@ -113,11 +113,13 @@ export const createManualShipment = async (input: {
   trackingUrl: string
   courierName?: string
   slipUrl?: string
+  packageImages?: string[]
 }) => {
   const trackingId = input.trackingId.trim()
   const trackingUrl = input.trackingUrl.trim()
   if (!trackingId || !trackingUrl) throw new Error("Tracking ID and tracking URL are required")
   const courier = input.courierName?.trim() || "Manual courier"
+  const packageImages = Array.isArray(input.packageImages) ? input.packageImages.filter(Boolean) : []
 
   const shipment = await pgTx(async (client) => {
     const id = randomUUID()
@@ -129,10 +131,26 @@ export const createManualShipment = async (input: {
     return rows.rows[0]
   })
 
+  const trackingData = {
+    packageImages,
+    slipUrl: input.slipUrl ?? null,
+  }
+
   await pgQuery(
-    `UPDATE "Shipment" SET "trackingUrl" = $2, "labelUrl" = $3, "shippingStatus" = 'shipped', "courierName" = $4, "updatedAt" = now() WHERE id = $1`,
-    [shipment.id, trackingUrl, input.slipUrl ?? null, courier],
+    `UPDATE "Shipment" SET "trackingUrl" = $2, "labelUrl" = $3, "shippingStatus" = 'shipped', "courierName" = $4, "trackingData" = $5, "updatedAt" = now() WHERE id = $1`,
+    [shipment.id, trackingUrl, input.slipUrl ?? null, courier, JSON.stringify(trackingData)],
   ).catch(() => null)
+
+  if (packageImages.length > 0) {
+    await pgQuery(
+      `UPDATE "Shipment" SET "packageImages" = $2 WHERE id = $1`,
+      [shipment.id, packageImages],
+    ).catch(() => null)
+    await pgQuery(
+      `UPDATE "Order" SET "packageImages" = $2 WHERE id = $1`,
+      [input.orderId, packageImages],
+    ).catch(() => null)
+  }
 
   const { status } = await latestHistoryStatus(input.orderId)
   if (status === "confirmed") {
@@ -156,8 +174,9 @@ export const createManualShipment = async (input: {
     trackingUrl,
     labelUrl: input.slipUrl ?? null,
     isShipmentCreated: true,
+    trackingData,
   }).catch(() => null)
-  return { shipmentId: shipment.id, trackingId, trackingUrl, slipUrl: input.slipUrl ?? null }
+  return { shipmentId: shipment.id, trackingId, trackingUrl, slipUrl: input.slipUrl ?? null, packageImages }
 }
 
 export const setManualOrderStatus = async (orderId: string, orderStatus: string, actorId: string) => {
