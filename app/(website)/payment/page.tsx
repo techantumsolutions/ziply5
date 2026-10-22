@@ -37,6 +37,7 @@ function PaymentPageInner() {
   const [retryMode, setRetryMode] = useState(false);
   const [couponAdjustedTotal, setCouponAdjustedTotal] = useState<number | null>(null);
   const autoRetryTriggeredRef = useRef(false);
+  const [isMounted, setIsMounted] = useState(false);
   const [items, setItemsState] = useState<ReturnType<typeof getCartItems>>([]);
   const [billingAddress, setBillingAddress] = useState({
     fullName: "",
@@ -47,11 +48,14 @@ function PaymentPageInner() {
     postalCode: "",
     country: "India",
     phone: "",
-    email: "",
   });
   const [hasCheckoutBilling, setHasCheckoutBilling] = useState(false);
   const [hasCheckoutSnapshot, setHasCheckoutSnapshot] = useState(false);
   const [fetchingPincode, setFetchingPincode] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     // Avoid hydration mismatch: cart is client-only (localStorage)
@@ -190,12 +194,20 @@ function PaymentPageInner() {
   }, [billingAddress.postalCode]);
 
   const createOrderMutation = useMutation({
-    mutationFn: async ({ token, gateway }: { token: string; gateway: "cod" | "razorpay" }) => {
+    mutationFn: async (params: {
+      token: string;
+      gateway: "cod" | "razorpay";
+      paymentStatus?: "pending" | "paid";
+      paymentId?: string;
+      razorpayOrderId?: string;
+      razorpayPaymentId?: string;
+      razorpaySignature?: string;
+    }) => {
+      const { token, gateway, paymentStatus, paymentId, razorpayOrderId, razorpayPaymentId, razorpaySignature } = params;
       const checkoutRef =
-        window.localStorage.getItem("ziply5_checkout_ref") ??
-        (typeof crypto !== "undefined" && "randomUUID" in crypto
+        typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
       const sessionKey = window.localStorage.getItem("ziply5_session_key") || undefined;
       window.localStorage.setItem("ziply5_checkout_ref", checkoutRef);
 
@@ -265,11 +277,11 @@ function PaymentPageInner() {
             email: billingAddress.email || "",
           },
 
-          paymentStatus: gateway === "cod" ? "pending" : "pending",
-          paymentId:
-            gateway === "cod"
-              ? undefined
-              : `checkout_ref:${checkoutRef}`,
+          paymentStatus: paymentStatus ?? (gateway === "cod" ? "pending" : "paid"),
+          paymentId: paymentId ?? (gateway === "cod" ? undefined : `checkout_ref:${checkoutRef}`),
+          razorpayOrderId,
+          razorpayPaymentId,
+          razorpaySignature,
           sessionKey,
         })
       });
@@ -282,14 +294,32 @@ function PaymentPageInner() {
   });
 
   const initiatePaymentMutation = useMutation({
-    mutationFn: async ({ token, orderId }: { token: string; orderId: string }) => {
+    mutationFn: async ({
+      token,
+      orderId,
+      amount,
+      currency,
+      receipt,
+    }: {
+      token: string;
+      orderId?: string;
+      amount?: number;
+      currency?: string;
+      receipt?: string;
+    }) => {
       const intentRes = await fetch("/api/payments/initiate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ orderId, provider: "razorpay" }),
+        body: JSON.stringify({
+          orderId,
+          amount,
+          currency,
+          receipt,
+          provider: "razorpay",
+        }),
       });
       const intentJson = (await intentRes.json()) as {
         success?: boolean;
@@ -332,8 +362,6 @@ function PaymentPageInner() {
       .catch(() => setLoggedIn(false));
 
     const savedBilling = window.localStorage.getItem("ziply5_checkout_billing_address");
-    const pendingOrderId = window.localStorage.getItem("ziply5_pending_order_id");
-    if (pendingOrderId) setCreatedOrderId(pendingOrderId);
     if (savedBilling) {
       try {
         const parsed = JSON.parse(savedBilling) as Partial<typeof billingAddress>;
@@ -389,6 +417,7 @@ const handleCOD = async () => {
     // ✅ cleanup
     setCartItems([]);
     clearCheckoutStorage();
+    window.localStorage.removeItem("ziply5_pending_order_id");
     window.localStorage.removeItem("ziply5_checkout_ref");
     window.localStorage.removeItem("ziply5_final_total");
     window.localStorage.removeItem("ziply5_coupon_code");
@@ -422,36 +451,29 @@ const handleOnlinePayment = async () => {
 
     setProcessingGateway("ONLINE");
     setError("");
-    setStatusText("Creating order...");
+    setStatusText("Preparing payment...");
 
     const token = window.localStorage.getItem("ziply5_access_token");
     if (!token) throw new Error("Login required");
 
-    const orderId =
-      createdOrderId ??
-      (await createOrderMutation.mutateAsync({ token, gateway: "razorpay" }));
+    const existingOrderId = retryMode && createdOrderId ? createdOrderId : undefined;
 
-    setCreatedOrderId(orderId);
-    window.localStorage.setItem("ziply5_pending_order_id", orderId);
-
-    setStatusText("Redirecting to payment...");
-
-    await openRazorpay(token, orderId);
+    await openRazorpay(token, existingOrderId);
   } catch (e) {
     const message = e instanceof Error ? e.message : "Payment failed"
     setError(message);
     toast.error(message);
     setProcessingGateway(null);
-
-    const pendingOrderId = createdOrderId || window.localStorage.getItem("ziply5_pending_order_id");
-    if (pendingOrderId) {
-      router.push(`/payment-failed?orderId=${pendingOrderId}&reason=${encodeURIComponent(message)}`);
-    }
   }
 };
   useEffect(() => {
     const retryOrderId = searchParams.get("orderId");
-    if (!retryOrderId) return;
+    if (!retryOrderId) {
+      setRetryMode(false);
+      setCreatedOrderId(null);
+      window.localStorage.removeItem("ziply5_pending_order_id");
+      return;
+    }
     setRetryMode(true);
     setCreatedOrderId(retryOrderId);
     window.localStorage.setItem("ziply5_pending_order_id", retryOrderId);
@@ -543,8 +565,19 @@ const handleOnlinePayment = async () => {
     router.push(`/login?next=${encodeURIComponent("/payment")}`);
   };
 
-  const openRazorpay = async (token: string, orderId: string) => {
-    const intent = await initiatePaymentMutation.mutateAsync({ token, orderId });
+  const openRazorpay = async (token: string, existingOrderId?: string) => {
+    const checkoutReceipt =
+      window.localStorage.getItem("ziply5_checkout_ref") ??
+      `chk_${Date.now().toString(36)}`;
+
+    const intent = await initiatePaymentMutation.mutateAsync({
+      token,
+      orderId: existingOrderId,
+      amount: payableAmount,
+      currency: "INR",
+      receipt: checkoutReceipt,
+    });
+
     const Razorpay = window.Razorpay;
     if (!Razorpay) throw new Error("Razorpay checkout is not ready yet.");
     const razorpay = new Razorpay({
@@ -552,11 +585,12 @@ const handleOnlinePayment = async () => {
       amount: Math.round(intent.amount * 100),
       currency: intent.currency || "INR",
       name: "ZiPLY5",
-      description: `Order ${intent.orderId.slice(0, 8)}`,
+      description: existingOrderId ? `Order ${existingOrderId.slice(0, 8)}` : "Order Checkout",
       order_id: intent.externalId,
       prefill: {
         name: billingAddress.fullName,
         contact: billingAddress.phone,
+        email: billingAddress.email,
       },
       notes: {
         billing_line1: billingAddress.line1,
@@ -564,7 +598,7 @@ const handleOnlinePayment = async () => {
         billing_state: billingAddress.state,
         billing_postal_code: billingAddress.postalCode,
         billing_country: billingAddress.country,
-        orderId: intent.orderId,
+        ...(existingOrderId ? { orderId: existingOrderId } : {}),
       },
       theme: { color: "#7B3010" },
       handler: async (response: {
@@ -573,38 +607,54 @@ const handleOnlinePayment = async () => {
         razorpay_signature?: string
       }) => {
         try {
-          setStatusText("Verifying payment...");
+          setStatusText("Verifying payment and creating order...");
           if (!response?.razorpay_order_id || !response?.razorpay_payment_id || !response?.razorpay_signature) {
             throw new Error("Incomplete payment response from gateway.")
           }
-          const verifyRes = await fetch("/api/payments/verify", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              orderId,
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            }),
-          })
-          const verifyJson = (await verifyRes.json()) as { success?: boolean; message?: string }
-          if (!verifyRes.ok || verifyJson.success === false) {
-            window.localStorage.removeItem("ziply5_final_total"); // Clear coupon-adjusted total on verification failure
-            throw new Error(verifyJson.message ?? "Payment verification failed")
+
+          let finalOrderId: string;
+
+          if (existingOrderId) {
+            const verifyRes = await fetch("/api/payments/verify", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                orderId: existingOrderId,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature,
+              }),
+            })
+            const verifyJson = (await verifyRes.json()) as { success?: boolean; message?: string }
+            if (!verifyRes.ok || verifyJson.success === false) {
+              window.localStorage.removeItem("ziply5_final_total");
+              throw new Error(verifyJson.message ?? "Payment verification failed")
+            }
+            finalOrderId = existingOrderId;
+          } else {
+            finalOrderId = await createOrderMutation.mutateAsync({
+              token,
+              gateway: "razorpay",
+              paymentStatus: "paid",
+              paymentId: response.razorpay_payment_id,
+              razorpayOrderId: response.razorpay_order_id,
+              razorpayPaymentId: response.razorpay_payment_id,
+              razorpaySignature: response.razorpay_signature,
+            });
           }
 
           setStatusText("Payment successful.");
           window.localStorage.removeItem("ziply5_pending_order_id");
           window.localStorage.removeItem("ziply5_checkout_ref");
-          setCartItems([]);
-          clearCheckoutStorage();
-          router.push(`/payment-success?orderId=${orderId}`);
           window.localStorage.removeItem("ziply5_final_total");
           window.localStorage.removeItem("ziply5_coupon_code");
           window.localStorage.removeItem("ziply5_applied_coupon_id");
+          setCartItems([]);
+          clearCheckoutStorage();
+          router.push(`/payment-success?orderId=${finalOrderId}`);
         } catch (error) {
           setProcessingGateway(null)
           const message = error instanceof Error ? error.message : "Payment verification failed"
@@ -612,25 +662,26 @@ const handleOnlinePayment = async () => {
           toast.error(message)
           void postCartEvent("payment_failed", { reason: error instanceof Error ? error.message : "verify_failed" })
 
-          router.push(`/payment-failed?orderId=${orderId}&reason=${encodeURIComponent(message)}`);
+          router.push(`/payment-failed?reason=${encodeURIComponent(message)}`);
         }
       },
       modal: {
         ondismiss: () => {
           setStatusText("Payment interrupted. You can retry.");
-          setError("Payment was not completed. Please retry.");
+          setError("Payment was cancelled. You have not been charged.");
+          toast.info("Payment was cancelled.");
           setProcessingGateway(null);
           void postCartEvent("payment_cancelled", { source: "razorpay_modal_dismiss" });
-
-          router.push(`/payment-failed?orderId=${orderId}&reason=User%20cancelled%20payment`);
         },
       },
     });
 
     razorpay.on('payment.failed', function (response: any) {
       setProcessingGateway(null);
-      void postCartEvent("payment_failed", { reason: response.error.description });
-      router.push(`/payment-failed?orderId=${orderId}&reason=${encodeURIComponent(response.error.description)}`);
+      const desc = response?.error?.description ?? "Payment failed";
+      setError(desc);
+      toast.error(desc);
+      void postCartEvent("payment_failed", { reason: desc });
     });
 
     razorpay.open();
@@ -661,6 +712,22 @@ const handleOnlinePayment = async () => {
       setProcessingGateway(null);
     }
   };
+
+  if (!isMounted) {
+    return (
+      <div className="py-24 flex items-center justify-center bg-[#F5F1E6] p-4">
+        <div className="w-full max-w-xl bg-white rounded-3xl p-6 shadow-sm border animate-pulse">
+          <div className="h-6 w-40 bg-gray-200 rounded mb-6" />
+          <div className="h-24 bg-gray-100 rounded-xl mb-6" />
+          <div className="h-12 bg-gray-100 rounded-xl mb-6" />
+          <div className="flex gap-3">
+            <div className="h-12 flex-1 bg-gray-200 rounded-full" />
+            <div className="h-12 flex-1 bg-gray-200 rounded-full" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="py-24 flex items-center justify-center bg-[#F5F1E6] p-4">

@@ -44,6 +44,9 @@ export const createOrderSchema = z.object({
 
   paymentStatus: z.enum(["pending", "paid", "failed"]).optional(),
   paymentId: z.string().optional(),
+  razorpayOrderId: z.string().optional(),
+  razorpayPaymentId: z.string().optional(),
+  razorpaySignature: z.string().optional(),
   appliedCouponId: z.string().nullable().optional(),
   sessionKey: z.string().optional(),
 })

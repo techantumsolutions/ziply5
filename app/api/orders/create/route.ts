@@ -20,9 +20,31 @@ export async function POST(request: NextRequest) {
     console.log("Request body:", body)
     const parsed = createOrderSchema.safeParse(body)
     if (!parsed.success) return fail("Validation failed", 422, parsed.error.flatten())
+
+    const isCod = parsed.data.gateway.trim().toLowerCase() === "cod"
+    const isPaidOnline = parsed.data.paymentStatus === "paid"
+
+    if (!isCod && !isPaidOnline) {
+      return fail("Order can only be created upon successful payment or Cash on Delivery.", 400)
+    }
+
+    if (isPaidOnline && parsed.data.gateway.trim().toLowerCase() === "razorpay") {
+      if (parsed.data.razorpayOrderId && parsed.data.razorpayPaymentId && parsed.data.razorpaySignature) {
+        const { verifyRazorpayCheckoutSignature } = await import("@/src/server/modules/payments/payments.service")
+        const isValid = verifyRazorpayCheckoutSignature({
+          razorpayOrderId: parsed.data.razorpayOrderId,
+          razorpayPaymentId: parsed.data.razorpayPaymentId,
+          razorpaySignature: parsed.data.razorpaySignature,
+        })
+        if (!isValid) {
+          return fail("Invalid payment signature from gateway", 400)
+        }
+      }
+    }
+
     const userId = user?.role === "customer" ? user.sub : null
-  console.log("Parsed data:", parsed.data)
-  console.log("Before createOrderFromCheckout")
+    console.log("Parsed data:", parsed.data)
+    console.log("Before createOrderFromCheckout")
     const order = await createOrderFromCheckout({
       items: parsed.data.items,
       userId,

@@ -25,19 +25,38 @@ import { codAmountsMatch } from "@/src/server/modules/payments/cod-payment-link"
 import { refundRazorpayPayment } from "@/src/server/modules/payments/cod-payment-link.service"
 
 const getOrderById = async (orderId: string) => {
-  const client = getSupabaseAdmin()
-
-  const { data, error } = await client
-    .from("Order")
-    .select("*")
-    .eq("id", orderId)
-    .single()
-
-  if (error || !data) {
-    throw new Error("Order not found")
+  try {
+    const basic = await getOrderByIdSupabaseBasic(orderId)
+    if (basic) return basic
+  } catch (err) {
+    console.error("[payments.getOrderById] getOrderByIdSupabaseBasic fallback error:", err)
   }
 
-  return data
+  const client = getSupabaseAdmin()
+  for (const table of ["Order", "orders"]) {
+    try {
+      const { data, error } = await client
+        .from(table)
+        .select("*")
+        .eq("id", orderId)
+        .maybeSingle()
+      if (!error && data) return data
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const pgRes = await pgQuery<any>(
+      `SELECT * FROM "Order" WHERE id = $1 LIMIT 1`,
+      [orderId]
+    )
+    if (pgRes.rows?.[0]) return pgRes.rows[0]
+  } catch {
+    // ignore
+  }
+
+  throw new Error("Order not found")
 }
 
 export type PaymentProvider = "razorpay" | "stripe" | "mock"
@@ -161,43 +180,75 @@ const createStripeIntent = async (input: { orderId: string; amount: number; curr
 }
 
 export const createPaymentIntent = async (input: {
-  orderId: string
+  orderId?: string
+  amount?: number
+  currency?: string
+  receipt?: string
   provider?: string
   actorRole: string
   actorUserId: string
 }) => {
   const provider = normalizeProvider(input.provider)
 
-  const order = await getOrderById(input.orderId)
+  let amount = 0
+  let currency = "INR"
+  let externalId = ""
 
-  if (input.actorRole === "customer" && order.userId && order.userId !== input.actorUserId) {
-    throw new Error("Forbidden")
-  }
+  if (input.orderId) {
+    const order = await getOrderById(input.orderId)
 
-  const amount = Number(order.total)
+    const orderUserId = (order.userId ?? (order as any).user_id) as string | undefined
+    if (input.actorRole === "customer" && orderUserId && orderUserId !== input.actorUserId) {
+      throw new Error("Forbidden")
+    }
 
-  let externalId = randomId(provider)
-  console.log("oder amount = ", amount, input.orderId)
-  if (provider === "razorpay") {
-    externalId = await createRazorpayOrder({
+    amount = Number(order.total ?? (order as any).payable_amount ?? (order as any).amount ?? 0)
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error("Invalid order amount")
+    }
+    currency = (order.currency ?? (order as any).currency_code ?? "INR").toUpperCase()
+
+    externalId = randomId(provider)
+    console.log("order amount = ", amount, input.orderId)
+    if (provider === "razorpay") {
+      externalId = await createRazorpayOrder({
+        orderId: input.orderId,
+        amount,
+        currency,
+      })
+    }
+
+    await upsertTransaction(input.orderId, provider, externalId, amount)
+
+    await setOrderRefundAndPaymentStatusSupabase({
       orderId: input.orderId,
-      amount,
-      currency: order.currency,
+      paymentStatus: "PENDING",
     })
+  } else {
+    // Direct checkout initiation: create payment intent without pre-creating DB order
+    amount = Number(input.amount ?? 0)
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error("Invalid checkout amount")
+    }
+    currency = (input.currency ?? "INR").toUpperCase()
+
+    externalId = randomId(provider)
+    const receiptRef = (input.receipt ?? `chk_${randomUUID().slice(0, 8)}`).slice(0, 40)
+    console.log("checkout amount = ", amount, receiptRef)
+    if (provider === "razorpay") {
+      externalId = await createRazorpayOrder({
+        orderId: receiptRef,
+        amount,
+        currency,
+      })
+    }
   }
-
-  await upsertTransaction(input.orderId, provider, externalId, amount)
-
-  await setOrderRefundAndPaymentStatusSupabase({
-    orderId: input.orderId,
-    paymentStatus: "PENDING",
-  })
 
   return {
     provider,
-    orderId: input.orderId,
+    orderId: input.orderId ?? externalId,
     amount,
-    currency: order.currency,
+    currency,
     externalId,
     publicKey: process.env.RAZORPAY_KEY_ID,
     status: "pending",
@@ -686,9 +737,10 @@ export const processWebhookEvent = async (
       status: isAuthorizedOnly ? "authorized" : isFailed ? "failed" : paid ? "paid" : "pending",
       externalId: incomingPaymentId ?? externalId ?? null,
     }).catch(() => null)
-    if (createdTx?.id) {
+    const createdTxId = typeof createdTx === "string" ? createdTx : (createdTx as any)?.id
+    if (createdTxId) {
       tx = {
-        id: createdTx.id,
+        id: String(createdTxId),
         status: isAuthorizedOnly ? "authorized" : isFailed ? "failed" : paid ? "paid" : "pending",
         externalId: incomingPaymentId ?? externalId ?? null,
       }

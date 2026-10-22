@@ -374,11 +374,15 @@ export default function OrderDetailPage() {
     }),
   )
   const returnRequested = historySet.has("return_requested")
-  const paymentStatus =
-    order?.paymentStatus ??
-    (order?.transactions.some((tx) => tx.status === "paid") ? "paid" : "pending")
+  const isCod = String(order?.paymentMethod ?? "").toLowerCase() === "cod"
+  const isPaymentComplete =
+    String(order?.paymentStatus ?? "").toLowerCase() === "paid" ||
+    String(order?.paymentStatus ?? "").toUpperCase() === "SUCCESS" ||
+    Boolean(order?.transactions?.some((tx) => /paid|captured|success|settled/i.test(tx.status ?? "")))
+  const displayPaymentStatus = isPaymentComplete ? "Payment Success" : isCod ? "COD" : (order?.paymentStatus ?? "Pending")
+  const displayPaymentMethod = isCod ? "COD" : (order?.paymentMethod ?? "Not specified").toUpperCase()
   const codPayUrl = String((order as { codPaymentLinkUrl?: string | null } | null | undefined)?.codPaymentLinkUrl ?? "").trim()
-  const codUnpaid = String(order?.paymentMethod ?? "").toLowerCase() === "cod" && !["success", "paid"].includes(paymentStatus.toLowerCase())
+  const codUnpaid = isCod && !isPaymentComplete
 
   useEffect(() => {
     if (!codUnpaid || !codPayUrl) {
@@ -515,7 +519,7 @@ export default function OrderDetailPage() {
           <OrderSummaryHeroCard
             order={order}
             orderLifecycleStatus={latestLifecycle || order.status}
-            paymentStatus={paymentStatus}
+            paymentStatus={displayPaymentStatus}
             onDownloadInvoice={() => void downloadInvoice()}
             invoiceAvailable={invoiceReady}
             downloadingInvoice={downloadingInvoice}
@@ -540,7 +544,7 @@ export default function OrderDetailPage() {
                     >
                       Pay now
                     </a>
-                  ) : paymentStatus.toLowerCase() === "pending" &&
+                  ) : !isPaymentComplete && !isCod &&
                   order.status.toLowerCase() !== "delivered" &&
                   order.status.toLowerCase() !== "cancelled" ? (
                     <button
@@ -592,9 +596,9 @@ export default function OrderDetailPage() {
               <p className="mt-2 text-[#6B7280]">{order.user?.email ?? "—"}</p>
             </div>
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 text-sm shadow-sm">
-              <p className="mb-2 font-semibold text-[#111827]">Payment Mode :  <span className="text-[#6B7280]">{(order.paymentMethod ?? "Not specified").toUpperCase()}</span> </p>
+              <p className="mb-2 font-semibold text-[#111827]">Payment Mode :  <span className="text-[#6B7280]">{displayPaymentMethod}</span> </p>
               <p className="text-[#111827] font-semibold">
-                Payment Status: <span className=" text-[#6B7280] uppercase">{paymentStatus}</span>
+                Payment Status: <span className=" text-[#6B7280] uppercase">{displayPaymentStatus}</span>
               </p>
               <p className="mt-2 font-semibold text-[#111827]">
                 Total: <span className="text-[#6B7280]">{order.currency} {Number(order.total).toFixed(2)}</span>
