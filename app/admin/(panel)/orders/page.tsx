@@ -1212,9 +1212,9 @@ export default function AdminOrdersPage() {
           })}
         </div>
 
-        {/* 6-Column Horizontal Filter Grid with Labels Above */}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-end">
-          <div>
+        {/* Horizontal Filters Bar with Proportional Sizing */}
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[260px]">
             <label className="text-xs font-semibold text-[#646464]">Search</label>
             <div className="relative mt-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8A8A8A]" />
@@ -1223,31 +1223,38 @@ export default function AdminOrdersPage() {
                 placeholder="Search by order ID, #ID, customer, phone..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white pl-8 pr-3 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
+                className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white pl-8 pr-8 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-[#8A8A8A] hover:bg-[#F3F4F6] hover:text-[#4A1D1F]"
+                  title="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[130px]">
             <label className="text-xs font-semibold text-[#646464]">Payment Status</label>
             <div className="mt-1">
               <Select value={paymentFilter} onValueChange={setPaymentFilter}>
                 <SelectTrigger className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white px-3 text-xs text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
-                  <SelectValue placeholder="All payment statuses" />
+                  <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All payment statuses</SelectItem>
-                  <SelectItem value="success">Payment Success</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
                   <SelectItem value="cod">COD</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="initiated">Initiated</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
+                  <SelectItem value="success">Success</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Date From</label>
             <input
               type="date"
@@ -1257,7 +1264,7 @@ export default function AdminOrdersPage() {
             />
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Date To</label>
             <input
               type="date"
@@ -1267,7 +1274,7 @@ export default function AdminOrdersPage() {
             />
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Sort By</label>
             <div className="mt-1">
               <Select value={sortBy} onValueChange={(v) => setSortBy(v as "latest" | "oldest" | "amount_desc" | "amount_asc")}>
@@ -1284,7 +1291,7 @@ export default function AdminOrdersPage() {
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[115px]">
             <label className="text-xs font-semibold text-[#646464]">Per Page</label>
             <div className="mt-1">
               <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
