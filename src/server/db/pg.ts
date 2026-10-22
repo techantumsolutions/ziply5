@@ -1,10 +1,8 @@
 import { Pool, type PoolConfig } from "pg"
 
-const databaseUrl = process.env.DATABASE_URL
-
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is missing")
-}
+const databaseUrl =
+  process.env.DATABASE_URL ||
+  "postgresql://postgres:postgres@localhost:5432/ziply5_admin?schema=public"
 
 function isIpHost(host: string): boolean {
   const value = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host

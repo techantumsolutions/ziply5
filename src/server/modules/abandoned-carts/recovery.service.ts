@@ -1534,7 +1534,7 @@ if (typeof global !== "undefined") {
     
     console.info(`[ABANDONED CART] Starting background job emulator (every ${JOB_INTERVAL_MS / 1000}s)`)
     
-    setInterval(async () => {
+    const timer = setInterval(async () => {
       try {
         // Always invoke the latest hot-reloaded functions from the global scope
         const detection = await (global as any)._detectAbandonedCarts()
@@ -1547,6 +1547,9 @@ if (typeof global !== "undefined") {
         console.error("[ABANDONED CART JOB ERROR]", err)
       }
     }, JOB_INTERVAL_MS)
+    if (typeof timer.unref === "function") {
+      timer.unref()
+    }
   }
 }
 

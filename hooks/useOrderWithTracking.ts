@@ -31,6 +31,13 @@ export function useOrderWithTracking(orderId: string | undefined, options?: Opti
       if (!res.ok || !payload.success || !payload.data) throw new Error(payload.message ?? "Unable to load order.")
       return payload.data
     },
+    refetchInterval: (q) => {
+      const order = q.state.data
+      const status = String(order?.paymentStatus ?? "").toLowerCase()
+      // If payment is awaiting confirmation, poll every 3.5s until resolved
+      if (status === "pending") return 3500
+      return false
+    },
   })
 
   const trackingQuery = useQuery({
