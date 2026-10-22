@@ -26,6 +26,24 @@ export async function POST(
     const result = await processWebhookEvent(provider, parsed, externalIdHint)
     return ok(result, "Webhook processed")
   } catch (e) {
-    return fail(e instanceof Error ? e.message : "Webhook rejected", 401)
+    const message = e instanceof Error ? e.message : "Webhook rejected"
+    if (
+      message.includes("signature") ||
+      message.includes("secret is not configured") ||
+      message.includes("Unauthorized")
+    ) {
+      return fail(message, 401)
+    }
+    if (message.includes("Malformed") || message.includes("invalid_event")) {
+      return fail(message, 400)
+    }
+    if (
+      message.startsWith("DATABASE_ERROR") ||
+      message.includes("write_failed") ||
+      message.includes("fetch_failed")
+    ) {
+      return fail(message, 500)
+    }
+    return fail(message, 400)
   }
 }
