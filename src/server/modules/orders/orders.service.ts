@@ -940,6 +940,14 @@ export const listOrders = async (
     paymentStatus: deriveEffectivePaymentStatus(order),
   }))
 
+  if (role === "admin") {
+    hydratedItems = hydratedItems.filter((order) => {
+      const isCod = String(order.paymentMethod ?? (order as any).gateway ?? "").trim().toLowerCase() === "cod"
+      const isPaid = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS" || String(order.paymentStatus ?? "").toUpperCase() === "PAID"
+      return isCod || isPaid
+    })
+  }
+
   if (role === "customer" && hydratedItems.length) {
     const summaries = await getLatestTrackingSummariesForOrderIds(hydratedItems.map((o) => String(o.id)))
     const byId = new Map(summaries.map((s) => [s.orderId, s]))

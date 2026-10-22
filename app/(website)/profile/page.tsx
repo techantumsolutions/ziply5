@@ -1087,7 +1087,12 @@ function ProfilePageContent() {
                       !ordersQuery.error &&
                       orders.length === 0 && <p className="text-gray-500">No orders yet.</p>}
                     {authSnapshot.token && authSnapshot.role === "customer" && orders.map((order) => {
-                      const paymentStatus = order.paymentStatus ?? (order.transactions?.some((tx) => tx.status === "paid") ? "paid" : "pending")
+                      const isCod = String(order.paymentMethod ?? "").toLowerCase() === "cod"
+                      const isPaid =
+                        order.paymentStatus?.toLowerCase() === "paid" ||
+                        order.paymentStatus?.toLowerCase() === "success" ||
+                        Boolean(order.transactions?.some((tx) => ["paid", "success", "captured", "settled"].includes(tx.status?.toLowerCase() ?? "")))
+                      const paymentStatus = isPaid ? "Payment Success" : isCod ? "COD" : (order.paymentStatus ?? "Pending")
                       const shippingStatus = (order.shipmentStatus ?? "pending").toLowerCase()
                       const previewItems = order.items.slice(0, 2)
                       const moreItems = Math.max(order.items.length - 2, 0)
@@ -1181,7 +1186,7 @@ function ProfilePageContent() {
                               Cancel Order
                             </button>
                           )}
-                          {paymentStatus.toLowerCase() === "pending" && order.status.toLowerCase() !== "delivered" && order.status.toLowerCase() !== "cancelled" && (
+                          {!isPaid && !isCod && order.status.toLowerCase() !== "delivered" && order.status.toLowerCase() !== "cancelled" && (
                             <button
                               className="rounded-md border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]"
                               type="button"

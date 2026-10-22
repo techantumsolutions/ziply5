@@ -282,7 +282,7 @@ export default function AdminOrdersPage() {
   const getPaymentMethodLabel = (method?: string | null) => {
     if (!method) return "Online Payment";
     const m = method.trim().toLowerCase();
-    if (m === "cod") return "Cash on Delivery (COD)";
+    if (m === "cod") return "COD";
     if (m === "upi") return "UPI";
     if (m === "card" || m === "credit_card" || m === "debit_card") return "Card";
     if (m === "qr" || m === "qr_code") return "QR Code";
@@ -446,7 +446,13 @@ export default function AdminOrdersPage() {
   };
 
   const toPaymentStatus = useCallback((o: OrderRow) => {
-    if (o.transactions?.some((t) => /paid|captured|success/i.test(t.status ?? "")) || (o.paymentStatus ?? "").toUpperCase() === "SUCCESS") return "success";
+    const isPaid =
+      o.transactions?.some((t) => /paid|captured|success|settled/i.test(t.status ?? "")) ||
+      (o.paymentStatus ?? "").toUpperCase() === "SUCCESS" ||
+      (o.paymentStatus ?? "").toUpperCase() === "PAID";
+    if (isPaid) return "success";
+    const isCod = String(o.paymentMethod ?? (o as any).gateway ?? "").trim().toLowerCase() === "cod";
+    if (isCod) return "cod";
     if (o.transactions?.some((t) => /fail/i.test(t.status ?? "")) || (o.paymentStatus ?? "").toUpperCase() === "FAILED") return "failed";
     if ((o.paymentStatus ?? "").toUpperCase() === "INITIATED") return "initiated";
     return "pending";
@@ -477,6 +483,10 @@ export default function AdminOrdersPage() {
       cancelled: 0,
     };
     rows.forEach((o) => {
+      const isCod = String(o.paymentMethod ?? (o as any).gateway ?? "").trim().toLowerCase() === "cod";
+      const isPaid = toPaymentStatus(o) === "success" || String(o.paymentStatus ?? "").toUpperCase() === "SUCCESS" || String(o.paymentStatus ?? "").toUpperCase() === "PAID";
+      if (!isCod && !isPaid) return;
+
       const lc = lifecycleStatus(o);
       const sh = latestShipmentStatus(o);
       if (sh === "cancelled") {
@@ -509,7 +519,7 @@ export default function AdminOrdersPage() {
       }
     });
     return counts;
-  }, [rows, lifecycleStatus, latestShipmentStatus]);
+  }, [rows, lifecycleStatus, latestShipmentStatus, toPaymentStatus]);
 
   const filteredRows = useMemo(() => {
     const rawTerm = searchTerm.trim();
@@ -518,6 +528,10 @@ export default function AdminOrdersPage() {
     const alphaNumTerm = cleanTerm.replace(/[^a-z0-9]/g, "");
 
     let list = rows.filter((o) => {
+      const isCod = String(o.paymentMethod ?? (o as any).gateway ?? "").trim().toLowerCase() === "cod";
+      const isPaid = toPaymentStatus(o) === "success" || String(o.paymentStatus ?? "").toUpperCase() === "SUCCESS" || String(o.paymentStatus ?? "").toUpperCase() === "PAID";
+      if (!isCod && !isPaid) return false;
+
       const payment = toPaymentStatus(o);
       const lifecycle = lifecycleStatus(o);
       const ship = latestShipmentStatus(o);
@@ -1122,8 +1136,8 @@ export default function AdminOrdersPage() {
       o.customerName ?? o.user?.name ?? "",
       o.customerPhone ?? "",
       o.user?.email ?? "",
-      o.paymentMethod ?? "",
-      toPaymentStatus(o),
+      getPaymentMethodLabel(o.paymentMethod),
+      toPaymentStatus(o) === "success" ? "Payment Success" : toPaymentStatus(o) === "cod" ? "COD" : toPaymentStatus(o),
       resolveCanonicalOrderStatus(lifecycleStatus(o), o.statusHistory),
       latestShipmentStatus(o),
       Number(o.total).toFixed(2),
@@ -1198,9 +1212,9 @@ export default function AdminOrdersPage() {
           })}
         </div>
 
-        {/* 6-Column Horizontal Filter Grid with Labels Above */}
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 items-end">
-          <div>
+        {/* Horizontal Filters Bar with Proportional Sizing */}
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[260px]">
             <label className="text-xs font-semibold text-[#646464]">Search</label>
             <div className="relative mt-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#8A8A8A]" />
@@ -1209,30 +1223,38 @@ export default function AdminOrdersPage() {
                 placeholder="Search by order ID, #ID, customer, phone..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white pl-8 pr-3 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
+                className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white pl-8 pr-8 text-xs text-[#4A1D1F] placeholder-[#8A8A8A] focus:border-[#7B3010] focus:outline-none"
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 text-[#8A8A8A] hover:bg-[#F3F4F6] hover:text-[#4A1D1F]"
+                  title="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[130px]">
             <label className="text-xs font-semibold text-[#646464]">Payment Status</label>
             <div className="mt-1">
               <Select value={paymentFilter} onValueChange={setPaymentFilter}>
                 <SelectTrigger className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white px-3 text-xs text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
-                  <SelectValue placeholder="All payment statuses" />
+                  <SelectValue placeholder="All" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All payment statuses</SelectItem>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="cod">COD</SelectItem>
                   <SelectItem value="success">Success</SelectItem>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="initiated">Initiated</SelectItem>
-                  <SelectItem value="failed">Failed</SelectItem>
                 </SelectContent>
               </Select>
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Date From</label>
             <input
               type="date"
@@ -1242,7 +1264,7 @@ export default function AdminOrdersPage() {
             />
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Date To</label>
             <input
               type="date"
@@ -1252,7 +1274,7 @@ export default function AdminOrdersPage() {
             />
           </div>
 
-          <div>
+          <div className="w-full sm:w-[145px]">
             <label className="text-xs font-semibold text-[#646464]">Sort By</label>
             <div className="mt-1">
               <Select value={sortBy} onValueChange={(v) => setSortBy(v as "latest" | "oldest" | "amount_desc" | "amount_asc")}>
@@ -1269,7 +1291,7 @@ export default function AdminOrdersPage() {
             </div>
           </div>
 
-          <div>
+          <div className="w-full sm:w-[115px]">
             <label className="text-xs font-semibold text-[#646464]">Per Page</label>
             <div className="mt-1">
               <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
@@ -1381,7 +1403,12 @@ export default function AdminOrdersPage() {
                           {toPaymentStatus(o) === "success" ? (
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
                               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                              Success
+                              Payment Success
+                            </span>
+                          ) : toPaymentStatus(o) === "cod" ? (
+                            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                              COD
                             </span>
                           ) : toPaymentStatus(o) === "initiated" ? (
                             <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
@@ -1399,9 +1426,6 @@ export default function AdminOrdersPage() {
                               Pending
                             </span>
                           )}
-                        </div>
-                        <div className="text-xs font-semibold text-[#2A1810]">
-                          {getPaymentMethodLabel(o.paymentMethod)}
                         </div>
                         {(() => {
                           const refNo = getTransactionRefNo(o);
@@ -1434,10 +1458,8 @@ export default function AdminOrdersPage() {
                       </div>
                     </td>
                     <td className="px-2 py-2">
-                      <div className="min-w-[130px] space-y-1">
-                        <div>{getShipmentStatusBadge(latestShipmentStatus(o))}</div>
-                        <p className="mt-1 text-[11px] text-[#646464]">{o.courierName ?? o.shipments?.[0]?.carrier ?? "Courier TBD"}</p>
-                        <p className="text-[11px] text-[#646464]">AWB: {o.awbCode ?? o.shipments?.[0]?.trackingNo ?? "Pending"}</p>
+                      <div className="min-w-[130px]">
+                        {getShipmentStatusBadge(latestShipmentStatus(o))}
                       </div>
                     </td>
                     <td className="px-2 py-2 font-semibold">Rs.{Number(o.total).toFixed(2)}</td>

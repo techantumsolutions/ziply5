@@ -678,6 +678,14 @@ export default function AdminOrderDetailPage() {
     );
   };
 
+  const isCodOrder = String(order?.paymentMethod ?? (order as any)?.gateway ?? "").trim().toLowerCase() === "cod";
+  const isPaymentComplete =
+    String(order?.paymentStatus ?? "").toLowerCase() === "paid" ||
+    String(order?.paymentStatus ?? "").toUpperCase() === "SUCCESS" ||
+    Boolean(order?.transactions?.some((t) => /paid|captured|success|settled/i.test(t.status ?? "")));
+  const displayPaymentStatus = isPaymentComplete ? "Payment Success" : isCodOrder ? "COD" : (order?.paymentStatus ?? "Pending");
+  const displayPaymentMethod = isCodOrder ? "COD" : (order?.paymentMethod || "—").replaceAll("_", " ");
+
   return (
     <section className="w-full space-y-4 py-4">
       <div>
@@ -714,8 +722,8 @@ export default function AdminOrderDetailPage() {
           ? `Placed on ${formatOrderDateTime(order.createdAt)}`
           : "Loading"}
         {order ? `  |  Channel: Online Store` : ""}
-        {order?.paymentStatus ? `  |  Payment: ${order.paymentStatus}` : ""}
-        {order?.paymentMethod ? ` (${order.paymentMethod.replaceAll("_", " ")})` : ""}
+        {order ? `  |  Payment: ${displayPaymentStatus}` : ""}
+        {order ? ` (${displayPaymentMethod})` : ""}
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -847,14 +855,14 @@ export default function AdminOrderDetailPage() {
             <div className="flex h-full flex-col rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-semibold text-[#111827]">Payment summary</h2>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${String(order.paymentStatus).toLowerCase() === "paid" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"}`}>
-                  {order.paymentStatus ?? "Pending"}
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${isPaymentComplete ? "bg-green-50 text-green-700 border border-green-200" : isCodOrder ? "bg-amber-50 text-amber-700 border border-amber-200" : "bg-amber-50 text-amber-700"}`}>
+                  {displayPaymentStatus}
                 </span>
               </div>
               <div className="space-y-2 text-sm text-[#374151]">
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[#6B7280]">Payment method</span>
-                  <span className="font-medium capitalize">{(order.paymentMethod || "—").replaceAll("_", " ")}</span>
+                  <span className="font-medium">{displayPaymentMethod}</span>
                 </div>
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[#6B7280]">Transaction ID</span>

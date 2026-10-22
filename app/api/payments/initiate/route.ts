@@ -6,10 +6,17 @@ import { requirePermission } from "@/src/server/middleware/rbac"
 import { checkRateLimit } from "@/src/server/middleware/rateLimit"
 import { createPaymentIntent } from "@/src/server/modules/payments/payments.service"
 
-const schema = z.object({
-  orderId: z.string().min(1),
-  provider: z.enum(["razorpay", "stripe", "mock"]).optional(),
-})
+const schema = z
+  .object({
+    orderId: z.string().min(1).optional(),
+    amount: z.number().positive().optional(),
+    currency: z.string().optional(),
+    receipt: z.string().optional(),
+    provider: z.enum(["razorpay", "stripe", "mock"]).optional(),
+  })
+  .refine((data) => Boolean(data.orderId || (data.amount && data.amount > 0)), {
+    message: "Either orderId or positive amount is required",
+  })
 
 export async function POST(request: NextRequest) {
   const blocked = checkRateLimit(request, "payments:intent", { limit: 20, windowMs: 60_000 })
@@ -27,6 +34,9 @@ export async function POST(request: NextRequest) {
 
     const intent = await createPaymentIntent({
       orderId: parsed.data.orderId,
+      amount: parsed.data.amount,
+      currency: parsed.data.currency,
+      receipt: parsed.data.receipt,
       provider: parsed.data.provider,
       actorRole: auth.user.role,
       actorUserId: auth.user.sub,
