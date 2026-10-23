@@ -470,7 +470,11 @@ export const syncAllActiveShipments = async () => {
       s."shippingStatus",
       s."shipmentStatus"
     FROM "Shipment" s
+    LEFT JOIN "Order" o ON o.id = s."orderId"
     WHERE COALESCE(s."trackingNo", s."awbCode") IS NOT NULL
+      AND (s."shipmentNo" IS NULL OR s."shipmentNo" NOT LIKE 'manual-%')
+      AND LOWER(COALESCE(s.carrier, '')) NOT IN ('manual', 'manual courier')
+      AND LOWER(COALESCE(o."shippingMethod", '')) <> 'manual'
     ORDER BY s."orderId", s."createdAt" DESC
     `,
     [],
