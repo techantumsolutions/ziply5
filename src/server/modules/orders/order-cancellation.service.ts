@@ -24,6 +24,7 @@ type CancelContextRow = {
   shipmentShiprocketOrderId: string | null
   shiprocketShipmentId: string | null
   orderShiprocketOrderId: string | null
+  orderStatus: string | null
 }
 
 const loadCancelContext = async (orderId: string): Promise<CancelContextRow | null> => {
@@ -36,6 +37,7 @@ const loadCancelContext = async (orderId: string): Promise<CancelContextRow | nu
       shipmentShiprocketOrderId: string | null
       shiprocketShipmentId: string | null
       orderShiprocketOrderId: string | null
+      orderStatus: string | null
     }>
   >(
     `
@@ -46,7 +48,8 @@ const loadCancelContext = async (orderId: string): Promise<CancelContextRow | nu
       s."currentStatus" AS "currentStatus",
       s."shiprocketOrderId" AS "shipmentShiprocketOrderId",
       s."shiprocketShipmentId" AS "shiprocketShipmentId",
-      o."shiprocketOrderId" AS "orderShiprocketOrderId"
+      o."shiprocketOrderId" AS "orderShiprocketOrderId",
+      o.status AS "orderStatus"
     FROM "Order" o
     LEFT JOIN LATERAL (
       SELECT sh.*
@@ -185,6 +188,26 @@ export const cancelAdminOrderWithShiprocket = async (params: {
   if (!row) {
     console.log("[admin-order-cancel] order_not_found", { orderId })
     throw new OrderCancellationError("Order not found", 404)
+  }
+
+  const isShipped = [
+    "shipped",
+    "in_transit",
+    "out_for_delivery",
+    "dispatched",
+    "delivered",
+    "completed",
+  ].some((st) =>
+    [row.orderStatus, row.shipmentStatus, row.shippingStatus, row.currentStatus]
+      .map((s) => String(s ?? "").toLowerCase())
+      .includes(st)
+  )
+
+  if (isShipped) {
+    throw new OrderCancellationError(
+      "Cannot cancel an order that has already shipped or delivered.",
+      422,
+    )
   }
 
   const srOrderRaw = String(row.shipmentShiprocketOrderId ?? row.orderShiprocketOrderId ?? "").trim()

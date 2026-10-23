@@ -1671,10 +1671,11 @@ const getOrderSyncEligibility = async (orderId: string) => {
 
 export const pullShiprocketPanelStatus = async (orderId: string, actorId: string) => {
   const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; shiprocketOrderId: string | null; trackingNo: string | null; awbCode: string | null }>>(
-    `SELECT id, "shipmentNo", "shiprocketOrderId", "trackingNo", "awbCode"
-     FROM "Shipment"
-     WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL
-     ORDER BY "createdAt" DESC LIMIT 1`,
+    `SELECT s.id, s."shipmentNo", COALESCE(s."shiprocketOrderId", o."shiprocketOrderId") as "shiprocketOrderId", s."trackingNo", s."awbCode"
+     FROM "Shipment" s
+     LEFT JOIN "Order" o ON o.id = s."orderId"
+     WHERE s."orderId" = $1 AND COALESCE(lower(s."shipmentStatus"), '') <> 'cancelled' AND s."cancelledAt" IS NULL
+     ORDER BY s."createdAt" DESC LIMIT 1`,
     [orderId],
   )
   const shipment = rows[0]
@@ -1756,14 +1757,12 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
       eligibility.reason === "shipment already exists"
     if (panelRefresh) {
       const pulled = await pullShiprocketPanelStatus(orderId, actorId)
-      if (pulled.shipmentStatus) {
-        return {
-          status: "synced" as const,
-          orderId,
-          pulled,
-          reason: "Shipment and order status were updated from Shiprocket.",
-          syncTime: new Date().toISOString(),
-        }
+      return {
+        status: "synced" as const,
+        orderId,
+        pulled,
+        reason: "Shipment and order status were updated from Shiprocket.",
+        syncTime: new Date().toISOString(),
       }
     }
     shipmentConsole("sync.skipped", { orderId, reason: eligibility.reason, skippedReason: resolveSkippedReason(eligibility.reason) })
@@ -1840,7 +1839,9 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
           created = await runWithTransientRetry(() => createShiprocketShipmentForOrder(orderId, actorId, { panelDefaults: true }), 1)
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown"
-          if (/not serviceable|manual shipment|non-serviceable|serviceability|pincode|courier|no courier|delivery postcode missing/i.test(message)) {
+          if (message.toLowerCase().includes("shipment already exists")) {
+            shipmentLog("info", "sync.panel_sync.shipment_already_exists_continuing", { orderId })
+          } else if (/not serviceable|manual shipment|non-serviceable|serviceability|pincode|courier|no courier|delivery postcode missing/i.test(message)) {
             return {
               status: "failed" as const,
               orderId,
@@ -1850,14 +1851,15 @@ export const syncOrderToShiprocket = async (orderId: string, actorId: string, op
               error: message,
               syncTime: new Date().toISOString(),
             }
-          }
-          return {
-            status: "failed" as const,
-            orderId,
-            reason: message,
-            stage: "create_shipment",
-            error: message,
-            syncTime: new Date().toISOString(),
+          } else {
+            return {
+              status: "failed" as const,
+              orderId,
+              reason: message,
+              stage: "create_shipment",
+              error: message,
+              syncTime: new Date().toISOString(),
+            }
           }
         }
       }
@@ -2099,7 +2101,7 @@ export const syncBulkOrders = async (
   }
   const synced = results.filter((r) => r.status === "synced").length
   const failed = results.filter((r) => r.status === "failed").length
-  const skipped = results.filter((r) => r.status === "skipped").length
+  const skipped = results.filter((r) => (r.status as string) === "skipped").length
   const summary = {
     total: results.length,
     synced,

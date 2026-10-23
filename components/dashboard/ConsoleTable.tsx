@@ -4,14 +4,18 @@ export function ConsoleTable({
   headers,
   children,
   headerClassNames,
+  className = "",
+  tableClassName = "",
 }: {
   headers: string[]
   children: ReactNode
   headerClassNames?: Record<number, string>
+  className?: string
+  tableClassName?: string
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
-      <table className="w-full min-w-[560px] text-left text-sm">
+    <div className={`overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm ${className}`}>
+      <table className={`w-full ${tableClassName || "min-w-[560px]"} text-left text-sm`}>
         <thead className="bg-[#4A1D1F] text-[11px] font-semibold uppercase tracking-wide text-[#F5F1E6]">
           <tr>
             {headers.map((h, idx) => (
