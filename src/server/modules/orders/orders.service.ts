@@ -942,7 +942,7 @@ export const listOrders = async (
 
   if (role === "admin") {
     hydratedItems = hydratedItems.filter((order) => {
-      const isCod = String(order.paymentMethod ?? (order as any).gateway ?? "").trim().toLowerCase() === "cod"
+      const isCod = String((order as any).paymentMethod ?? (order as any).gateway ?? "").trim().toLowerCase() === "cod"
       const isPaid = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS" || String(order.paymentStatus ?? "").toUpperCase() === "PAID"
       return isCod || isPaid
     })

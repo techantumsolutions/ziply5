@@ -15,7 +15,6 @@ import {
   RotateCcw,
   ShoppingBag,
   Wallet,
-  TrendingUp,
   TicketPercent,
   BadgePercent,
   Box,
@@ -31,17 +30,6 @@ const adminNav: DashboardNavItem[] = [
   { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
   { href: "/admin/products", label: "Products", icon: Package },
   {
-    label: "Content",
-    icon: FileText,
-    subItems: [
-      { href: "/admin/cms", label: "CMS Pages", icon: FileText },
-      { href: "/admin/product-usage", label: "Product Usage", icon: FileText },
-    ],
-  },
-  { href: "/admin/users", label: "Customers", icon: Users },
-  { href: "/admin/reviews", label: "Reviews", icon: Star },
-  { href: "/admin/returns", label: "Returns", icon: RotateCcw },
-  {
     label: "Offers",
     icon: TicketPercent,
     subItems: [
@@ -53,11 +41,21 @@ const adminNav: DashboardNavItem[] = [
       { href: "/admin/offers/bogo-offers", label: "BOGO Offers", icon: Gift },
     ],
   },
-  { href: "/admin/inbox", label: "Inbox", icon: FileText },
-  { href: "/admin/abandoned-carts", label: "Abandoned carts", icon: ShoppingBag },
+  {
+    label: "CMS",
+    icon: FileText,
+    subItems: [
+      { href: "/admin/cms", label: "CMS Pages", icon: FileText },
+      { href: "/admin/product-usage", label: "Product Usage", icon: FileText },
+    ],
+  },
+  { href: "/admin/users", label: "Customers", icon: Users },
+  { href: "/admin/reviews", label: "Reviews", icon: Star },
+  { href: "/admin/returns", label: "Returns", icon: RotateCcw },
   { href: "/admin/finance", label: "Finance", icon: Wallet },
   { href: "/admin/reports", label: "Sales report", icon: BarChart3 },
-  { href: "/admin/top-products", label: "Top products", icon: TrendingUp },
+  { href: "/admin/abandoned-carts", label: "Abandoned carts", icon: ShoppingBag },
+  { href: "/admin/inbox", label: "Inbox", icon: FileText },
   {
     label: "Settings",
     icon: Settings,

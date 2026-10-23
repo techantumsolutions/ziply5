@@ -17,6 +17,7 @@ const schema = z.object({
   trackingUrl: z.string().optional(),
   courierName: z.string().optional(),
   slipUrl: z.string().optional(),
+  packageImages: z.array(z.string()).optional(),
   shipmentStatus: z.string().optional(),
   orderStatus: z.string().optional(),
 })
@@ -45,6 +46,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
         trackingUrl: parsed.data.trackingUrl ?? "",
         courierName: parsed.data.courierName,
         slipUrl: parsed.data.slipUrl,
+        packageImages: parsed.data.packageImages,
       })
       return ok(created, "Manual shipment saved")
     }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react"
 import { authedDelete, authedFetch, authedPatch, authedPost, authedPut } from "@/lib/dashboard-fetch"
+import { Plus, X, ChevronLeft, ChevronRight } from "lucide-react"
 import {
   Select,
   SelectContent,
@@ -53,6 +54,7 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [selectedLogOfferId, setSelectedLogOfferId] = useState<string>("")
   const [logs, setLogs] = useState<Array<{ id: string; user_id: string | null; order_id: string | null; savings: number; status: string; used_at: string }>>([])
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const [draft, setDraft] = useState({
     id: "",
     name: "",
@@ -217,6 +219,7 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
         await authedPost<{ id: string }>("/api/v1/offers", payload)
       }
       resetDraft()
+      setIsModalOpen(false)
       await load()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to save offer")
@@ -229,9 +232,9 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
     if (type === "coupon") {
       return (
         <>
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Usage limit total" value={draft.usageLimitTotal} onChange={(e) => setDraft((p) => ({ ...p, usageLimitTotal: e.target.value }))} />
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Usage per user" value={draft.usageLimitPerUser} onChange={(e) => setDraft((p) => ({ ...p, usageLimitPerUser: e.target.value }))} />
-          <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"><input type="checkbox" checked={draft.firstOrderOnly} onChange={(e) => setDraft((p) => ({ ...p, firstOrderOnly: e.target.checked }))} />First order only</label>
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Usage limit total" value={draft.usageLimitTotal} onChange={(e) => setDraft((p) => ({ ...p, usageLimitTotal: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Usage per user" value={draft.usageLimitPerUser} onChange={(e) => setDraft((p) => ({ ...p, usageLimitPerUser: e.target.value }))} />
+          <label className="flex items-center gap-2 rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm"><input type="checkbox" checked={draft.firstOrderOnly} onChange={(e) => setDraft((p) => ({ ...p, firstOrderOnly: e.target.checked }))} />First order only</label>
         </>
       )
     }
@@ -240,7 +243,7 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
       return (
         <>
           <Select value={draft.shippingMode} onValueChange={(v) => setDraft((p) => ({ ...p, shippingMode: v }))}>
-            <SelectTrigger className="!h-[38px] w-full rounded-xl border px-3 py-2 text-sm shadow-none focus:ring-0">
+            <SelectTrigger className="!h-[38px] w-full rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm shadow-none focus:ring-0">
               <SelectValue placeholder="Shipping Mode" />
             </SelectTrigger>
             <SelectContent>
@@ -249,17 +252,17 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
               <SelectItem value="percentage">Reduced Shipping (%)</SelectItem>
             </SelectContent>
           </Select>
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Shipping discount value" value={draft.shippingDiscountValue} onChange={(e) => setDraft((p) => ({ ...p, shippingDiscountValue: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Shipping discount value" value={draft.shippingDiscountValue} onChange={(e) => setDraft((p) => ({ ...p, shippingDiscountValue: e.target.value }))} />
         </>
       )
     }
     if (type === "bogo") {
       return (
         <>
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Buy qty" value={draft.buyQty} onChange={(e) => setDraft((p) => ({ ...p, buyQty: e.target.value }))} />
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Get qty" value={draft.getQty} onChange={(e) => setDraft((p) => ({ ...p, getQty: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Buy qty" value={draft.buyQty} onChange={(e) => setDraft((p) => ({ ...p, buyQty: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Get qty" value={draft.getQty} onChange={(e) => setDraft((p) => ({ ...p, getQty: e.target.value }))} />
           <Select value={draft.rewardType} onValueChange={(v) => setDraft((p) => ({ ...p, rewardType: v }))}>
-            <SelectTrigger className="!h-[28px] w-full rounded-xl border px-3 py-2 text-sm shadow-none focus:ring-0">
+            <SelectTrigger className="!h-[38px] w-full rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm shadow-none focus:ring-0">
               <SelectValue placeholder="Reward Type" />
             </SelectTrigger>
             <SelectContent>
@@ -267,11 +270,11 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
               <SelectItem value="percentage_off">% Off</SelectItem>
             </SelectContent>
           </Select>
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Reward value (for % off)" value={draft.rewardValue} onChange={(e) => setDraft((p) => ({ ...p, rewardValue: e.target.value }))} />
-          <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm"><input type="checkbox" checked={draft.repeatable} onChange={(e) => setDraft((p) => ({ ...p, repeatable: e.target.checked }))} />Repeatable</label>
-          <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Max free units" value={draft.maxFreeUnits} onChange={(e) => setDraft((p) => ({ ...p, maxFreeUnits: e.target.value }))} />
-          <input className="rounded-xl border px-3 py-2 text-sm md:col-span-2" placeholder="Eligible product IDs (comma, optional)" value={draft.targetProductIds} onChange={(e) => setDraft((p) => ({ ...p, targetProductIds: e.target.value }))} />
-          <input className="rounded-xl border px-3 py-2 text-sm md:col-span-2" placeholder="Eligible category IDs (comma, optional)" value={draft.targetCategoryIds} onChange={(e) => setDraft((p) => ({ ...p, targetCategoryIds: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Reward value (for % off)" value={draft.rewardValue} onChange={(e) => setDraft((p) => ({ ...p, rewardValue: e.target.value }))} />
+          <label className="flex items-center gap-2 rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm"><input type="checkbox" checked={draft.repeatable} onChange={(e) => setDraft((p) => ({ ...p, repeatable: e.target.checked }))} />Repeatable</label>
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none" placeholder="Max free units" value={draft.maxFreeUnits} onChange={(e) => setDraft((p) => ({ ...p, maxFreeUnits: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm md:col-span-2 focus:border-[#7B3010] focus:outline-none" placeholder="Eligible product IDs (comma, optional)" value={draft.targetProductIds} onChange={(e) => setDraft((p) => ({ ...p, targetProductIds: e.target.value }))} />
+          <input className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm md:col-span-2 focus:border-[#7B3010] focus:outline-none" placeholder="Eligible category IDs (comma, optional)" value={draft.targetCategoryIds} onChange={(e) => setDraft((p) => ({ ...p, targetCategoryIds: e.target.value }))} />
         </>
       )
     }
@@ -280,50 +283,164 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
 
   return (
     <section className="w-full space-y-4">
-      <div>
-        <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{title}</h1>
-        <p className="text-sm text-[#646464]">{subtitle}</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="font-melon text-2xl font-bold text-[#4A1D1F]">{title}</h1>
+          <p className="text-sm text-[#646464]">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            resetDraft()
+            setIsModalOpen(true)
+          }}
+          className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-5 py-2.5 text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#60250C] transition-colors shadow-sm shrink-0 cursor-pointer"
+        >
+          <Plus className="h-4 w-4" />
+          <span>Create Offer</span>
+        </button>
       </div>
 
-      <div className="grid gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm md:grid-cols-4">
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Offer name" value={draft.name} onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))} />
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder={type === "coupon" ? "Coupon code (required)" : "Coupon code (optional)"} value={draft.code} onChange={(e) => setDraft((p) => ({ ...p, code: e.target.value.toUpperCase() }))} />
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Description" value={draft.description} onChange={(e) => setDraft((p) => ({ ...p, description: e.target.value }))} />
-        <label className="flex items-center justify-between gap-3 rounded-xl border px-3 py-2 text-sm">
-          <span>Enabled</span>
-          <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft((p) => ({ ...p, enabled: e.target.checked }))} />
-        </label>
-        <input type="number" className="rounded-xl border px-3 py-2 text-sm" placeholder="Priority" value={draft.priority} onChange={(e) => setDraft((p) => ({ ...p, priority: Number(e.target.value) }))} />
-        <Select value={draft.discountType} onValueChange={(v) => setDraft((p) => ({ ...p, discountType: v }))}>
-          <SelectTrigger className="!h-[38px] w-full rounded-xl border px-3 py-2 text-sm shadow-none focus:ring-0">
-            <SelectValue placeholder="Discount Type" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="percentage">Percentage</SelectItem>
-            <SelectItem value="flat">Flat</SelectItem>
-          </SelectContent>
-        </Select>
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Discount value" value={draft.discountValue} onChange={(e) => setDraft((p) => ({ ...p, discountValue: e.target.value }))} />
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Max discount cap (optional)" value={draft.maxDiscountCap} onChange={(e) => setDraft((p) => ({ ...p, maxDiscountCap: e.target.value }))} />
-        <input className="rounded-xl border px-3 py-2 text-sm" placeholder="Min cart value (optional)" value={draft.minCartValue} onChange={(e) => setDraft((p) => ({ ...p, minCartValue: e.target.value }))} />
-        <input type="datetime-local" className="rounded-xl border px-3 py-2 text-sm" value={draft.startsAt} onChange={(e) => setDraft((p) => ({ ...p, startsAt: e.target.value }))} />
-        <input type="datetime-local" className="rounded-xl border px-3 py-2 text-sm" value={draft.endsAt} onChange={(e) => setDraft((p) => ({ ...p, endsAt: e.target.value }))} />
-        <label className="flex items-center gap-2 rounded-xl border px-3 py-2 text-sm">
-          <input type="checkbox" checked={draft.stackable} onChange={(e) => setDraft((p) => ({ ...p, stackable: e.target.checked }))} />
-          Stackable
-        </label>
-        {renderTypeSpecificFields()}
-        <div className="md:col-span-4 flex gap-2">
-          <button type="button" onClick={() => void upsert()} disabled={busy} className="rounded-full bg-[#7B3010] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-white disabled:opacity-50">
-            {draft.id ? "Update Offer" : "Create Offer"}
-          </button>
-          {draft.id ? (
-            <button type="button" onClick={resetDraft} className="rounded-full border border-[#7B3010] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#7B3010]">
-              Cancel Edit
-            </button>
-          ) : null}
+      {/* Modal Popup Section for Create/Edit */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-3xl rounded-2xl bg-white p-6 shadow-2xl overflow-y-auto max-h-[90vh] space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E8DCC8] pb-3">
+              <div>
+                <h2 className="font-melon text-lg font-bold text-[#4A1D1F]">
+                  {draft.id ? "Edit Offer" : `Create ${title.replace(/s$/, "")}`}
+                </h2>
+                <p className="text-xs text-[#646464]">
+                  {draft.id
+                    ? "Update the configuration and details for this offer."
+                    : "Fill in the details below to create a new offer."}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsModalOpen(false)
+                  resetDraft()
+                }}
+                className="rounded-full p-1.5 text-[#7A7A7A] hover:bg-slate-100 hover:text-black transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-4">
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Offer name"
+                value={draft.name}
+                onChange={(e) => setDraft((p) => ({ ...p, name: e.target.value }))}
+              />
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder={type === "coupon" ? "Coupon code (required)" : "Coupon code (optional)"}
+                value={draft.code}
+                onChange={(e) => setDraft((p) => ({ ...p, code: e.target.value.toUpperCase() }))}
+              />
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Description"
+                value={draft.description}
+                onChange={(e) => setDraft((p) => ({ ...p, description: e.target.value }))}
+              />
+              <label className="flex items-center justify-between gap-3 rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm">
+                <span>Enabled</span>
+                <input
+                  type="checkbox"
+                  checked={draft.enabled}
+                  onChange={(e) => setDraft((p) => ({ ...p, enabled: e.target.checked }))}
+                />
+              </label>
+              <input
+                type="number"
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Priority"
+                value={draft.priority}
+                onChange={(e) => setDraft((p) => ({ ...p, priority: Number(e.target.value) }))}
+              />
+              <Select value={draft.discountType} onValueChange={(v) => setDraft((p) => ({ ...p, discountType: v }))}>
+                <SelectTrigger className="!h-[38px] w-full rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm shadow-none focus:ring-0">
+                  <SelectValue placeholder="Discount Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percentage">Percentage</SelectItem>
+                  <SelectItem value="flat">Flat</SelectItem>
+                </SelectContent>
+              </Select>
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Discount value"
+                value={draft.discountValue}
+                onChange={(e) => setDraft((p) => ({ ...p, discountValue: e.target.value }))}
+              />
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Max discount cap (optional)"
+                value={draft.maxDiscountCap}
+                onChange={(e) => setDraft((p) => ({ ...p, maxDiscountCap: e.target.value }))}
+              />
+              <input
+                className="rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm focus:border-[#7B3010] focus:outline-none"
+                placeholder="Min cart value (optional)"
+                value={draft.minCartValue}
+                onChange={(e) => setDraft((p) => ({ ...p, minCartValue: e.target.value }))}
+              />
+              <div>
+                <label className="block text-[10px] font-semibold text-[#646464] mb-0.5">Starts At</label>
+                <input
+                  type="datetime-local"
+                  className="w-full rounded-xl border border-[#D9D9D1] px-3 py-1.5 text-xs focus:border-[#7B3010] focus:outline-none"
+                  value={draft.startsAt}
+                  onChange={(e) => setDraft((p) => ({ ...p, startsAt: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold text-[#646464] mb-0.5">Ends At</label>
+                <input
+                  type="datetime-local"
+                  className="w-full rounded-xl border border-[#D9D9D1] px-3 py-1.5 text-xs focus:border-[#7B3010] focus:outline-none"
+                  value={draft.endsAt}
+                  onChange={(e) => setDraft((p) => ({ ...p, endsAt: e.target.value }))}
+                />
+              </div>
+              <label className="flex items-center gap-2 rounded-xl border border-[#D9D9D1] px-3 py-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={draft.stackable}
+                  onChange={(e) => setDraft((p) => ({ ...p, stackable: e.target.checked }))}
+                />
+                Stackable
+              </label>
+              {renderTypeSpecificFields()}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-[#E8DCC8] pt-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsModalOpen(false)
+                  resetDraft()
+                }}
+                className="rounded-full border border-[#D9D9D1] px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void upsert()}
+                disabled={busy}
+                className="rounded-full bg-[#7B3010] px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#60250C] transition-colors disabled:opacity-50"
+              >
+                {busy ? "Saving..." : draft.id ? "Update Offer" : "Create Offer"}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -374,103 +491,109 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b text-left text-xs uppercase text-[#7A7A7A]">
-                <th className="px-2 py-2"><input type="checkbox" checked={rows.length > 0 && selectedIds.length === rows.length} onChange={(e) => setSelectedIds(e.target.checked ? rows.map((r) => r.id) : [])} /></th>
+                <th className="px-2 py-2 w-10 text-center"><input type="checkbox" checked={rows.length > 0 && selectedIds.length === rows.length} onChange={(e) => setSelectedIds(e.target.checked ? rows.map((r) => r.id) : [])} /></th>
+                <th className="px-2 py-2 w-12 text-center font-bold">S.No.</th>
                 <th className="px-2 py-2">Name</th>
                 <th className="px-2 py-2">Code</th>
                 <th className="px-2 py-2">Status</th>
                 <th className="px-2 py-2">Priority</th>
                 <th className="px-2 py-2">Usage</th>
                 <th className="px-2 py-2">Schedule</th>
-                <th className="px-2 py-2">Actions</th>
+                <th className="px-2 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-b align-top">
-                  <td className="px-2 py-2"><input type="checkbox" checked={selectedIds.includes(row.id)} onChange={(e) => setSelectedIds((prev) => e.target.checked ? [...new Set([...prev, row.id])] : prev.filter((id) => id !== row.id))} /></td>
-                  <td className="px-2 py-2">
-                    <div className="font-semibold text-[#2A1810]">{row.name}</div>
-                    <div className="text-xs text-[#7A7A7A]">{row.description || "-"}</div>
-                  </td>
-                  <td className="px-2 py-2 text-xs">{row.code || "-"}</td>
-                  <td className="px-2 py-2">
-                    {(() => {
-                      const badge = getStatusBadge(row)
-                      const tone =
-                        badge.tone === "green"
-                          ? "bg-green-50 text-green-700 border-green-200"
-                          : badge.tone === "blue"
-                            ? "bg-blue-50 text-blue-700 border-blue-200"
-                            : badge.tone === "amber"
-                              ? "bg-amber-50 text-amber-700 border-amber-200"
-                              : "bg-gray-50 text-gray-700 border-gray-200"
-                      return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${tone}`}>{badge.label}</span>
-                    })()}
-                  </td>
-                  <td className="px-2 py-2">{row.priority}</td>
-                  <td className="px-2 py-2 text-xs text-[#7A7A7A]">
-                    {row.usageCount ?? 0} uses / Rs.{Number(row.totalSavings ?? 0).toFixed(0)}
-                  </td>
-                  <td className="px-2 py-2 text-xs text-[#7A7A7A]">{row.starts_at ? new Date(row.starts_at).toLocaleDateString() : "Any"} - {row.ends_at ? new Date(row.ends_at).toLocaleDateString() : "No end"}</td>
-                  <td className="px-2 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      <button
-                        type="button"
-                        className="rounded-full border px-2 py-1 text-[10px]"
-                        onClick={() => {
-                          const cfg = (row.config ?? {}) as Record<string, unknown>
-                          setDraft({
-                            id: row.id,
-                            name: row.name,
-                            code: row.code ?? "",
-                            description: row.description ?? "",
-                            enabled: row.status === "active",
-                            priority: row.priority,
-                            stackable: row.stackable,
-                            startsAt: row.starts_at ? row.starts_at.slice(0, 16) : "",
-                            endsAt: row.ends_at ? row.ends_at.slice(0, 16) : "",
-                            discountType: String(cfg.discountType ?? "percentage"),
-                            discountValue: String(cfg.discountValue ?? "0"),
-                            maxDiscountCap: cfg.maxDiscountCap == null ? "" : String(cfg.maxDiscountCap),
-                            minCartValue: cfg.minCartValue == null ? "" : String(cfg.minCartValue),
-                            usageLimitTotal: cfg.usageLimitTotal == null ? "" : String(cfg.usageLimitTotal),
-                            usageLimitPerUser: cfg.usageLimitPerUser == null ? "" : String(cfg.usageLimitPerUser),
-                            firstOrderOnly: Boolean(cfg.firstOrderOnly ?? false),
-                            buyQty: String(cfg.buyQty ?? "2"),
-                            getQty: String(cfg.getQty ?? "1"),
-                            rewardType: String(cfg.rewardType ?? "free"),
-                            rewardValue: String(cfg.rewardValue ?? "0"),
-                            repeatable: Boolean(cfg.repeatable ?? true),
-                            maxFreeUnits: cfg.maxFreeUnits == null ? "" : String(cfg.maxFreeUnits),
-                            shippingMode: String(cfg.mode ?? "flat"),
-                            shippingDiscountValue: String(cfg.discountValue ?? "0"),
-                            targetProductIds: "",
-                            targetCategoryIds: "",
-                          })
-                        }}
-                      >
-                        Edit
-                      </button>
-                      <button type="button" className="rounded-full border px-2 py-1 text-[10px]" onClick={() => void authedPatch("/api/v1/offers", { id: row.id, action: "duplicate" }).then(() => load())}>Duplicate</button>
-                      <button
-                        type="button"
-                        className="rounded-full border px-2 py-1 text-[10px]"
-                        onClick={() => {
-                          const next = row.status === "active" ? ("inactive" as const) : ("active" as const)
-                          void authedPatch("/api/v1/offers", { id: row.id, action: "toggle", status: next }).then(() => load())
-                        }}
-                      >
-                        {row.status === "active" ? "Disable" : "Enable"}
-                      </button>
-                      <button type="button" className="rounded-full border px-2 py-1 text-[10px]" onClick={() => setSelectedLogOfferId(row.id)}>Logs</button>
-                      <button type="button" className="rounded-full border border-red-300 px-2 py-1 text-[10px] text-red-700" onClick={() => void authedDelete(`/api/v1/offers?id=${row.id}`).then(() => load())}>Delete</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+              {rows.map((row, index) => {
+                const sNo = (page - 1) * pageSize + index + 1;
+                return (
+                  <tr key={row.id} className="border-b align-top hover:bg-[#FFFBF3]/50 transition-colors">
+                    <td className="px-2 py-2 text-center"><input type="checkbox" checked={selectedIds.includes(row.id)} onChange={(e) => setSelectedIds((prev) => e.target.checked ? [...new Set([...prev, row.id])] : prev.filter((id) => id !== row.id))} /></td>
+                    <td className="px-2 py-2 text-center text-xs font-semibold text-[#646464]">{sNo}</td>
+                    <td className="px-2 py-2">
+                      <div className="font-semibold text-[#2A1810]">{row.name}</div>
+                      <div className="text-xs text-[#7A7A7A]">{row.description || "-"}</div>
+                    </td>
+                    <td className="px-2 py-2 text-xs">{row.code || "-"}</td>
+                    <td className="px-2 py-2">
+                      {(() => {
+                        const badge = getStatusBadge(row)
+                        const tone =
+                          badge.tone === "green"
+                            ? "bg-green-50 text-green-700 border-green-200"
+                            : badge.tone === "blue"
+                              ? "bg-blue-50 text-blue-700 border-blue-200"
+                              : badge.tone === "amber"
+                                ? "bg-amber-50 text-amber-700 border-amber-200"
+                                : "bg-gray-50 text-gray-700 border-gray-200"
+                        return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase ${tone}`}>{badge.label}</span>
+                      })()}
+                    </td>
+                    <td className="px-2 py-2">{row.priority}</td>
+                    <td className="px-2 py-2 text-xs text-[#7A7A7A]">
+                      {row.usageCount ?? 0} uses / Rs.{Number(row.totalSavings ?? 0).toFixed(0)}
+                    </td>
+                    <td className="px-2 py-2 text-xs text-[#7A7A7A]">{row.starts_at ? new Date(row.starts_at).toLocaleDateString() : "Any"} - {row.ends_at ? new Date(row.ends_at).toLocaleDateString() : "No end"}</td>
+                    <td className="px-2 py-2 text-right">
+                      <div className="flex flex-wrap justify-end gap-1">
+                        <button
+                          type="button"
+                          className="rounded-full border border-[#7B3010] px-2.5 py-1 text-[10px] font-semibold text-[#7B3010] hover:bg-[#7B3010] hover:text-white transition-colors"
+                          onClick={() => {
+                            const cfg = (row.config ?? {}) as Record<string, unknown>
+                            setDraft({
+                              id: row.id,
+                              name: row.name,
+                              code: row.code ?? "",
+                              description: row.description ?? "",
+                              enabled: row.status === "active",
+                              priority: row.priority,
+                              stackable: row.stackable,
+                              startsAt: row.starts_at ? row.starts_at.slice(0, 16) : "",
+                              endsAt: row.ends_at ? row.ends_at.slice(0, 16) : "",
+                              discountType: String(cfg.discountType ?? "percentage"),
+                              discountValue: String(cfg.discountValue ?? "0"),
+                              maxDiscountCap: cfg.maxDiscountCap == null ? "" : String(cfg.maxDiscountCap),
+                              minCartValue: cfg.minCartValue == null ? "" : String(cfg.minCartValue),
+                              usageLimitTotal: cfg.usageLimitTotal == null ? "" : String(cfg.usageLimitTotal),
+                              usageLimitPerUser: cfg.usageLimitPerUser == null ? "" : String(cfg.usageLimitPerUser),
+                              firstOrderOnly: Boolean(cfg.firstOrderOnly ?? false),
+                              buyQty: String(cfg.buyQty ?? "2"),
+                              getQty: String(cfg.getQty ?? "1"),
+                              rewardType: String(cfg.rewardType ?? "free"),
+                              rewardValue: String(cfg.rewardValue ?? "0"),
+                              repeatable: Boolean(cfg.repeatable ?? true),
+                              maxFreeUnits: cfg.maxFreeUnits == null ? "" : String(cfg.maxFreeUnits),
+                              shippingMode: String(cfg.mode ?? "flat"),
+                              shippingDiscountValue: String(cfg.discountValue ?? "0"),
+                              targetProductIds: "",
+                              targetCategoryIds: "",
+                            })
+                            setIsModalOpen(true)
+                          }}
+                        >
+                          Edit
+                        </button>
+                        <button type="button" className="rounded-full border px-2 py-1 text-[10px] hover:bg-slate-50 transition-colors" onClick={() => void authedPatch("/api/v1/offers", { id: row.id, action: "duplicate" }).then(() => load())}>Duplicate</button>
+                        <button
+                          type="button"
+                          className="rounded-full border px-2 py-1 text-[10px] hover:bg-slate-50 transition-colors"
+                          onClick={() => {
+                            const next = row.status === "active" ? ("inactive" as const) : ("active" as const)
+                            void authedPatch("/api/v1/offers", { id: row.id, action: "toggle", status: next }).then(() => load())
+                          }}
+                        >
+                          {row.status === "active" ? "Disable" : "Enable"}
+                        </button>
+                        <button type="button" className="rounded-full border px-2 py-1 text-[10px] hover:bg-slate-50 transition-colors" onClick={() => setSelectedLogOfferId(row.id)}>Logs</button>
+                        <button type="button" className="rounded-full border border-red-300 px-2 py-1 text-[10px] text-red-700 hover:bg-red-50 transition-colors" onClick={() => void authedDelete(`/api/v1/offers?id=${row.id}`).then(() => load())}>Delete</button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-6 text-center text-sm text-[#7A7A7A]">
+                  <td colSpan={9} className="px-3 py-6 text-center text-sm text-[#7A7A7A]">
                     {busy ? "Loading offers..." : "No offers found"}
                   </td>
                 </tr>
@@ -478,22 +601,42 @@ export default function OffersModulePage({ type, title, subtitle }: { type: Offe
             </tbody>
           </table>
         </div>
-        <div className="mt-3 flex items-center justify-between text-xs text-[#7A7A7A]">
-          <span>Total {total}</span>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-[#7A7A7A]">
+          <span>
+            Showing {(page - 1) * pageSize + (rows.length ? 1 : 0)} to {Math.min(page * pageSize, total)} of {total} offers
+          </span>
           <div className="flex items-center gap-2">
             <Select value={String(pageSize)} onValueChange={(v) => { setPageSize(Number(v)); setPage(1) }}>
-              <SelectTrigger className="!h-[28px] w-[65px] rounded-full border px-2 py-1 text-xs shadow-none focus:ring-0">
+              <SelectTrigger className="!h-[28px] w-[80px] rounded-full border px-2 py-1 text-xs shadow-none focus:ring-0">
                 <SelectValue placeholder="Size" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="10">10</SelectItem>
-                <SelectItem value="20">20</SelectItem>
-                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="10">10 / page</SelectItem>
+                <SelectItem value="20">20 / page</SelectItem>
+                <SelectItem value="50">50 / page</SelectItem>
               </SelectContent>
             </Select>
-            <button type="button" className="rounded-full border px-2 py-1 disabled:opacity-40" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Prev</button>
-            <span>Page {page}</span>
-            <button type="button" className="rounded-full border px-2 py-1 disabled:opacity-40" disabled={page * pageSize >= total} onClick={() => setPage((p) => p + 1)}>Next</button>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <span className="px-2 font-semibold text-[#4A1D1F]">
+                Page {page} of {Math.ceil(total / pageSize) || 1}
+              </span>
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                disabled={page * pageSize >= total}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
           </div>
         </div>
         {error ? <p className="mt-3 text-xs text-red-600">{error}</p> : null}
