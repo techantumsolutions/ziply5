@@ -15,6 +15,8 @@
     "seed:auth": "node scripts/seed-auth.mjs",
     "db:migrate": "node --env-file=.env scripts/apply-supabase-migrations.mjs",
     "workers:email": "node --env-file=.env scripts/email-worker.mjs",
+    "workers:shiprocket": "node --env-file=.env scripts/shiprocket-sync-worker.mjs",
+    "sync:shiprocket": "node --env-file=.env scripts/sync-shiprocket-tracking.mjs",
     "test": "node --import tsx --test"
   },
   "dependencies": {
