@@ -859,16 +859,28 @@ export const createShiprocketShipmentForOrder = async (
   const channelOrderId = order.shiprocketOrderId
     ? `${order.id}-r${String(order.shiprocketOrderId).slice(-4)}`
     : order.id
-  const packageLengthCm = options?.package?.lengthCm ?? (options?.panelDefaults ? 10 : undefined)
-  const packageWidthCm = options?.package?.widthCm ?? (options?.panelDefaults ? 10 : undefined)
-  const packageHeightCm = options?.package?.heightCm ?? (options?.panelDefaults ? 10 : undefined)
-  const packageWeightKg = options?.package?.weightKg ?? weight
-  if (
-    packageLengthCm == null || packageWidthCm == null || packageHeightCm == null ||
-    packageLengthCm <= 0 || packageWidthCm <= 0 || packageHeightCm <= 0
-  ) {
-    throw new Error("Package dimensions are required in centimetres before a shipment can be created.")
-  }
+  const rawResponse = (order.shiprocketRawResponse && typeof order.shiprocketRawResponse === "object")
+    ? (order.shiprocketRawResponse as Record<string, any>)
+    : null
+  const svc = rawResponse?.serviceability
+
+  const resolvedLength = options?.package?.lengthCm
+    ?? (svc?.lengthCm && Number(svc.lengthCm) > 0 ? Number(svc.lengthCm) : undefined)
+    ?? 10
+  const resolvedWidth = options?.package?.widthCm
+    ?? (svc?.widthCm && Number(svc.widthCm) > 0 ? Number(svc.widthCm) : undefined)
+    ?? 10
+  const resolvedHeight = options?.package?.heightCm
+    ?? (svc?.heightCm && Number(svc.heightCm) > 0 ? Number(svc.heightCm) : undefined)
+    ?? 10
+  const resolvedWeight = options?.package?.weightKg
+    ?? (svc?.weight && Number(svc.weight) > 0 ? Number(svc.weight) : undefined)
+    ?? (weight > 0 ? weight : 0.5)
+
+  const packageLengthCm = Number.isFinite(resolvedLength) && resolvedLength > 0 ? resolvedLength : 10
+  const packageWidthCm = Number.isFinite(resolvedWidth) && resolvedWidth > 0 ? resolvedWidth : 10
+  const packageHeightCm = Number.isFinite(resolvedHeight) && resolvedHeight > 0 ? resolvedHeight : 10
+  const packageWeightKg = Number.isFinite(resolvedWeight) && resolvedWeight > 0 ? resolvedWeight : 0.5
   const packageFields = shiprocketPackagePayload({
     weightKg: packageWeightKg,
     lengthCm: packageLengthCm,
@@ -1060,10 +1072,10 @@ export const createShiprocketShipmentForOrder = async (
   await persistExtendedShipmentFields(shipment.id, {
     shiprocketOrderId: extracted.shiprocketOrderId ?? undefined,
     shiprocketShipmentId: extracted.shipmentId ? String(extracted.shipmentId) : undefined,
-    appliedWeight: options?.package?.weightKg,
-    packageLengthCm: options?.package?.lengthCm,
-    packageBreadthCm: options?.package?.widthCm,
-    packageHeightCm: options?.package?.heightCm,
+    appliedWeight: packageWeightKg,
+    packageLengthCm: packageLengthCm,
+    packageBreadthCm: packageWidthCm,
+    packageHeightCm: packageHeightCm,
     awbCode: extracted.awbCode ?? undefined,
     trackingNo: extracted.awbCode ?? undefined,
     trackingUrl: extracted.trackingUrl ?? undefined,
