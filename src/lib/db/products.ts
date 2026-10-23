@@ -563,6 +563,7 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
     tags = await readByIds(TAG_TABLES, tagIds)
   }
 
+  const shapedCategories = shapeCategories(categories ?? [], categorySlugById)
   return {
     ...base,
     variants,
@@ -571,8 +572,9 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
     labels,
     details,
     sections,
-    // Match admin UI expected shapes.
-    categories: shapeCategories(categories ?? [], categorySlugById),
+    // Match admin UI expected shapes. categoryId is the primary link from ProductCategory.
+    categories: shapedCategories,
+    categoryId: shapedCategories[0]?.categoryId ?? null,
     tags: shapeTags(tags ?? []),
   } as ProductRow
 }
@@ -638,10 +640,12 @@ export const hydrateProductsForListSupabase = async <T extends Record<string, un
     const variants = variantsByProduct.get(id) ?? []
     const cats = categoriesByProduct.get(id) ?? []
     const tags = tagsByProduct.get(id) ?? []
+    const shapedCategories = shapeCategories(cats, categorySlugById)
     return {
       ...row,
       variants,
-      categories: shapeCategories(cats, categorySlugById),
+      categories: shapedCategories,
+      categoryId: shapedCategories[0]?.categoryId ?? (row as { categoryId?: string | null }).categoryId ?? null,
       tags: shapeTags(tags),
     }
   })

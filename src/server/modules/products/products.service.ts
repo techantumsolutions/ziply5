@@ -751,10 +751,16 @@ const hydrateProductsFromPg = async <T extends Record<string, unknown>>(items: T
 
   return items.map((row) => {
     const id = String(row.id ?? "")
+    const categories = categoriesByProduct.get(id) ?? []
+    const categoryId =
+      categories
+        .map((entry) => String((entry as { categoryId?: string }).categoryId ?? "").trim())
+        .find(Boolean) ?? null
     return {
       ...row,
       variants: variantsByProduct.get(id) ?? [],
-      categories: categoriesByProduct.get(id) ?? [],
+      categories,
+      categoryId,
       tags: tagsByProduct.get(id) ?? [],
     }
   })

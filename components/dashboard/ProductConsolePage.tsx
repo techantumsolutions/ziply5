@@ -945,6 +945,12 @@ export function ProductConsolePage({
   const [metaTitle, setMetaTitle] = useState("")
   const [metaDescription, setMetaDescription] = useState("")
   const [categoryId, setCategoryId] = useState("")
+  // ProductCategory id resolved while loading an edit/view form. The select
+  // options are not mounted yet at that moment, so the value is applied after
+  // the category list is on screen.
+  const loadedCategoryIdRef = useRef("")
+  const categoryBaselineReadyRef = useRef(false)
+  const categoryApplyAttemptsRef = useRef(0)
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([])
   const [tagsDropdownOpen, setTagsDropdownOpen] = useState(false)
   const tagsDropdownRef = useRef<HTMLDivElement>(null)
@@ -1171,7 +1177,11 @@ export function ProductConsolePage({
         }
       }
       setSelectedFeatureDefinitionIds([...byId].slice(0, MAX_PRODUCT_FEATURES))
-      setCategoryId(resolveProductCategoryId(p, activeCats))
+      const resolvedCategoryId = resolveProductCategoryId(p, activeCats)
+      loadedCategoryIdRef.current = resolvedCategoryId
+      categoryBaselineReadyRef.current = false
+      categoryApplyAttemptsRef.current = 0
+      setCategoryId(resolvedCategoryId)
 
       const productTags = (p.tags ?? []).map((x) => x.tag).filter(Boolean)
       setSelectedTagIds(
@@ -1430,7 +1440,6 @@ export function ProductConsolePage({
         skipAutosaveRef.current = false
         setEditHydrated(true)
         setDraftSaveStatus("saved")
-        updateAllStepBaselines()
       }, 0)
     }
   }, [productId, mode, applyProductToForm])
@@ -1439,6 +1448,12 @@ export function ProductConsolePage({
     if (mode === "edit") {
       setEditHydrated(false)
       skipAutosaveRef.current = true
+    }
+    if (mode === "edit" || mode === "view") {
+      loadedCategoryIdRef.current = ""
+      categoryBaselineReadyRef.current = false
+      categoryApplyAttemptsRef.current = 0
+      setCategoryId("")
     }
   }, [mode, productId])
 
@@ -1790,6 +1805,46 @@ export function ProductConsolePage({
       5: JSON.stringify(getStepState(5)),
     }
   }, [getStepState])
+
+  const updateAllStepBaselinesRef = useRef(updateAllStepBaselines)
+  updateAllStepBaselinesRef.current = updateAllStepBaselines
+
+  const handleCategoryChange = (value: string) => {
+    if (!value) {
+      const desired = loadedCategoryIdRef.current
+      if (desired && categoryApplyAttemptsRef.current < 8) {
+        categoryApplyAttemptsRef.current += 1
+        setCategoryId(desired)
+        return
+      }
+    } else {
+      categoryApplyAttemptsRef.current = 0
+      loadedCategoryIdRef.current = value
+    }
+    setCategoryId(value)
+  }
+
+  // The category options arrive with the product. Setting the select value in that
+  // same render lets Radix clear it, because its hidden native <select> has no
+  // matching <option> yet. Put the saved ProductCategory link back once the
+  // options are mounted. A later manual change is kept.
+  useEffect(() => {
+    if (mode !== "edit" && mode !== "view") return
+    const desired = loadedCategoryIdRef.current
+    if (desired) {
+      const optionReady = categories.some((category) => String(category.id) === String(desired))
+      if (!optionReady) return
+      if (categoryId !== desired && categoryApplyAttemptsRef.current < 8) {
+        categoryApplyAttemptsRef.current += 1
+        setCategoryId(desired)
+        return
+      }
+    }
+    if (mode !== "edit" || !editHydrated || categoryBaselineReadyRef.current) return
+    if (desired && categoryId !== desired) return
+    categoryBaselineReadyRef.current = true
+    updateAllStepBaselinesRef.current()
+  }, [categories, categoryId, editHydrated, mode])
 
   const isStepDirty = useCallback(
     (step: ProductFormStepId) => {
@@ -3479,9 +3534,11 @@ export function ProductConsolePage({
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {/* Row 1 */}
                   <Field label="Category" required>
-                    <Select value={categoryId || undefined} onValueChange={setCategoryId}>
+                    <Select value={categoryId || undefined} onValueChange={handleCategoryChange}>
                       <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm capitalize">
-                        <SelectValue placeholder="Select Category" />
+                        <SelectValue placeholder="Select Category">
+                          {categories.find((category) => String(category.id) === String(categoryId))?.name}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {categories.length === 0 ? (
