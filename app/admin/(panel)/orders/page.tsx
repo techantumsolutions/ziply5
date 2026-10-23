@@ -116,6 +116,7 @@ export default function AdminOrdersPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusTab, setStatusTab] = useState<"all" | "new" | "confirmed" | "packed" | "shipped" | "in_transit" | "delivered" | "rejected" | "cancelled">("all");
   const [paymentFilter, setPaymentFilter] = useState("all");
+  const [shipmentTypeFilter, setShipmentTypeFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [sortBy, setSortBy] = useState<"latest" | "oldest" | "amount_desc" | "amount_asc">("latest");
@@ -331,6 +332,7 @@ export default function AdminOrdersPage() {
     setSearchTerm("");
     setStatusTab("all");
     setPaymentFilter("all");
+    setShipmentTypeFilter("all");
     setDateFrom("");
     setDateTo("");
     setSortBy("latest");
@@ -534,6 +536,67 @@ export default function AdminOrdersPage() {
     return rawStatus;
   }, []);
   const latestShipmentStatus = useCallback((o: OrderRow) => (o.shipmentStatus ?? o.shipments?.[0]?.shipmentStatus ?? "not_shipped").toLowerCase(), []);
+  const getShipmentType = useCallback((o: OrderRow): "manual" | "shiprocket" | "unassigned" => {
+    const isManual =
+      isManualShipment({
+        shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo,
+        shippingMethod: o.shippingMethod,
+      }) ||
+      o.shippingMethod === "manual" ||
+      (o as any).shipping_method === "manual" ||
+      String(o.shipmentNo ?? "").toLowerCase().startsWith("manual-") ||
+      Boolean(o.shipments?.some((s) => String(s.shipmentNo ?? "").toLowerCase().startsWith("manual-")));
+
+    if (isManual) return "manual";
+
+    const hasSrDetails = Boolean(
+      o.shiprocketOrderId ||
+      o.awbCode ||
+      o.trackingNumber ||
+      (o.shipmentId && !String(o.shipmentId).startsWith("manual-")) ||
+      (o.shipmentNo && !String(o.shipmentNo).startsWith("manual-")) ||
+      o.isShipmentCreated ||
+      o.shipments?.some((s) => !String(s.shipmentNo ?? "").startsWith("manual-") && (s.carrier || s.trackingNo || s.shipmentNo))
+    );
+
+    const lc = (o.statusHistory?.[0]?.toStatus ?? o.status ?? "").toLowerCase();
+    const sh = (o.shipmentStatus ?? o.shipments?.[0]?.shipmentStatus ?? "").toLowerCase();
+    const isShippedStage =
+      ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(lc) ||
+      ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(sh);
+
+    if (hasSrDetails || isShippedStage) {
+      return "shiprocket";
+    }
+
+    return "unassigned";
+  }, []);
+
+  const getShipmentTypeBadge = useCallback((o: OrderRow) => {
+    const type = getShipmentType(o);
+    if (type === "manual") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-amber-800">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          Manual
+        </span>
+      );
+    }
+    if (type === "shiprocket") {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-0.5 text-xs font-semibold capitalize text-purple-700">
+          <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+          Shiprocket
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-medium text-slate-500">
+        <span className="h-1.5 w-1.5 rounded-full bg-slate-400" />
+        Not Shipped
+      </span>
+    );
+  }, [getShipmentType]);
   const itemsCount = useCallback((o: OrderRow) => o.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0), []);
 
   const statusTabCounts = useMemo(() => {
@@ -617,6 +680,7 @@ export default function AdminOrdersPage() {
       }
 
       if (paymentFilter !== "all" && payment !== paymentFilter) return false;
+      if (shipmentTypeFilter !== "all" && getShipmentType(o) !== shipmentTypeFilter) return false;
       if (dateFrom && date < new Date(`${dateFrom}T00:00:00`)) return false;
       if (dateTo && date > new Date(`${dateTo}T23:59:59`)) return false;
       if (!rawTerm) return true;
@@ -661,7 +725,7 @@ export default function AdminOrdersPage() {
       return +new Date(b.createdAt) - +new Date(a.createdAt);
     });
     return list;
-  }, [rows, searchTerm, statusTab, paymentFilter, dateFrom, dateTo, sortBy, toPaymentStatus, lifecycleStatus, latestShipmentStatus]);
+  }, [rows, searchTerm, statusTab, paymentFilter, shipmentTypeFilter, dateFrom, dateTo, sortBy, toPaymentStatus, lifecycleStatus, latestShipmentStatus, getShipmentType]);
 
   const pagedRows = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -738,7 +802,7 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchTerm, paymentFilter, dateFrom, dateTo, sortBy, pageSize]);
+  }, [searchTerm, paymentFilter, shipmentTypeFilter, dateFrom, dateTo, sortBy, pageSize]);
 
   // useRealtimeTables({
   //   tables: ["orders", "returns", "refunds", "shipments", "transactions"],
@@ -1195,6 +1259,7 @@ export default function AdminOrdersPage() {
       "payment_status",
       "order_status",
       "shipment_status",
+      "shipment_type",
       "total_amount",
       "items_count",
     ];
@@ -1208,6 +1273,7 @@ export default function AdminOrdersPage() {
       toPaymentStatus(o) === "success" ? "Payment Success" : toPaymentStatus(o) === "cod" ? "COD" : toPaymentStatus(o),
       resolveCanonicalOrderStatus(lifecycleStatus(o), o.statusHistory),
       latestShipmentStatus(o),
+      getShipmentType(o),
       Number(o.total).toFixed(2),
       itemsCount(o),
     ]);
@@ -1317,6 +1383,23 @@ export default function AdminOrdersPage() {
                   <SelectItem value="all">All</SelectItem>
                   <SelectItem value="cod">COD</SelectItem>
                   <SelectItem value="success">Success</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="w-full sm:w-[145px]">
+            <label className="text-xs font-semibold text-[#646464]">Shipment Type</label>
+            <div className="mt-1">
+              <Select value={shipmentTypeFilter} onValueChange={setShipmentTypeFilter}>
+                <SelectTrigger className="!h-9 !py-0 box-border w-full rounded-2xl border border-[#E3E3DA] bg-white px-3 text-xs text-[#4A1D1F] shadow-none focus:border-[#7B3010] focus:outline-none focus:ring-0 focus-visible:ring-0">
+                  <SelectValue placeholder="All" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  <SelectItem value="shiprocket">Shiprocket</SelectItem>
+                  <SelectItem value="manual">Manual</SelectItem>
+                  <SelectItem value="unassigned">Not Shipped</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1433,7 +1516,8 @@ export default function AdminOrdersPage() {
                 <th className="w-48 px-2 py-2.5 text-left">Customer</th>
                 <th className="w-44 px-2 py-2.5 text-left">Payment</th>
                 <th className="w-36 px-2 py-2.5 text-left whitespace-nowrap">Order Status</th>
-                <th className="w-40 px-2 py-2.5 text-left whitespace-nowrap">Shipment Status</th>
+                <th className="w-36 px-2 py-2.5 text-left whitespace-nowrap">Shipment Status</th>
+                <th className="w-32 px-2 py-2.5 text-left whitespace-nowrap">Shipment Type</th>
                 <th className="w-28 px-2 py-2.5 text-left whitespace-nowrap">Total Amount</th>
                 <th className="w-20 px-2 py-2.5 text-center whitespace-nowrap">Items Count</th>
                 <th className="w-28 px-3 py-2.5 text-right whitespace-nowrap">Actions</th>
@@ -1441,7 +1525,7 @@ export default function AdminOrdersPage() {
             </thead>
             <tbody>
               {pagedRows.length === 0 ? (
-                <tr><td className="px-3 py-8 text-center text-[#646464]" colSpan={10}>{rows.length === 0 ? "No orders in the database yet." : "No orders match the selected filters."}</td></tr>
+                <tr><td className="px-3 py-8 text-center text-[#646464]" colSpan={11}>{rows.length === 0 ? "No orders in the database yet." : "No orders match the selected filters."}</td></tr>
               ) : (
                 pagedRows.map((o) => (
                   <tr key={o.id} className="border-t border-[#F0E9DC] hover:bg-[#FFFBF3]/50">
@@ -1462,62 +1546,35 @@ export default function AdminOrdersPage() {
                     </td>
                     <td className="px-2 py-2">
                       <p className="text-sm font-semibold text-[#2A1810]">{o.customerName ?? o.user?.name ?? "Guest Customer"}</p>
-                      <p className="break-all text-xs text-[#6F6F6F]">{o.customerPhone ?? "No phone"}</p>
-                      <p className="break-all text-xs text-[#6F6F6F]">{o.user?.email ?? "No email"}</p>
                     </td>
                     <td className="px-2 py-2">
-                      <div className="space-y-1.5">
-                        <div>
-                          {toPaymentStatus(o) === "success" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
-                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                              Payment Success
-                            </span>
-                          ) : toPaymentStatus(o) === "cod" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                              COD
-                            </span>
-                          ) : toPaymentStatus(o) === "initiated" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
-                              <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
-                              Initiated
-                            </span>
-                          ) : toPaymentStatus(o) === "failed" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-800">
-                              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                              Failed
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
-                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                              Pending
-                            </span>
-                          )}
-                        </div>
-                        {(() => {
-                          const refNo = getTransactionRefNo(o);
-                          const isCopied = copiedTxId === refNo;
-                          return (
-                            <div className="flex items-center gap-1 text-[11px] font-mono text-[#646464]">
-                              <span className="truncate max-w-[130px]" title={refNo}>
-                                Ref: {refNo}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => copyToClipboard(refNo)}
-                                title="Copy Transaction / Ref No."
-                                className="inline-flex shrink-0 items-center justify-center rounded p-1 text-[#7B3010] hover:bg-[#FFF7EA] hover:text-[#4A1D1F] transition cursor-pointer"
-                              >
-                                {isCopied ? (
-                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
-                              </button>
-                            </div>
-                          );
-                        })()}
+                      <div>
+                        {toPaymentStatus(o) === "success" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Payment Success
+                          </span>
+                        ) : toPaymentStatus(o) === "cod" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                            COD
+                          </span>
+                        ) : toPaymentStatus(o) === "initiated" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                            Initiated
+                          </span>
+                        ) : toPaymentStatus(o) === "failed" ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-xs font-semibold text-red-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                            Pending
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-2 py-2">
@@ -1528,6 +1585,11 @@ export default function AdminOrdersPage() {
                     <td className="px-2 py-2">
                       <div className="min-w-[130px]">
                         {getShipmentStatusBadge(latestShipmentStatus(o))}
+                      </div>
+                    </td>
+                    <td className="px-2 py-2">
+                      <div className="min-w-[110px]">
+                        {getShipmentTypeBadge(o)}
                       </div>
                     </td>
                     <td className="px-2 py-2 font-semibold">Rs.{Number(o.total).toFixed(2)}</td>
@@ -1602,87 +1664,27 @@ export default function AdminOrdersPage() {
                           const hasExistingShipment = hasShipment(o) || ["shipped", "in_transit", "out_for_delivery", "delivered"].includes(lc);
                           if (hasExistingShipment) {
                             return (
-                              <button
-                                type="button"
-                                disabled={Boolean(rowActionBusy[o.id])}
-                                onClick={() => void syncFromShiprocket(o.id)}
-                                title="Refresh tracking & shipment status from Shiprocket"
-                                className="cursor-pointer rounded-full border border-[#16803C] bg-[#F0FDF4] px-2.5 py-1 text-[10px] font-bold uppercase text-[#16803C] hover:bg-[#16803C] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition inline-flex items-center gap-1"
-                              >
-                                {rowActionBusy[o.id] === "sync" ? (
-                                  <>
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                    <span>Refreshing...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <RefreshCw className="h-3 w-3" />
-                                    <span>Refresh</span>
-                                  </>
-                                )}
-                              </button>
-                            );
-                          }
-
-                          // If unserviceable -> MANUAL SHIPMENT button
-                          if (isOrderUnserviceable(o)) {
-                            return (
-                              <button
-                                type="button"
-                                disabled={Boolean(rowActionBusy[o.id])}
-                                onClick={() => setManualModal({ orderId: o.id, courier: "", trackingId: "", trackingUrl: "", slipUrl: "", slipName: "" })}
-                                title="Order is not serviceable via Shiprocket. Proceed with manual shipment."
-                                className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
-                              >
-                                Manual shipment
-                              </button>
-                            );
-                          }
-
-                          // 3. Flow stage: SYNC (serviceable verified, ready to sync to Shiprocket)
-                          if (isOrderServiceable(o)) {
-                            return (
-                              <button
-                                type="button"
-                                disabled={Boolean(rowActionBusy[o.id])}
-                                onClick={() => void syncFromShiprocket(o.id)}
-                                title="Sync order to Shiprocket"
-                                className="cursor-pointer rounded-full bg-[#16803C] px-2.5 py-1 text-[10px] font-bold uppercase text-white hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50 transition inline-flex items-center gap-1 shadow-sm"
-                              >
-                                {rowActionBusy[o.id] === "sync" ? (
-                                  <>
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                    <span>Syncing...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <RefreshCw className="h-3 w-3" />
-                                    <span>Sync now</span>
-                                  </>
-                                )}
-                              </button>
-                            );
-                          }
-
-                          // 2. Flow stage: CHECK SERVICEABILITY (accepted order, serviceability not checked yet)
-                          if (["confirmed", "packed"].includes(lc)) {
-                            return (
-                              <button
-                                type="button"
-                                disabled={Boolean(rowActionBusy[o.id])}
-                                onClick={() => void checkServiceability(o.id)}
-                                title="Check courier serviceability with Shiprocket"
-                                className="cursor-pointer rounded-full border border-[#7B3010] bg-[#FFF7ED] px-2.5 py-1 text-[10px] font-bold uppercase text-[#7B3010] hover:bg-[#7B3010] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition"
-                              >
-                                {rowActionBusy[o.id] === "serviceability" ? (
-                                  <span className="inline-flex items-center gap-1">
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                    <span>Checking...</span>
-                                  </span>
-                                ) : (
-                                  "Check serviceability"
-                                )}
-                              </button>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    type="button"
+                                    disabled={Boolean(rowActionBusy[o.id])}
+                                    onClick={() => void syncFromShiprocket(o.id)}
+                                    title="Refresh tracking & shipment status from Shiprocket"
+                                    aria-label="Refresh tracking & shipment status from Shiprocket"
+                                    className="inline-flex shrink-0 items-center justify-center rounded-full border border-[#16803C] bg-[#F0FDF4] p-1.5 text-[#16803C] shadow-sm hover:bg-[#16803C] hover:text-white disabled:cursor-not-allowed disabled:opacity-50 transition cursor-pointer"
+                                  >
+                                    {rowActionBusy[o.id] === "sync" ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : (
+                                      <RefreshCw className="h-3.5 w-3.5" />
+                                    )}
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top">
+                                  <p className="text-xs font-semibold">Refresh Tracking</p>
+                                </TooltipContent>
+                              </Tooltip>
                             );
                           }
 

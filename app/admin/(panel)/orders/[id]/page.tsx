@@ -6,7 +6,7 @@ import Link from "next/link"
 import { authedFetch, authedPost } from "@/lib/dashboard-fetch"
 import { Button } from "@/components/ui/button"
 import { TrackingTimeline } from "@/src/components/shipping/tracking-timeline"
-import { AlertTriangle, ArrowLeft, Ban, Check, Download, ExternalLink, FileText, Info, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, X, XCircle } from "lucide-react"
+import { AlertTriangle, ArrowLeft, Ban, Check, Copy, Download, ExternalLink, FileText, Info, Loader2, Mail, MapPin, Package, Phone, RefreshCw, Truck, X, XCircle } from "lucide-react"
 import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
@@ -150,11 +150,11 @@ type OrderDetail = {
     variant?: { id?: string; name?: string | null; sku?: string | null; weight?: string | null; hsnCode?: string | null } | null
     productId?: string | null
   }>
-  transactions?: Array<{ id: string; gateway: string; amount: string | number; status: string; createdAt: string }>
+  transactions?: Array<{ id: string; gateway?: string; amount?: string | number; status?: string; createdAt?: string; transactionId?: string; refNo?: string }>
   statusHistory?: Array<{ toStatus: string; changedAt: string; notes?: string | null; reasonCode?: string | null; changedById?: string | null }>
   notes?: Array<{ id: string; note: string; isInternal: boolean; createdAt: string }>
   user?: { id: string; name: string; email: string }
-  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null; courierName?: string | null; shipmentNo?: string | null; cancelledAt?: string | null; labelUrl?: string | null }>
+  shipments?: Array<{ id: string; carrier: string | null; trackingNo: string | null; shipmentStatus: string; awbCode?: string | null; trackingUrl?: string | null; pickupStatus?: string | null; courierName?: string | null; shipmentNo?: string | null; cancelledAt?: string | null; labelUrl?: string | null; trackingData?: unknown }>
   awbCode?: string | null
   courierName?: string | null
   trackingNumber?: string | null
@@ -170,6 +170,8 @@ type OrderDetail = {
   refunds?: Array<{ id: string; status: string; amount: string | number }>
   paymentStatus?: string | null
   paymentId?: string | null
+  transactionId?: string | null
+  refNo?: string | null
   customerName?: string | null
   customerPhone?: string | null
   customerEmail?: string | null
@@ -754,6 +756,36 @@ export default function AdminOrderDetailPage() {
   const displayPaymentStatus = isPaymentComplete ? "Payment Success" : isCodOrder ? "COD" : (order?.paymentStatus ?? "Pending");
   const displayPaymentMethod = isCodOrder ? "COD" : (order?.paymentMethod || "—").replaceAll("_", " ");
 
+  const [copiedRef, setCopiedRef] = useState(false);
+  const [copiedTx, setCopiedTx] = useState(false);
+
+  const copyReferenceNo = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedRef(true);
+    toast.success("Reference No. copied!");
+    setTimeout(() => setCopiedRef(false), 2000);
+  };
+
+  const copyTxId = (text: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedTx(true);
+    toast.success("Transaction ID copied!");
+    setTimeout(() => setCopiedTx(false), 2000);
+  };
+
+  const orderRefNo =
+    order?.refNo ||
+    order?.transactions?.[0]?.refNo ||
+    order?.id ||
+    "";
+  const transactionId =
+    order?.paymentId ||
+    order?.transactionId ||
+    order?.transactions?.[0]?.transactionId ||
+    null;
+
   return (
     <section className="w-full space-y-4 py-4">
       <div>
@@ -932,10 +964,50 @@ export default function AdminOrderDetailPage() {
                   <span className="text-[#6B7280]">Payment method</span>
                   <span className="font-medium">{displayPaymentMethod}</span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-[#6B7280]">Transaction ID</span>
-                  <span className="max-w-[180px] truncate font-mono text-xs" title={order.paymentId ?? ""}>{order.paymentId || "—"}</span>
-                </div>
+                {orderRefNo ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[#6B7280]">Reference No.</span>
+                    <div className="flex items-center gap-1 font-mono text-xs">
+                      <span className="max-w-[170px] truncate text-[#111827]" title={orderRefNo}>
+                        {orderRefNo}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyReferenceNo(orderRefNo)}
+                        title="Copy Reference No."
+                        className="inline-flex shrink-0 items-center justify-center rounded p-1 text-[#7B3010] hover:bg-[#FFF7EA] transition cursor-pointer"
+                      >
+                        {copiedRef ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {transactionId && transactionId !== orderRefNo ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[#6B7280]">Transaction ID</span>
+                    <div className="flex items-center gap-1 font-mono text-xs">
+                      <span className="max-w-[170px] truncate text-[#111827]" title={transactionId}>
+                        {transactionId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyTxId(transactionId)}
+                        title="Copy Transaction ID"
+                        className="inline-flex shrink-0 items-center justify-center rounded p-1 text-[#7B3010] hover:bg-[#FFF7EA] transition cursor-pointer"
+                      >
+                        {copiedTx ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-[#6B7280]">Payment date</span>
                   <span>{order.transactions?.[0]?.createdAt ? formatOrderDateTime(order.transactions[0].createdAt) : "—"}</span>

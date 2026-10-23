@@ -5,6 +5,7 @@ import { authedFetch, authedPatch } from "@/lib/dashboard-fetch";
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable";
 import { useRealtimeTables } from "@/hooks/useRealtimeTables";
 import { useMasterValues } from "@/hooks/useMasterData";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -77,6 +78,8 @@ export default function AdminReturnsPage() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [updating, setUpdating] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(1);
+  const PER_PAGE = 10;
   const [selectedReturn, setSelectedReturn] = useState<ReturnRow | null>(null);
   const [returnProduct, setReturnProduct] = useState<any>(null);
   const [user, setUser] = useState<any>(null);
@@ -89,10 +92,17 @@ export default function AdminReturnsPage() {
     setRejectReason("");
   }, [selectedReturn?.id]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [filter]);
+
   const filteredRows = rows.filter((row) => {
     if (filter === "pending" && !["requested", "approved", "picked_up"].includes(row.status)) return false;
     return true;
   });
+
+  const totalPages = Math.ceil(filteredRows.length / PER_PAGE) || 1;
+  const paginatedRows = filteredRows.slice((page - 1) * PER_PAGE, page * PER_PAGE);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -215,112 +225,130 @@ export default function AdminReturnsPage() {
       {loading && <p className="text-sm text-[#646464]">Loading…</p>}
 
       {!loading && (
-        <ConsoleTable headers={["Order", "Placed", "Reason", "Status", "Actions"]}>
-          {rows.length === 0 ? (
-            <tr>
-              <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={5}>
-                No return requests.
-              </ConsoleTd>
-            </tr>
-          ) : (
-            filteredRows.map((r) => (
-              <tr key={r.id} className="hover:bg-[#FFFBF3]/80">
-                <ConsoleTd>
-                  <span className="font-mono text-[11px]">{r.order.id.slice(0, 12)}…</span>
-                  <div className="text-[11px] text-[#646464]">Rs.{Number(r.order.total).toFixed(2)}</div>
-                </ConsoleTd>
-                <ConsoleTd>{new Date(r.createdAt).toLocaleString()}</ConsoleTd>
-                <ConsoleTd className="max-w-[200px] text-xs">{r.reason ?? "—"}</ConsoleTd>
-                <ConsoleTd>
-                  <Select
-                    value={draft[r.id] ?? r.status}
-                    onValueChange={(value) =>
-                      setDraft((d) => ({
-                        ...d,
-                        [r.id]: value,
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="w-full max-w-[140px] border-[#D9D9D1] text-xs capitalize">
-                      <SelectValue placeholder="Select status" />
-                    </SelectTrigger>
-
-                    <SelectContent>
-                      {statuses.map((s) => (
-                        <SelectItem
-                          key={s}
-                          value={s}
-                          className="capitalize"
-                        >
-                          {s}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </ConsoleTd>
-                <ConsoleTd className="flex flex-row gap-2 h-full items-center py-4">
-                  <div className="">
-                  <button
-                    type="button"
-                    disabled={updating === r.id || (draft[r.id] ?? r.status) === r.status}
-                    onClick={() => save(r.id)}
-                    className="rounded-full bg-[#7B3010] px-3 py-1.5 text-[11px] font-semibold uppercase text-white disabled:opacity-40"
-                  >
-                    {updating === r.id ? "Saving…" : "Apply"}
-                  </button>
-                  </div>
-                  {/* <div className="mt-2 flex flex-wrap gap-1">
-                    <button
-                      type="button"
-                      disabled={Boolean(updating)}
-                      onClick={() => runAction(r.id, "approve")}
-                      className="rounded-full border border-[#E8DCC8] bg-white px-2 py-1 text-[10px] uppercase text-[#4A1D1F] disabled:opacity-40"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      disabled={Boolean(updating)}
-                      onClick={() => runAction(r.id, "reject")}
-                      className="rounded-full border border-[#E8DCC8] bg-white px-2 py-1 text-[10px] uppercase text-[#4A1D1F] disabled:opacity-40"
-                    >
-                      Reject
-                    </button>
-                    <button
-                      type="button"
-                      disabled={Boolean(updating)}
-                      onClick={() => runAction(r.id, "mark_picked")}
-                      className="rounded-full border border-[#E8DCC8] bg-white px-2 py-1 text-[10px] uppercase text-[#4A1D1F] disabled:opacity-40"
-                    >
-                      Mark picked
-                    </button>
-                    <button
-                      type="button"
-                      disabled={Boolean(updating)}
-                      onClick={() => runAction(r.id, "mark_received")}
-                      className="rounded-full border border-[#E8DCC8] bg-white px-2 py-1 text-[10px] uppercase text-[#4A1D1F] disabled:opacity-40"
-                    >
-                      Mark received
-                    </button>
-                  </div> */}
-                  <div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedReturn(r);
-                      loadProduct(r.productId);
-                      loadOrder(r.orderId);
-                    }}
-                    className=" rounded-full border border-[#7B3010] px-3 py-1.5 text-[11px] font-semibold text-[#7B3010]"
-                  >
-                    View Details
-                  </button></div>
+        <>
+          <ConsoleTable headers={["S.No.", "Order", "Placed", "Reason", "Status", "Actions"]}>
+            {filteredRows.length === 0 ? (
+              <tr>
+                <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={6}>
+                  No return requests.
                 </ConsoleTd>
               </tr>
-            ))
-          )}
-        </ConsoleTable>
+            ) : (
+              paginatedRows.map((r, index) => {
+                const sNo = (page - 1) * PER_PAGE + index + 1;
+                return (
+                  <tr key={r.id} className="hover:bg-[#FFFBF3]/80">
+                    <ConsoleTd className="w-12 text-center text-xs font-semibold text-[#646464]">
+                      {sNo}
+                    </ConsoleTd>
+                    <ConsoleTd>
+                      <span className="font-mono text-[11px]">{r.order.id.slice(0, 12)}…</span>
+                      <div className="text-[11px] text-[#646464]">Rs.{Number(r.order.total).toFixed(2)}</div>
+                    </ConsoleTd>
+                    <ConsoleTd>{new Date(r.createdAt).toLocaleString()}</ConsoleTd>
+                    <ConsoleTd className="max-w-[200px] text-xs">{r.reason ?? "—"}</ConsoleTd>
+                    <ConsoleTd>
+                      <Select
+                        value={draft[r.id] ?? r.status}
+                        onValueChange={(value) =>
+                          setDraft((d) => ({
+                            ...d,
+                            [r.id]: value,
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="w-full max-w-[140px] border-[#D9D9D1] text-xs capitalize">
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
 
+                        <SelectContent>
+                          {statuses.map((s) => (
+                            <SelectItem
+                              key={s}
+                              value={s}
+                              className="capitalize"
+                            >
+                              {s}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </ConsoleTd>
+                    <ConsoleTd className="flex flex-row gap-2 h-full items-center py-4">
+                      <div>
+                        <button
+                          type="button"
+                          disabled={updating === r.id || (draft[r.id] ?? r.status) === r.status}
+                          onClick={() => save(r.id)}
+                          className="rounded-full bg-[#7B3010] px-3 py-1.5 text-[11px] font-semibold uppercase text-white disabled:opacity-40"
+                        >
+                          {updating === r.id ? "Saving…" : "Apply"}
+                        </button>
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedReturn(r);
+                            loadProduct(r.productId);
+                            loadOrder(r.orderId);
+                          }}
+                          className="rounded-full border border-[#7B3010] px-3 py-1.5 text-[11px] font-semibold text-[#7B3010]"
+                        >
+                          View Details
+                        </button>
+                      </div>
+                    </ConsoleTd>
+                  </tr>
+                );
+              })
+            )}
+          </ConsoleTable>
+
+          {totalPages > 0 && (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+              <p className="text-xs text-[#6B7280]">
+                Showing {(page - 1) * PER_PAGE + (filteredRows.length ? 1 : 0)} to{" "}
+                {Math.min(page * PER_PAGE, filteredRows.length)} of {filteredRows.length} return requests
+              </p>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPage(p)}
+                    className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold transition-colors ${
+                      p === page
+                        ? "bg-[#4A1D1F] text-white"
+                        : "border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  disabled={page === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </>
       )}
       {selectedReturn && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

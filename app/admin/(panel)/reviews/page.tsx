@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { authedFetch, authedPatch } from "@/lib/dashboard-fetch";
 import { ConsoleTable, ConsoleTd } from "@/components/dashboard/ConsoleTable";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -25,6 +26,7 @@ type ReviewRow = {
 };
 
 const STATUSES = ["published", "archived"] as const;
+const PER_PAGE = 10;
 
 export default function AdminReviewsPage() {
   const [rows, setRows] = useState<ReviewRow[]>([]);
@@ -37,6 +39,7 @@ export default function AdminReviewsPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [ratingFilter, setRatingFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -57,6 +60,10 @@ export default function AdminReviewsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, ratingFilter, statusFilter]);
 
   const save = async (id: string) => {
     const status = draft[id];
@@ -87,6 +94,12 @@ export default function AdminReviewsPage() {
       return matchesSearch && matchesRating && matchesStatus;
     });
   }, [rows, searchTerm, ratingFilter, statusFilter]);
+
+  const totalPages = Math.ceil(filteredRows.length / PER_PAGE) || 1;
+  const paginatedRows = useMemo(() => {
+    const start = (page - 1) * PER_PAGE;
+    return filteredRows.slice(start, start + PER_PAGE);
+  }, [filteredRows, page]);
 
   return (
     <section className="w-full space-y-4">
@@ -132,56 +145,108 @@ export default function AdminReviewsPage() {
       {loading && <p className="text-sm text-[#646464]">Loading…</p>}
 
       {!loading && (
-        <ConsoleTable headers={["Product", "User", "Rating", "Content", "Status", ""]}>
-          {filteredRows.length === 0 ? (
-            <tr>
-              <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={6}>
-                No reviews found.
-              </ConsoleTd>
-            </tr>
-          ) : (
-            filteredRows.map((r) => (
-              <tr key={r.id} className="hover:bg-[#FFFBF3]/80">
-                <ConsoleTd>
-                  <div className="font-medium">{r.product.name}</div>
-                  <div className="text-[11px] text-[#646464]">{r.productId}</div>
-                </ConsoleTd>
-                <ConsoleTd className="text-xs">
-                  <div>{r.user?.name ?? "Guest"}</div>
-                  <div className="text-[11px] text-[#646464]">{r.user?.email ?? "—"}</div>
-                </ConsoleTd>
-                <ConsoleTd>{r.rating}★</ConsoleTd>
-                <ConsoleTd className="text-xs">
-                  <div className="font-medium">{r.title ?? "—"}</div>
-                  <div className="text-[11px] text-[#646464]">{r.body?.slice(0, 140) ?? "—"}</div>
-                </ConsoleTd>
-                <ConsoleTd>
-                  <select
-                    value={draft[r.id] ?? r.status}
-                    onChange={(e) => setDraft((d) => ({ ...d, [r.id]: e.target.value }))}
-                    className="rounded-lg border border-[#D9D9D1] bg-white px-2 py-1 text-xs capitalize"
-                  >
-                    {STATUSES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
-                </ConsoleTd>
-                <ConsoleTd>
-                  <button
-                    type="button"
-                    disabled={updating === r.id || (draft[r.id] ?? r.status) === r.status}
-                    onClick={() => save(r.id)}
-                    className="rounded-full bg-[#7B3010] px-3 py-1.5 text-[11px] font-semibold uppercase text-white disabled:opacity-40"
-                  >
-                    {updating === r.id ? "Saving…" : "Apply"}
-                  </button>
+        <>
+          <ConsoleTable headers={["S.No.", "Product", "User", "Rating", "Content", "Status", ""]}>
+            {paginatedRows.length === 0 ? (
+              <tr>
+                <ConsoleTd className="py-8 text-center text-[#646464]" colSpan={7}>
+                  No reviews found.
                 </ConsoleTd>
               </tr>
-            ))
+            ) : (
+              paginatedRows.map((r, index) => {
+                const sNo = (page - 1) * PER_PAGE + index + 1;
+                return (
+                  <tr key={r.id} className="hover:bg-[#FFFBF3]/80">
+                    <ConsoleTd className="w-12 text-center text-xs font-semibold text-[#646464]">
+                      {sNo}
+                    </ConsoleTd>
+                    <ConsoleTd>
+                      <div className="font-medium">{r.product.name}</div>
+                      <div className="text-[11px] text-[#646464]">{r.productId}</div>
+                    </ConsoleTd>
+                    <ConsoleTd className="text-xs">
+                      <div>{r.user?.name ?? "Guest"}</div>
+                      <div className="text-[11px] text-[#646464]">{r.user?.email ?? "—"}</div>
+                    </ConsoleTd>
+                    <ConsoleTd>{r.rating}★</ConsoleTd>
+                    <ConsoleTd className="text-xs">
+                      <div className="font-medium">{r.title ?? "—"}</div>
+                      <div className="text-[11px] text-[#646464]">{r.body?.slice(0, 140) ?? "—"}</div>
+                    </ConsoleTd>
+                    <ConsoleTd>
+                      <select
+                        value={draft[r.id] ?? r.status}
+                        onChange={(e) => setDraft((d) => ({ ...d, [r.id]: e.target.value }))}
+                        className="rounded-lg border border-[#D9D9D1] bg-white px-2 py-1 text-xs capitalize"
+                      >
+                        {STATUSES.map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </select>
+                    </ConsoleTd>
+                    <ConsoleTd>
+                      <button
+                        type="button"
+                        disabled={updating === r.id || (draft[r.id] ?? r.status) === r.status}
+                        onClick={() => save(r.id)}
+                        className="rounded-full bg-[#7B3010] px-3 py-1.5 text-[11px] font-semibold uppercase text-white disabled:opacity-40"
+                      >
+                        {updating === r.id ? "Saving…" : "Apply"}
+                      </button>
+                    </ConsoleTd>
+                  </tr>
+                );
+              })
+            )}
+          </ConsoleTable>
+
+          {totalPages > 0 && (
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+              <p className="text-xs text-[#6B7280]">
+                Showing {(page - 1) * PER_PAGE + (filteredRows.length ? 1 : 0)} to{" "}
+                {Math.min(page * PER_PAGE, filteredRows.length)} of {filteredRows.length} reviews
+              </p>
+
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPage(p)}
+                    className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold transition-colors ${
+                      p === page
+                        ? "bg-[#4A1D1F] text-white"
+                        : "border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50"
+                    }`}
+                  >
+                    {p}
+                  </button>
+                ))}
+
+                <button
+                  type="button"
+                  disabled={page === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
           )}
-        </ConsoleTable>
+        </>
       )}
     </section>
   );

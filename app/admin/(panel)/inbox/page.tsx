@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { authedFetch } from "@/lib/dashboard-fetch"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Mail, Phone, Clock, Search, User } from "lucide-react"
+import { Loader2, Mail, Phone, Clock, Search, User, ChevronLeft, ChevronRight } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/lib/toast"
@@ -31,6 +31,8 @@ type NewsletterSubscriber = {
   createdAt: string
 }
 
+const PER_PAGE = 10;
+
 export default function AdminInboxPage() {
   const [messages, setMessages] = useState<ContactMessage[]>([])
   const [subscribers, setSubscribers] = useState<NewsletterSubscriber[]>([])
@@ -40,6 +42,12 @@ export default function AdminInboxPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
   const [updating, setUpdating] = useState<string | number | null>(null)
+  const [contactPage, setContactPage] = useState(1)
+  const [newsPage, setNewsPage] = useState(1)
+
+  useEffect(() => {
+    setContactPage(1)
+  }, [searchQuery, statusFilter])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -105,6 +113,18 @@ export default function AdminInboxPage() {
     return matchesSearch && matchesStatus;
   });
 
+  const totalContactPages = Math.ceil(filteredMessages.length / PER_PAGE) || 1;
+  const paginatedMessages = filteredMessages.slice(
+    (contactPage - 1) * PER_PAGE,
+    contactPage * PER_PAGE
+  );
+
+  const totalNewsPages = Math.ceil(subscribers.length / PER_PAGE) || 1;
+  const paginatedSubscribers = subscribers.slice(
+    (newsPage - 1) * PER_PAGE,
+    newsPage * PER_PAGE
+  );
+
   return (
     <div className="w-full space-y-6 p-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -150,71 +170,124 @@ export default function AdminInboxPage() {
               <CardContent className="p-4 text-red-600">{error}</CardContent>
             </Card>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
-              <table className="w-full text-left text-sm text-[#646464]">
-                <thead className="bg-[#FFFBF3]/80 text-xs uppercase text-[#4A1D1F] border-b border-[#E8DCC8]">
-                  <tr>
-                    <th className="px-4 py-4 font-bold">Name</th>
-                    <th className="px-4 py-4 font-bold">Contact Info</th>
-                    <th className="px-4 py-4 font-bold">Message</th>
-                    <th className="px-4 py-4 font-bold whitespace-nowrap">Date</th>
-                    <th className="px-4 py-4 font-bold text-center">Status</th>
-                    <th className="px-4 py-4 font-bold text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E8DCC8]">
-                  {filteredMessages.map((msg) => (
-                    <tr key={msg.id} className="hover:bg-[#FFFBF3]/30 transition-colors">
-                      <td className="px-4 py-3 font-semibold text-gray-900">{msg.name}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        <div className="flex flex-col gap-1.5">
-                          <a href={`mailto:${msg.email}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Mail className="h-3 w-3" /> {msg.email}</a>
-                          {msg.phone && <a href={`tel:${msg.phone}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Phone className="h-3 w-3" /> {msg.phone}</a>}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 min-w-[200px] max-w-sm">
-                        <p className="line-clamp-2 text-xs leading-relaxed" title={msg.message}>{msg.message}</p>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs">
-                        <div className="flex items-center gap-1.5"><Clock className="h-3 w-3" /> {new Date(msg.createdAt).toLocaleDateString()}</div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <Select
-                          value={msg.status || 'open'}
-                          onValueChange={(v) => handleStatusChange(msg.id, v)}
-                          disabled={updating === msg.id}
-                        >
-                          <SelectTrigger
-                            size="sm"
-                            className={`w-full min-w-[150px] border rounded-md px-2 py-1.5 text-xs font-bold outline-none cursor-pointer uppercase tracking-wider shadow-none ${
-                              (msg.status === 'contacted') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'
-                            }`}
-                          >
-                            <SelectValue placeholder="Status" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="open">Not Contacted</SelectItem>
-                            <SelectItem value="contacted">Contacted</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <a href={`mailto:${msg.email}`} className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#4A1D1F] hover:text-white transition-colors" title="Reply via Email">
-                          <Mail className="h-3.5 w-3.5" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {filteredMessages.length === 0 && (
+            <>
+              <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+                <table className="w-full text-left text-sm text-[#646464]">
+                  <thead className="bg-[#FFFBF3]/80 text-xs uppercase text-[#4A1D1F] border-b border-[#E8DCC8]">
                     <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-[#646464]">
-                        {messages.length === 0 ? "No messages found." : "No messages match your filters."}
-                      </td>
+                      <th className="px-4 py-4 font-bold text-center w-12">S.No.</th>
+                      <th className="px-4 py-4 font-bold">Name</th>
+                      <th className="px-4 py-4 font-bold">Contact Info</th>
+                      <th className="px-4 py-4 font-bold">Message</th>
+                      <th className="px-4 py-4 font-bold whitespace-nowrap">Date</th>
+                      <th className="px-4 py-4 font-bold text-center">Status</th>
+                      <th className="px-4 py-4 font-bold text-center">Actions</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-[#E8DCC8]">
+                    {paginatedMessages.map((msg, index) => {
+                      const sNo = (contactPage - 1) * PER_PAGE + index + 1;
+                      return (
+                        <tr key={msg.id} className="hover:bg-[#FFFBF3]/30 transition-colors">
+                          <td className="px-4 py-3 text-center text-xs font-semibold text-[#646464]">
+                            {sNo}
+                          </td>
+                          <td className="px-4 py-3 font-semibold text-gray-900">{msg.name}</td>
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="flex flex-col gap-1.5">
+                              <a href={`mailto:${msg.email}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Mail className="h-3 w-3" /> {msg.email}</a>
+                              {msg.phone && <a href={`tel:${msg.phone}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Phone className="h-3 w-3" /> {msg.phone}</a>}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 min-w-[200px] max-w-sm">
+                            <p className="line-clamp-2 text-xs leading-relaxed" title={msg.message}>{msg.message}</p>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-xs">
+                            <div className="flex items-center gap-1.5"><Clock className="h-3 w-3" /> {new Date(msg.createdAt).toLocaleDateString()}</div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <Select
+                              value={msg.status || 'open'}
+                              onValueChange={(v) => handleStatusChange(msg.id, v)}
+                              disabled={updating === msg.id}
+                            >
+                              <SelectTrigger
+                                size="sm"
+                                className={`w-full min-w-[150px] border rounded-md px-2 py-1.5 text-xs font-bold outline-none cursor-pointer uppercase tracking-wider shadow-none ${
+                                  (msg.status === 'contacted') ? 'bg-green-50 text-green-700 border-green-200' : 'bg-orange-50 text-orange-700 border-orange-200'
+                                }`}
+                              >
+                                <SelectValue placeholder="Status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="open">Not Contacted</SelectItem>
+                                <SelectItem value="contacted">Contacted</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <a href={`mailto:${msg.email}`} className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#4A1D1F] hover:text-white transition-colors" title="Reply via Email">
+                              <Mail className="h-3.5 w-3.5" />
+                            </a>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {filteredMessages.length === 0 && (
+                      <tr>
+                        <td colSpan={7} className="px-4 py-8 text-center text-[#646464]">
+                          {messages.length === 0 ? "No messages found." : "No messages match your filters."}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalContactPages > 0 && (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+                  <p className="text-xs text-[#6B7280]">
+                    Showing {(contactPage - 1) * PER_PAGE + (filteredMessages.length ? 1 : 0)} to{" "}
+                    {Math.min(contactPage * PER_PAGE, filteredMessages.length)} of {filteredMessages.length} messages
+                  </p>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={contactPage === 1}
+                      onClick={() => setContactPage((p) => Math.max(1, p - 1))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+
+                    {Array.from({ length: totalContactPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setContactPage(p)}
+                        className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold transition-colors ${
+                          p === contactPage
+                            ? "bg-[#4A1D1F] text-white"
+                            : "border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      disabled={contactPage === totalContactPages}
+                      onClick={() => setContactPage((p) => Math.min(totalContactPages, p + 1))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
 
@@ -224,41 +297,94 @@ export default function AdminInboxPage() {
               <CardContent className="p-4 text-red-600">{error}</CardContent>
             </Card>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
-              <table className="w-full text-left text-sm text-[#646464]">
-                <thead className="bg-[#FFFBF3]/80 text-xs uppercase text-[#4A1D1F] border-b border-[#E8DCC8]">
-                  <tr>
-                    <th className="px-4 py-4 font-bold">Email</th>
-                    <th className="px-4 py-4 font-bold whitespace-nowrap">Subscribed Date</th>
-                    <th className="px-4 py-4 font-bold text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E8DCC8]">
-                  {subscribers.map((sub) => (
-                    <tr key={sub.id} className="hover:bg-[#FFFBF3]/30 transition-colors">
-                      <td className="px-4 py-3 font-semibold text-gray-900">
-                        <a href={`mailto:${sub.email}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Mail className="h-3 w-3" /> {sub.email}</a>
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap text-xs">
-                        <div className="flex items-center gap-1.5"><Clock className="h-3 w-3" /> {new Date(sub.createdAt).toLocaleDateString()}</div>
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <a href={`mailto:${sub.email}`} className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#4A1D1F] hover:text-white transition-colors" title="Send Email">
-                          <Mail className="h-3.5 w-3.5" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {subscribers.length === 0 && (
+            <>
+              <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+                <table className="w-full text-left text-sm text-[#646464]">
+                  <thead className="bg-[#FFFBF3]/80 text-xs uppercase text-[#4A1D1F] border-b border-[#E8DCC8]">
                     <tr>
-                      <td colSpan={3} className="px-4 py-8 text-center text-[#646464]">
-                        No newsletter subscribers found.
-                      </td>
+                      <th className="px-4 py-4 font-bold text-center w-12">S.No.</th>
+                      <th className="px-4 py-4 font-bold">Email</th>
+                      <th className="px-4 py-4 font-bold whitespace-nowrap">Subscribed Date</th>
+                      <th className="px-4 py-4 font-bold text-center">Actions</th>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-[#E8DCC8]">
+                    {paginatedSubscribers.map((sub, index) => {
+                      const sNo = (newsPage - 1) * PER_PAGE + index + 1;
+                      return (
+                        <tr key={sub.id} className="hover:bg-[#FFFBF3]/30 transition-colors">
+                          <td className="px-4 py-3 text-center text-xs font-semibold text-[#646464]">
+                            {sNo}
+                          </td>
+                          <td className="px-4 py-3 font-semibold text-gray-900">
+                            <a href={`mailto:${sub.email}`} className="hover:underline flex items-center gap-1.5 text-[#4A1D1F]"><Mail className="h-3 w-3" /> {sub.email}</a>
+                          </td>
+                          <td className="px-4 py-3 whitespace-nowrap text-xs">
+                            <div className="flex items-center gap-1.5"><Clock className="h-3 w-3" /> {new Date(sub.createdAt).toLocaleDateString()}</div>
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <a href={`mailto:${sub.email}`} className="inline-flex items-center justify-center h-8 w-8 rounded-full bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#4A1D1F] hover:text-white transition-colors" title="Send Email">
+                              <Mail className="h-3.5 w-3.5" />
+                            </a>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {subscribers.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-[#646464]">
+                          No newsletter subscribers found.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {totalNewsPages > 0 && (
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pt-2">
+                  <p className="text-xs text-[#6B7280]">
+                    Showing {(newsPage - 1) * PER_PAGE + (subscribers.length ? 1 : 0)} to{" "}
+                    {Math.min(newsPage * PER_PAGE, subscribers.length)} of {subscribers.length} subscribers
+                  </p>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={newsPage === 1}
+                      onClick={() => setNewsPage((p) => Math.max(1, p - 1))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </button>
+
+                    {Array.from({ length: totalNewsPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setNewsPage(p)}
+                        className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold transition-colors ${
+                          p === newsPage
+                            ? "bg-[#4A1D1F] text-white"
+                            : "border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      disabled={newsPage === totalNewsPages}
+                      onClick={() => setNewsPage((p) => Math.min(totalNewsPages, p + 1))}
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-[#E5E7EB] text-[#4A1D1F] hover:bg-slate-50 disabled:opacity-40"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </TabsContent>
       </Tabs>

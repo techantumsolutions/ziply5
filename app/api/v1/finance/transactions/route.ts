@@ -31,14 +31,63 @@ export async function GET(request: NextRequest) {
       if (rows.length) break
     }
 
-    const mappedTransactions = rows.map((tx) => ({
-      id: String(tx.id ?? ""),
-      amount: Number(tx.amount ?? 0),
-      type: String(tx.gateway ?? ""),
-      status: String(tx.status ?? ""),
-      referenceId: String((tx as any).externalId ?? (tx as any).external_id ?? ""),
-      createdAt: String((tx as any).createdAt ?? (tx as any).created_at ?? ""),
-    }))
+    let mappedTransactions = rows.map((tx) => {
+      const gatewayRaw = String(tx.gateway ?? (tx as any).paymentMethod ?? (tx as any).type ?? "").trim()
+      const gatewayFormatted = gatewayRaw.toLowerCase() === "cod" ? "COD" : "Razorpay"
+      const statusRaw = String(tx.status ?? "").toLowerCase()
+      const statusFormatted =
+        statusRaw === "paid" || statusRaw === "success" || statusRaw === "completed"
+          ? "Paid"
+          : statusRaw === "failed"
+          ? "Failed"
+          : "Pending"
+
+      return {
+        id: String(tx.id ?? ""),
+        orderId: String((tx as any).orderId ?? (tx as any).order_id ?? ""),
+        amount: Number(tx.amount ?? 0),
+        type: gatewayFormatted,
+        status: statusFormatted,
+        referenceId: String((tx as any).externalId ?? (tx as any).external_id ?? (tx as any).referenceId ?? (tx as any).paymentId ?? ""),
+        createdAt: String((tx as any).createdAt ?? (tx as any).created_at ?? ""),
+      }
+    })
+
+    if (mappedTransactions.length === 0) {
+      for (const orderTable of ["Order", "orders"]) {
+        const { data: orderRows, error: orderErr } = await client
+          .from(orderTable)
+          .select("id, total, paymentStatus, payment_status, paymentMethod, payment_method, paymentId, payment_id, createdAt, created_at")
+          .order("createdAt", { ascending: false })
+          .limit(100)
+
+        if (!orderErr && Array.isArray(orderRows) && orderRows.length > 0) {
+          mappedTransactions = orderRows.map((o) => {
+            const rawMethod = String(o.paymentMethod ?? (o as any).payment_method ?? "").toLowerCase()
+            const isCod = rawMethod.includes("cod") || rawMethod.includes("cash")
+            const rawStatus = String(o.paymentStatus ?? (o as any).payment_status ?? "").toLowerCase()
+            const isPaid = rawStatus === "success" || rawStatus === "paid"
+            const status = isPaid ? "Paid" : rawStatus === "failed" ? "Failed" : "Pending"
+            const ref = String(
+              o.paymentId ??
+                (o as any).payment_id ??
+                (isCod ? `plink_${String(o.id).slice(0, 14)}` : `order_${String(o.id).slice(0, 14)}`)
+            )
+
+            return {
+              id: `tx_${o.id}`,
+              orderId: String(o.id),
+              amount: Number(o.total ?? 0),
+              type: isCod ? "COD" : "Razorpay",
+              status,
+              referenceId: ref,
+              createdAt: String(o.createdAt ?? (o as any).created_at ?? new Date().toISOString()),
+            }
+          })
+          break
+        }
+      }
+    }
 
     return ok(mappedTransactions, "Transactions fetched successfully")
   } catch (e) {
