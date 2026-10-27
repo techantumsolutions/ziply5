@@ -48,10 +48,43 @@ const reconcileCodPayment = async (orderId: string) => {
 export const setAdminShipmentStatus = async (orderId: string, shipmentStatus: string, actorId: string) => {
   const normalizedStatus = shipmentStatus.toLowerCase()
 
-  const rows = await pgQuery<Array<{ id: string }>>(
-    `SELECT id FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' ORDER BY "createdAt" DESC LIMIT 1`,
+  const { order, status } = await latestHistoryStatus(orderId)
+  const isAccepted = ["confirmed", "packed", "shipped", "in_transit", "out_for_delivery", "delivered", "completed"].includes(status.toLowerCase())
+  if (!isAccepted) {
+    throw new Error("Order must be accepted before updating shipment status")
+  }
+
+  const rawSr = (order as any).shiprocketRawResponse
+  const hasServiceability = Boolean(
+    rawSr &&
+    typeof rawSr === "object" &&
+    (rawSr.serviceability || rawSr.data?.available_couriers || rawSr.available_couriers)
+  )
+
+  const rows = await pgQuery<Array<{ id: string; shipmentNo: string | null; carrier: string | null }>>(
+    `SELECT id, "shipmentNo", carrier FROM "Shipment" WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' ORDER BY "createdAt" DESC LIMIT 1`,
     [orderId],
   )
+  const shipmentExists = rows.length > 0
+  const hasShiprocketSync = Boolean(
+    order.shiprocketOrderId ||
+    (order as any).isShipmentCreated ||
+    (order as any).awbCode ||
+    (shipmentExists && !String(rows[0].shipmentNo ?? "").startsWith("manual-") && String(rows[0].carrier ?? "").toLowerCase() !== "manual")
+  )
+  const hasManualShipment = Boolean(
+    String((order as any).shippingMethod ?? "").toLowerCase() === "manual" ||
+    (shipmentExists && (String(rows[0].shipmentNo ?? "").startsWith("manual-") || String(rows[0].carrier ?? "").toLowerCase() === "manual"))
+  )
+
+  if (!hasServiceability && !hasShiprocketSync && !hasManualShipment) {
+    throw new Error("Courier serviceability must be checked before updating shipment status")
+  }
+
+  if (!hasShiprocketSync && !hasManualShipment) {
+    throw new Error("Order must be synced with Shiprocket or shipped manually before updating shipment status")
+  }
+
   if (rows.length > 0) {
     await pgQuery(
       `UPDATE "Shipment" SET "shipmentStatus" = $2, "shippingStatus" = $2,
@@ -122,6 +155,22 @@ export const createManualShipment = async (input: {
   const packageImages = Array.isArray(input.packageImages) ? input.packageImages.filter(Boolean) : []
 
   const shipment = await pgTx(async (client) => {
+    const existing = await client.query(
+      `SELECT * FROM "Shipment"
+       WHERE "orderId" = $1 AND COALESCE(lower("shipmentStatus"), '') <> 'cancelled' AND "cancelledAt" IS NULL
+       ORDER BY "createdAt" DESC LIMIT 1`,
+      [input.orderId],
+    )
+    if (existing.rows.length > 0) {
+      const existingId = existing.rows[0].id
+      const rows = await client.query(
+        `UPDATE "Shipment"
+         SET carrier = $2, "trackingNo" = $3, "updatedAt" = now()
+         WHERE id = $1 RETURNING *`,
+        [existingId, courier, trackingId],
+      )
+      return rows.rows[0]
+    }
     const id = randomUUID()
     const rows = await client.query(
       `INSERT INTO "Shipment" (id, "orderId", "shipmentNo", carrier, "trackingNo", "shipmentStatus", "shippedAt", "createdAt", "updatedAt")
@@ -137,7 +186,7 @@ export const createManualShipment = async (input: {
   }
 
   await pgQuery(
-    `UPDATE "Shipment" SET "trackingUrl" = $2, "labelUrl" = $3, "shippingStatus" = 'shipped', "courierName" = $4, "trackingData" = $5, "updatedAt" = now() WHERE id = $1`,
+    `UPDATE "Shipment" SET "trackingUrl" = $2, "labelUrl" = $3, "courierName" = $4, "trackingData" = $5, "updatedAt" = now() WHERE id = $1`,
     [shipment.id, trackingUrl, input.slipUrl ?? null, courier, JSON.stringify(trackingData)],
   ).catch(() => null)
 
@@ -161,13 +210,23 @@ export const createManualShipment = async (input: {
     await updateOrderStatus(input.orderId, "shipped", input.actorId, { reasonCode: "manual_shipment", note: "Manual shipment created" }).catch(() => null)
   }
   await pgQuery(
-    `UPDATE "Shipment" SET "shipmentStatus" = 'shipped', "shippingStatus" = 'shipped', "shippedAt" = COALESCE("shippedAt", now()), "updatedAt" = now() WHERE id = $1`,
+    `UPDATE "Shipment"
+     SET "shipmentStatus" = CASE WHEN "shipmentStatus" IN ('in_transit', 'out_for_delivery', 'delivered') THEN "shipmentStatus" ELSE 'shipped' END,
+         "shippingStatus" = CASE WHEN "shippingStatus" IN ('in_transit', 'out_for_delivery', 'delivered') THEN "shippingStatus" ELSE 'shipped' END,
+         "shippedAt" = COALESCE("shippedAt", now()),
+         "updatedAt" = now()
+     WHERE id = $1`,
     [shipment.id],
   ).catch(() => null)
+
+  const currentShipmentStatus = ["in_transit", "out_for_delivery", "delivered"].includes(String(shipment.shipmentStatus ?? "").toLowerCase())
+    ? String(shipment.shipmentStatus)
+    : "shipped"
+
   await upsertOrderShipmentSnapshotSupabase(input.orderId, {
     shipmentId: String(shipment.shipmentNo ?? shipment.id),
-    shipmentStatus: "shipped",
-    shippingStatus: "shipped",
+    shipmentStatus: currentShipmentStatus,
+    shippingStatus: currentShipmentStatus,
     shippingMethod: "manual",
     courierName: courier,
     trackingNumber: trackingId,

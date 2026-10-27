@@ -57,7 +57,7 @@ export const getCartItems = (): CartItem[] => {
 export const setCartItems = (items: CartItem[]) => {
   if (typeof window === "undefined") return
   const normalized: CartItemNormalized[] = items
-    .filter((item) => item.productId)
+    .filter((item): item is CartItem & { productId: string } => Boolean(item.productId))
     .map((item) => {
       const totals = computeItemTotals({
         price: item.price,
@@ -204,12 +204,21 @@ export const validateCartItems = (items: CartItem[], products: StorefrontProduct
     const product = products.find((p) => p.id === item.productId || p.slug === item.slug)
     if (!product) continue
 
-    if (product.productKind === "variant" && !item.variantId) {
-      return { valid: false, error: `Variant is required for product: ${product.name}` }
-    }
+    const isPack = item.variantId?.includes(":pack-")
+    const [rawVariantId] = item.variantId ? item.variantId.split(":pack-") : [null]
+    const baseVariantId = rawVariantId === "default" ? null : rawVariantId
 
-    if (item.variantId && !product.variants.some((v) => v.id === item.variantId)) {
-      return { valid: false, error: `Invalid variant selected for: ${product.name}` }
+    if (product.productKind === "variant") {
+      if (!item.variantId) {
+        return { valid: false, error: `Variant is required for product: ${product.name}` }
+      }
+      if (isPack || product.packs?.some((pk: any) => pk.id === item.variantId)) {
+        if (baseVariantId && !product.variants.some((v) => v.id === baseVariantId) && !product.packs?.some((pk: any) => pk.id === item.variantId)) {
+          return { valid: false, error: `Invalid variant selected for: ${product.name}` }
+        }
+      } else if (!product.variants.some((v) => v.id === item.variantId)) {
+        return { valid: false, error: `Invalid variant selected for: ${product.name}` }
+      }
     }
   }
   return { valid: true }

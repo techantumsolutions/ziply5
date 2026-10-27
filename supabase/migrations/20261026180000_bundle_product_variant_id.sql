@@ -1,0 +1,1 @@
+ALTER TABLE "BundleProduct" ADD COLUMN IF NOT EXISTS "variantId" TEXT REFERENCES "ProductVariant"(id) ON DELETE SET NULL;

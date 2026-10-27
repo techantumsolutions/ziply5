@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import {
   AlertTriangle,
+  Boxes,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -32,9 +33,12 @@ import {
   Layers,
   Leaf,
   Package,
+  PackagePlus,
   Pencil,
   Play,
+  Plus,
   Rocket,
+  RotateCcw,
   Save,
   Search,
   Tag,
@@ -86,6 +90,20 @@ type ProductRow = {
   // seller?: { email: string; name: string } | null
 }
 
+export type ProductPack = {
+  id: string
+  variantId?: string | null
+  variantWeight: string
+  name: string
+  quantity: number
+  mrp: number | string
+  price: number | string
+  discountPercent?: number | null
+  sku?: string
+  hsnCode?: string | null
+  isActive: boolean
+}
+
 type ProductDetail = {
   id: string
   name: string
@@ -112,6 +130,7 @@ type ProductDetail = {
   thumbnail?: string | null
   videoUrl?: string | null
   categoryId?: string | null
+  categoryIds?: string[]
   category_id?: string | null
   category?: { id?: string; name?: string; slug?: string } | null
   categories?: Array<{
@@ -140,6 +159,7 @@ type ProductDetail = {
     updatedAt?: string | Date | null
     priceUpdatedAt?: string | Date | null
   }>
+  packs?: ProductPack[]
   images?: Array<{ url: string }>
   details?: Array<{ title: string; content: string; sortOrder?: number }>
   sections?: Array<{ id: string; title: string; description: string; sortOrder: number; isActive: boolean }>
@@ -353,9 +373,8 @@ function SearchableMasterSelect({
           className={`w-full rounded border border-[#D9D9D1] bg-white pl-2 pr-7 py-1.5 text-xs focus:border-[#7B3010] focus:outline-none cursor-pointer ${className}`}
         />
         <ChevronDown
-          className={`absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#646464] pointer-events-none transition-transform duration-150 ${
-            open ? "rotate-180 text-[#7B3010]" : ""
-          }`}
+          className={`absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[#646464] pointer-events-none transition-transform duration-150 ${open ? "rotate-180 text-[#7B3010]" : ""
+            }`}
         />
       </div>
 
@@ -391,9 +410,8 @@ function SearchableMasterSelect({
                 <button
                   key={opt.value}
                   type="button"
-                  className={`w-full text-left px-3 py-1.5 hover:bg-[#FFF7ED] transition ${
-                    opt.value === value ? "bg-[#FFF7ED] font-bold text-[#7B3010]" : "text-[#2A1810]"
-                  }`}
+                  className={`w-full text-left px-3 py-1.5 hover:bg-[#FFF7ED] transition ${opt.value === value ? "bg-[#FFF7ED] font-bold text-[#7B3010]" : "text-[#2A1810]"
+                    }`}
                   onClick={(e) => {
                     e.stopPropagation()
                     onChange(opt.value)
@@ -616,9 +634,8 @@ const ImageUploadPicker = ({
           setDragOver(false)
           takeFiles(e.dataTransfer.files)
         }}
-        className={`flex flex-1 flex-col rounded-xl border border-dashed p-3 transition-colors ${
-          dragOver ? "border-[#7B3010] bg-[#FFF6EC]" : "border-[#D9D9D1] bg-[#FFFBF3]/40"
-        }`}
+        className={`flex flex-1 flex-col rounded-xl border border-dashed p-3 transition-colors ${dragOver ? "border-[#7B3010] bg-[#FFF6EC]" : "border-[#D9D9D1] bg-[#FFFBF3]/40"
+          }`}
       >
         <input
           ref={inputRef}
@@ -657,9 +674,8 @@ const ImageUploadPicker = ({
               return (
                 <div
                   key={`${url}-${idx}`}
-                  className={`group relative overflow-hidden rounded-lg border bg-white ${
-                    isCover ? "border-[#7B3010] ring-1 ring-[#7B3010]/40" : "border-[#E8DCC8]"
-                  }`}
+                  className={`group relative overflow-hidden rounded-lg border bg-white ${isCover ? "border-[#7B3010] ring-1 ring-[#7B3010]/40" : "border-[#E8DCC8]"
+                    }`}
                 >
                   <button
                     type="button"
@@ -727,93 +743,70 @@ const ImageUploadPicker = ({
   )
 }
 
-const resolveProductCategoryId = (p: any, availableCategories: CategoryRow[] = []): string => {
-  if (!p) return ""
-
-  // Flatten p if nested inside p.product
+const resolveProductCategoryIds = (p: any, availableCategories: CategoryRow[] = []): string[] => {
+  if (!p) return []
   const item = p.product && typeof p.product === "object" ? { ...p.product, ...p } : p
+  const matchedIds = new Set<string>()
 
-  let foundId = ""
-
-  // 1. Direct categoryId/category_id on product
-  if (typeof item.categoryId === "string" && item.categoryId.trim()) {
-    foundId = item.categoryId.trim()
-  } else if (typeof item.category_id === "string" && item.category_id.trim()) {
-    foundId = item.category_id.trim()
-  } else if (typeof item.category === "string" && item.category.trim()) {
-    foundId = item.category.trim()
-  } else if (item.category && typeof item.category.id === "string" && item.category.id.trim()) {
-    foundId = item.category.id.trim()
-  }
-
-  // 2. Categories array on product
-  if (!foundId) {
-    const cats = Array.isArray(item.categories)
-      ? item.categories
-      : Array.isArray(item.productCategories)
-        ? item.productCategories
-        : Array.isArray(p.categories)
-          ? p.categories
-          : []
-    for (const c of cats) {
-      if (typeof c === "string" && c.trim()) {
-        foundId = c.trim()
-        break
-      }
-      if (c && typeof c === "object") {
-        if (typeof c.categoryId === "string" && c.categoryId.trim()) {
-          foundId = c.categoryId.trim()
-          break
-        }
-        if (typeof c.category_id === "string" && c.category_id.trim()) {
-          foundId = c.category_id.trim()
-          break
-        }
-        if (c.category && typeof c.category.id === "string" && c.category.id.trim()) {
-          foundId = c.category.id.trim()
-          break
-        }
-        if (typeof c.id === "string" && c.id.trim()) {
-          foundId = c.id.trim()
-          break
-        }
-      }
+  const tryAdd = (val: unknown) => {
+    if (typeof val !== "string" || !val.trim()) return
+    const str = val.trim()
+    const found = availableCategories.find(
+      (ac) =>
+        String(ac.id).toLowerCase() === str.toLowerCase() ||
+        String(ac.name).toLowerCase() === str.toLowerCase() ||
+        (ac.slug && String(ac.slug).toLowerCase() === str.toLowerCase()),
+    )
+    if (found) {
+      matchedIds.add(found.id)
+    } else {
+      matchedIds.add(str)
     }
   }
 
-  // If foundId matches a category ID directly in availableCategories (type-insensitive)
-  if (foundId && availableCategories.some((ac) => String(ac.id) === String(foundId))) {
-    return availableCategories.find((ac) => String(ac.id) === String(foundId))?.id || foundId
+  // 1. Array of categoryIds
+  if (Array.isArray(item.categoryIds)) {
+    for (const cid of item.categoryIds) tryAdd(cid)
   }
 
-  // 3. Fallback: match by slug or name if foundId is a slug/name or if product has category slug/name
-  if (availableCategories.length > 0) {
-    const slugOrNameCandidates = [
-      foundId,
-      typeof item.categorySlug === "string" ? item.categorySlug : null,
-      typeof item.category_slug === "string" ? item.category_slug : null,
-      typeof item.categoryName === "string" ? item.categoryName : null,
-      typeof item.category_name === "string" ? item.category_name : null,
-      item.category?.slug,
-      item.category?.name,
-      item.categories?.[0]?.slug,
-      item.categories?.[0]?.name,
-      item.categories?.[0]?.category?.slug,
-      item.categories?.[0]?.category?.name,
-      p.categorySlug,
-      p.categoryName,
-    ].filter((val): val is string => typeof val === "string" && Boolean(val.trim()))
+  // 2. Direct categoryId/category_id on product
+  if (item.categoryId) tryAdd(item.categoryId)
+  if (item.category_id) tryAdd(item.category_id)
+  if (typeof item.category === "string") tryAdd(item.category)
+  if (item.category && typeof item.category.id === "string") tryAdd(item.category.id)
+  if (item.category && typeof item.category.name === "string") tryAdd(item.category.name)
+  if (item.category && typeof item.category.slug === "string") tryAdd(item.category.slug)
 
-    for (const candidate of slugOrNameCandidates) {
-      const targetStr = candidate.trim().toLowerCase()
-      const matched = availableCategories.find(
-        (ac) => String(ac.id) === candidate.trim() || ac.slug?.toLowerCase() === targetStr || ac.name?.toLowerCase() === targetStr,
-      )
-      if (matched) return matched.id
+  // 3. Categories array on product
+  const cats = Array.isArray(item.categories)
+    ? item.categories
+    : Array.isArray(item.productCategories)
+      ? item.productCategories
+      : Array.isArray(p.categories)
+        ? p.categories
+        : []
+
+  for (const c of cats) {
+    if (typeof c === "string") {
+      tryAdd(c)
+    } else if (c && typeof c === "object") {
+      if (c.categoryId) tryAdd(c.categoryId)
+      if (c.category_id) tryAdd(c.category_id)
+      if (c.id) tryAdd(c.id)
+      if (c.name) tryAdd(c.name)
+      if (c.slug) tryAdd(c.slug)
+      if (c.category && typeof c.category.id === "string") tryAdd(c.category.id)
+      if (c.category && typeof c.category.name === "string") tryAdd(c.category.name)
+      if (c.category && typeof c.category.slug === "string") tryAdd(c.category.slug)
     }
   }
 
-  return foundId
+  return [...matchedIds]
+}
+
+const resolveProductCategoryId = (p: any, availableCategories: CategoryRow[] = []): string => {
+  const ids = resolveProductCategoryIds(p, availableCategories)
+  return ids[0] ?? ""
 }
 
 export function ProductConsolePage({
@@ -933,6 +926,13 @@ export function ProductConsolePage({
     { name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true, hsnCode: "", eanCode: "" },
   ])
   const [variantMode, setVariantMode] = useState<"single" | "multiple">("single")
+  const [packs, setPacks] = useState<ProductPack[]>([])
+  const [showPacksSection, setShowPacksSection] = useState(false)
+  const [editingPackId, setEditingPackId] = useState<string | null>(null)
+  const packsRef = useRef(packs)
+  useEffect(() => {
+    packsRef.current = packs
+  }, [packs])
   const [updatedAt, setUpdatedAt] = useState<string | Date | null>(null)
   const [createdAt, setCreatedAt] = useState<string | Date | null>(null)
   const [priceUpdatedAt, setPriceUpdatedAt] = useState<string | Date | null>(null)
@@ -944,10 +944,14 @@ export function ProductConsolePage({
   const [thumbnailUrls, setThumbnailUrls] = useState<string[]>([])
   const [metaTitle, setMetaTitle] = useState("")
   const [metaDescription, setMetaDescription] = useState("")
+  const [categoryIds, setCategoryIds] = useState<string[]>([])
   const [categoryId, setCategoryId] = useState("")
-  // ProductCategory id resolved while loading an edit/view form. The select
+  const [categoriesDropdownOpen, setCategoriesDropdownOpen] = useState(false)
+  const categoriesDropdownRef = useRef<HTMLDivElement>(null)
+  // ProductCategory ids resolved while loading an edit/view form. The select
   // options are not mounted yet at that moment, so the value is applied after
   // the category list is on screen.
+  const loadedCategoryIdsRef = useRef<string[]>([])
   const loadedCategoryIdRef = useRef("")
   const categoryBaselineReadyRef = useRef(false)
   const categoryApplyAttemptsRef = useRef(0)
@@ -1064,7 +1068,7 @@ export function ProductConsolePage({
 
     // Apply category filter
     if (filterCategory !== 'all') {
-      result = result.filter(p => resolveProductCategoryId(p, categories) === filterCategory)
+      result = result.filter(p => resolveProductCategoryIds(p, categories).includes(filterCategory))
     }
 
     // Apply preparation type filter
@@ -1177,10 +1181,13 @@ export function ProductConsolePage({
         }
       }
       setSelectedFeatureDefinitionIds([...byId].slice(0, MAX_PRODUCT_FEATURES))
-      const resolvedCategoryId = resolveProductCategoryId(p, activeCats)
+      const resolvedCategoryIds = resolveProductCategoryIds(p, activeCats)
+      const resolvedCategoryId = resolvedCategoryIds[0] ?? ""
+      loadedCategoryIdsRef.current = resolvedCategoryIds
       loadedCategoryIdRef.current = resolvedCategoryId
       categoryBaselineReadyRef.current = false
       categoryApplyAttemptsRef.current = 0
+      setCategoryIds(resolvedCategoryIds)
       setCategoryId(resolvedCategoryId)
 
       const productTags = (p.tags ?? []).map((x) => x.tag).filter(Boolean)
@@ -1198,80 +1205,361 @@ export function ProductConsolePage({
       setVariants(
         loadedVariants.length
           ? withSingleDefault(
-              loadedVariants.map((item, idx) => ({
-                id: item.id,
-                name: item.weight ?? item.name ?? `Variant ${idx + 1}`,
-                weight: item.weight ?? item.name ?? "",
-                sku: item.sku ?? "",
-                price: String(Number(item.price ?? 0)),
-                mrp:
-                  item.mrp != null
-                    ? String(Number(item.mrp))
-                    : (item as any).mrp_code != null
+            loadedVariants.map((item, idx) => ({
+              id: item.id,
+              name: item.weight ?? item.name ?? `Variant ${idx + 1}`,
+              weight: item.weight ?? item.name ?? "",
+              sku: item.sku ?? "",
+              price: String(Number(item.price ?? 0)),
+              mrp:
+                item.mrp != null
+                  ? String(Number(item.mrp))
+                  : (item as any).mrp_code != null
                     ? String(Number((item as any).mrp_code))
                     : "",
-                discountPercent:
-                  item.discountPercent != null
-                    ? String(Number(item.discountPercent))
-                    : (item as any).discount_percent != null
+              discountPercent:
+                item.discountPercent != null
+                  ? String(Number(item.discountPercent))
+                  : (item as any).discount_percent != null
                     ? String(Number((item as any).discount_percent))
                     : "",
-                stock: String(item.stock ?? 0),
-                isDefault: Boolean(item.isDefault ?? (item as any).is_default),
-                hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
-                eanCode: String(item.eanCode ?? item.ean_code ?? ""),
-                updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
-                priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
-              })),
-            )
+              stock: String(item.stock ?? 0),
+              isDefault: Boolean(item.isDefault ?? (item as any).is_default),
+              hsnCode: String(item.hsnCode ?? item.hsn_code ?? ""),
+              eanCode: String(item.eanCode ?? item.ean_code ?? ""),
+              updatedAt: item.updatedAt ?? (item as { updated_at?: string | Date | null }).updated_at ?? null,
+              priceUpdatedAt: item.priceUpdatedAt ?? (item as { price_updated_at?: string | Date | null }).price_updated_at ?? null,
+            })),
+          )
           : [
-              {
-                name: p.weight || "250g",
-                weight: p.weight || "250g",
-                sku: p.sku?.startsWith("DRAFT-") ? "" : (p.sku ?? ""),
-                price: Number(p.price) > 0 ? String(Number(p.price)) : "",
-                mrp: p.basePrice != null && Number(p.basePrice) > 0 ? String(Number(p.basePrice)) : "",
-                discountPercent: p.discountPercent != null ? String(Number(p.discountPercent)) : "",
-                stock: String(p.totalStock ?? 0),
-                isDefault: true,
-                hsnCode: "",
-                eanCode: "",
-              },
-            ],
+            {
+              name: p.weight || "250g",
+              weight: p.weight || "250g",
+              sku: p.sku?.startsWith("DRAFT-") ? "" : (p.sku ?? ""),
+              price: Number(p.price) > 0 ? String(Number(p.price)) : "",
+              mrp: p.basePrice != null && Number(p.basePrice) > 0 ? String(Number(p.basePrice)) : "",
+              discountPercent: p.discountPercent != null ? String(Number(p.discountPercent)) : "",
+              stock: String(p.totalStock ?? 0),
+              isDefault: true,
+              hsnCode: "",
+              eanCode: "",
+            },
+          ],
       )
       setVariantMode(
         p.type === "simple" || p.type === "single"
           ? "single"
           : p.type === "variant" || p.type === "multiple"
-          ? "multiple"
-          : loadedVariants.length > 1
-          ? "multiple"
-          : "single",
+            ? "multiple"
+            : loadedVariants.length > 1
+              ? "multiple"
+              : "single",
       )
 
       const nextSections =
         (p.sections?.length
           ? p.sections.map((s) => ({
-              id: s.id,
-              title: s.title,
-              description: s.description,
-              sortOrder: s.sortOrder ?? 0,
-              isActive: s.isActive ?? true,
-            }))
+            id: s.id,
+            title: s.title,
+            description: s.description,
+            sortOrder: s.sortOrder ?? 0,
+            isActive: s.isActive ?? true,
+          }))
           : (p.details ?? []).map((d, idx) => ({
-              title: d.title,
-              description: d.content,
-              sortOrder: d.sortOrder ?? idx,
-              isActive: true,
-            }))) ?? []
+            title: d.title,
+            description: d.content,
+            sortOrder: d.sortOrder ?? idx,
+            isActive: true,
+          }))) ?? []
       setSections(
         nextSections.length
           ? nextSections.sort((a, b) => a.sortOrder - b.sortOrder)
           : [{ title: "", description: "<p></p>", sortOrder: 0, isActive: true }],
       )
+
+      const loadedPacks = Array.isArray((p as any).packs) ? (p as any).packs : []
+      if (loadedPacks.length > 0) {
+        setPacks(
+          loadedPacks.map((pk: any, idx: number) => {
+            const vWeight = String(pk.variantWeight || pk.variant_weight || "").trim()
+            const vId = pk.variantId || pk.variant_id || null
+            const matchingVar = ((p as any).variants || []).find(
+              (v: any) => (vId && v.id === vId) || (vWeight && (v.weight === vWeight || v.name === vWeight))
+            )
+            const rawSku = String(pk.sku || "")
+            const cleanSku = matchingVar?.sku || rawSku.replace(/-PACK-\d+/i, "")
+            return {
+              id: String(pk.id || `pack-${idx + 1}`),
+              variantId: vId,
+              variantWeight: vWeight,
+              name: String(pk.name || `Pack of ${pk.quantity || 2}`),
+              quantity: Number(pk.quantity) || 2,
+              mrp: pk.mrp != null ? Number(pk.mrp) : 0,
+              price: pk.price != null ? Number(pk.price) : 0,
+              discountPercent:
+                pk.discountPercent != null
+                  ? Number(pk.discountPercent)
+                  : pk.discount_percent != null
+                    ? Number(pk.discount_percent)
+                    : null,
+              sku: cleanSku,
+              hsnCode: matchingVar?.hsnCode || pk.hsnCode || pk.hsn_code || null,
+              isActive: pk.isActive !== false && pk.is_active !== false,
+            }
+          })
+        )
+        setShowPacksSection(true)
+      } else {
+        setPacks([])
+        setShowPacksSection(false)
+      }
     },
     [],
   )
+
+  const availableVariants = useMemo(() => {
+    const list = variantMode === "single" ? variants.slice(0, 1) : variants
+    return list.map((v, idx) => {
+      const weightVal = (v.weight || v.name || `Variant ${idx + 1}`).trim()
+      const sale = variantSalePrice(v, discountEnabled)
+      const mrp = Number(v.mrp || 0)
+      return {
+        id: v.id,
+        index: idx,
+        name: weightVal,
+        weight: weightVal,
+        sku: v.sku,
+        mrp: mrp > 0 ? mrp : (Number(v.price) || 0),
+        price: sale > 0 ? sale : (Number(v.price) || mrp),
+        stock: v.stock,
+        hsnCode: v.hsnCode,
+        eanCode: v.eanCode,
+      }
+    })
+  }, [variants, variantMode, discountEnabled])
+
+  const validateVariantsBeforePacks = useCallback((): string | null => {
+    const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+    if (targetVariants.length === 0) {
+      return "Please add at least one product variant first."
+    }
+    for (let i = 0; i < targetVariants.length; i++) {
+      const v = targetVariants[i]
+      const label = variantMode === "single" ? "Variant" : `Variant ${i + 1}`
+      const vWeight = (v.weight || "").trim()
+      const vSku = (v.sku || "").trim()
+      const vStock = (v.stock || "").trim()
+      const vSalePrice = variantSalePrice(v, discountEnabled)
+      const vMrp = Number(v.mrp || 0)
+      const vPrice = Number(v.price || 0)
+
+      if (!parseWeight(vWeight).value) {
+        return `${label}: Weight / Size is mandatory before creating packs.`
+      }
+      if (!(vSalePrice > 0) && !(vMrp > 0) && !(vPrice > 0)) {
+        return `${label}: Price / MRP is mandatory and must be greater than 0 before creating packs.`
+      }
+      if (!vSku) {
+        return `${label}: SKU is mandatory before creating packs.`
+      }
+      if (vStock === "" || isNaN(Number(vStock)) || Number(vStock) < 0) {
+        return `${label}: Stock is mandatory before creating packs.`
+      }
+      if (!v.hsnCode?.trim()) {
+        return `${label}: HSN Code is mandatory before creating packs.`
+      }
+      if (!v.eanCode?.trim()) {
+        return `${label}: Barcode Number is mandatory before creating packs.`
+      }
+    }
+    return null
+  }, [variants, variantMode, discountEnabled])
+
+  const handleCreatePacksClick = () => {
+    const err = validateVariantsBeforePacks()
+    if (err) {
+      toast.error(err)
+      setError(err)
+      return
+    }
+    setError("")
+    setShowPacksSection(true)
+    if (packs.length === 0) {
+      const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+      const firstVar = targetVariants[0]
+      const vWeight = (firstVar.weight || firstVar.name || "Default").trim()
+      const baseMrp = Number(firstVar.mrp) || Number(firstVar.price) || 0
+      const basePrice = Number(variantSalePrice(firstVar, discountEnabled)) || baseMrp
+      const initialQty = 2
+      const initialMrp = Math.round(baseMrp * initialQty * 100) / 100
+      const initialPrice = Math.round(basePrice * initialQty * 100) / 100
+      const newPack: ProductPack = {
+        id: `pack-${Date.now()}`,
+        variantId: firstVar.id,
+        variantWeight: vWeight,
+        name: `Pack of ${initialQty} (${vWeight})`,
+        quantity: initialQty,
+        mrp: initialMrp,
+        price: initialPrice,
+        discountPercent: initialMrp > 0 && initialPrice < initialMrp ? Math.round(((initialMrp - initialPrice) / initialMrp) * 100) : null,
+        sku: firstVar.sku || "",
+        hsnCode: firstVar.hsnCode || null,
+        isActive: true,
+      }
+      setPacks([newPack])
+      toast.success("Variant details verified! Pack's management section created.")
+    } else {
+      toast.success("Variants verified! Pack's management section is ready.")
+    }
+  }
+
+  const handleAddPack = () => {
+    const err = validateVariantsBeforePacks()
+    if (err) {
+      toast.error(err)
+      setError(err)
+      return
+    }
+    const targetVariants = variantMode === "single" ? variants.slice(0, 1) : variants
+    const validVariants = targetVariants.filter(
+      (v) => (v.weight || v.name || "").trim() && (Number(v.mrp || 0) > 0 || Number(v.price || 0) > 0)
+    )
+    if (validVariants.length === 0) {
+      toast.error("Please add and complete at least one variant before creating packs.")
+      return
+    }
+    const defaultVar = validVariants[0]
+    const vWeight = (defaultVar.weight || defaultVar.name).trim()
+    const baseMrp = Number(defaultVar.mrp) || Number(defaultVar.price) || 0
+    const basePrice = Number(variantSalePrice(defaultVar, discountEnabled)) || baseMrp
+
+    const existingQtys = packs.filter((p) => p.variantWeight === vWeight).map((p) => p.quantity)
+    let nextQty = 2
+    while (existingQtys.includes(nextQty)) {
+      nextQty++
+    }
+    const calcMrp = Math.round(baseMrp * nextQty * 100) / 100
+    const calcPrice = Math.round(basePrice * nextQty * 100) / 100
+
+    const newPack: ProductPack = {
+      id: `pack-${Date.now()}`,
+      variantId: defaultVar.id,
+      variantWeight: vWeight,
+      name: `Pack of ${nextQty} (${vWeight})`,
+      quantity: nextQty,
+      mrp: calcMrp,
+      price: calcPrice,
+      discountPercent: calcMrp > 0 && calcPrice < calcMrp ? Math.round(((calcMrp - calcPrice) / calcMrp) * 100) : null,
+      sku: defaultVar.sku || "",
+      hsnCode: defaultVar.hsnCode || null,
+      isActive: true,
+    }
+    setPacks((prev) => [...prev, newPack])
+    toast.success(`Pack of ${nextQty} added.`)
+  }
+
+  const handlePackVariantChange = (packId: string, selectedWeight: string) => {
+    const chosenVar = availableVariants.find((v) => (v.weight || v.name) === selectedWeight)
+    if (!chosenVar) return
+    setPacks((prev) =>
+      prev.map((p) => {
+        if (p.id !== packId) return p
+        const vMrp = Number(chosenVar.mrp) || Number(chosenVar.price) || 0
+        const vPrice = Number(chosenVar.price) || vMrp
+        const newMrp = Math.round(vMrp * p.quantity * 100) / 100
+        const newPrice = Math.round(vPrice * p.quantity * 100) / 100
+        const vWeight = (chosenVar.weight || chosenVar.name).trim()
+        return {
+          ...p,
+          variantId: chosenVar.id,
+          variantWeight: vWeight,
+          name: `Pack of ${p.quantity} (${vWeight})`,
+          mrp: newMrp,
+          price: newPrice,
+          discountPercent: newMrp > 0 && newPrice < newMrp ? Math.round(((newMrp - newPrice) / newMrp) * 100) : null,
+          sku: chosenVar.sku || "",
+          hsnCode: chosenVar.hsnCode || null,
+        }
+      })
+    )
+  }
+
+  const handlePackQuantityChange = (packId: string, newQtyRaw: string) => {
+    const newQty = Math.max(1, parseInt(newQtyRaw, 10) || 1)
+    setPacks((prev) =>
+      prev.map((p) => {
+        if (p.id !== packId) return p
+        const chosenVar = availableVariants.find((v) => (v.weight || v.name) === p.variantWeight) || availableVariants[0]
+        const vMrp = chosenVar ? (Number(chosenVar.mrp) || Number(chosenVar.price) || 0) : (Number(p.mrp) / (p.quantity || 1))
+        const vPrice = chosenVar ? (Number(chosenVar.price) || vMrp) : (Number(p.price) / (p.quantity || 1))
+        const newMrp = Math.round(vMrp * newQty * 100) / 100
+        const newPrice = Math.round(vPrice * newQty * 100) / 100
+        const vWeight = p.variantWeight || (chosenVar ? (chosenVar.weight || chosenVar.name).trim() : "")
+        return {
+          ...p,
+          quantity: newQty,
+          name: `Pack of ${newQty}${vWeight ? ` (${vWeight})` : ""}`,
+          mrp: newMrp,
+          price: newPrice,
+          discountPercent: newMrp > 0 && newPrice < newMrp ? Math.round(((newMrp - newPrice) / newMrp) * 100) : null,
+          sku: chosenVar?.sku || (p.sku ? p.sku.replace(/-PACK-\d+/i, "") : ""),
+          hsnCode: chosenVar?.hsnCode || p.hsnCode || null,
+        }
+      })
+    )
+  }
+
+  const handlePackPriceChange = (packId: string, newPriceRaw: string) => {
+    const cleanVal = sanitizeNonNegativeInput(newPriceRaw)
+    const numVal = parseFloat(cleanVal) || 0
+    setPacks((prev) =>
+      prev.map((p) => {
+        if (p.id !== packId) return p
+        const mrpNum = Number(p.mrp) || 0
+        const discount = mrpNum > 0 && numVal > 0 && numVal < mrpNum ? Math.round(((mrpNum - numVal) / mrpNum) * 100) : null
+        return {
+          ...p,
+          price: cleanVal,
+          discountPercent: discount,
+        }
+      })
+    )
+  }
+
+  const handleResetPackPrice = (packId: string) => {
+    setPacks((prev) =>
+      prev.map((p) => {
+        if (p.id !== packId) return p
+        const chosenVar = availableVariants.find((v) => (v.weight || v.name) === p.variantWeight) || availableVariants[0]
+        const vPrice = chosenVar ? (Number(chosenVar.price) || Number(chosenVar.mrp) || 0) : 0
+        const stdPrice = Math.round(vPrice * p.quantity * 100) / 100
+        const mrpNum = Number(p.mrp) || 0
+        const disc = mrpNum > 0 && stdPrice < mrpNum ? Math.round(((mrpNum - stdPrice) / mrpNum) * 100) : null
+        return {
+          ...p,
+          price: stdPrice,
+          discountPercent: disc,
+        }
+      })
+    )
+    toast.success("Pack price reset to auto-calculated standard.")
+  }
+
+  const handlePackToggleActive = (packId: string) => {
+    setPacks((prev) =>
+      prev.map((p) => {
+        if (p.id !== packId) return p
+        const nextState = !p.isActive
+        toast.success(`Pack "${p.name}" marked as ${nextState ? "Active" : "Inactive"}`)
+        return { ...p, isActive: nextState }
+      })
+    )
+  }
+
+  const handleRemovePack = (packId: string) => {
+    setPacks((prev) => prev.filter((p) => p.id !== packId))
+    toast.success("Pack removed.")
+  }
 
   const validateStep = useCallback(
     (stepToValidate: ProductFormStepId): string | null => {
@@ -1279,8 +1567,8 @@ export function ProductConsolePage({
         if (!name.trim() || !slug.trim()) {
           return "Name and slug are required before continuing"
         }
-        if (!categoryId) {
-          return "Category is mandatory before continuing"
+        if (!categoryId && categoryIds.length === 0) {
+          return "At least one category is mandatory before continuing"
         }
         return null
       }
@@ -1345,6 +1633,7 @@ export function ProductConsolePage({
       name,
       slug,
       categoryId,
+      categoryIds,
       thumbnailUrls,
       description,
       selectedFeatureDefinitionIds,
@@ -1450,9 +1739,11 @@ export function ProductConsolePage({
       skipAutosaveRef.current = true
     }
     if (mode === "edit" || mode === "view") {
+      loadedCategoryIdsRef.current = []
       loadedCategoryIdRef.current = ""
       categoryBaselineReadyRef.current = false
       categoryApplyAttemptsRef.current = 0
+      setCategoryIds([])
       setCategoryId("")
     }
   }, [mode, productId])
@@ -1524,6 +1815,17 @@ export function ProductConsolePage({
   }, [mode])
 
   useEffect(() => {
+    if (!categoriesDropdownOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!categoriesDropdownRef.current?.contains(event.target as Node)) {
+        setCategoriesDropdownOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", onPointerDown)
+    return () => document.removeEventListener("mousedown", onPointerDown)
+  }, [categoriesDropdownOpen])
+
+  useEffect(() => {
     if (!tagsDropdownOpen) return
     const onPointerDown = (event: MouseEvent) => {
       if (!tagsDropdownRef.current?.contains(event.target as Node)) {
@@ -1552,8 +1854,8 @@ export function ProductConsolePage({
     (mode === "edit" || mode === "view") && productId
       ? productId
       : (autosavedDraftId && /^PRD-\d+$/i.test(autosavedDraftId) ? autosavedDraftId : null) ??
-        nextSequenceId ??
-        (pendingProductId && /^PRD-\d+$/i.test(pendingProductId) ? pendingProductId : "")
+      nextSequenceId ??
+      (pendingProductId && /^PRD-\d+$/i.test(pendingProductId) ? pendingProductId : "")
 
   const payload = useMemo(() => {
     const sourceVariants = variantMode === "single" ? variants.slice(0, 1) : variants
@@ -1600,6 +1902,22 @@ export function ProductConsolePage({
       type: variantMode === "single" ? "simple" : "variant",
       price: derivedPrice,
       variants: normalizedVariants,
+      packs: packs.map((p) => {
+        const chosenVar = availableVariants.find((v) => (v.weight || v.name) === p.variantWeight || v.id === p.variantId)
+        return {
+          id: p.id,
+          variantId: p.variantId || chosenVar?.id || null,
+          variantWeight: p.variantWeight,
+          name: p.name,
+          quantity: Number(p.quantity) || 1,
+          mrp: Number(p.mrp) || 0,
+          price: Number(p.price) || 0,
+          discountPercent: p.discountPercent != null ? Number(p.discountPercent) : null,
+          sku: chosenVar?.sku || (p.sku ? p.sku.replace(/-PACK-\d+/i, "") : null),
+          hsnCode: chosenVar?.hsnCode || p.hsnCode || null,
+          isActive: p.isActive,
+        }
+      }),
       basePrice: derivedBasePrice,
       salePrice: derivedSalePrice,
       discountPercent: derivedDiscountPercent,
@@ -1614,7 +1932,8 @@ export function ProductConsolePage({
       thumbnail: uniq(thumbnailUrls)[0] ?? null,
       metaTitle: metaTitle.trim() || null,
       metaDescription: metaDescription.trim() || null,
-      categoryId: categoryId || undefined,
+      categoryId: categoryId || categoryIds[0] || undefined,
+      categoryIds: categoryIds.length ? categoryIds : (categoryId ? [categoryId] : []),
       tagIds: (() => {
         const foodTagIds = new Set(tags.filter((t) => foodTypeOfTag(t)).map((t) => t.id))
         const others = selectedTagIds.filter((id) => !foodTagIds.has(id))
@@ -1645,6 +1964,7 @@ export function ProductConsolePage({
     basePrice,
     discountEnabled,
     categoryId,
+    categoryIds,
     selectedTagIds,
     tags,
     foodType,
@@ -1674,6 +1994,7 @@ export function ProductConsolePage({
     type,
     variants,
     variantMode,
+    packs,
     spiceLevel,
     sections,
   ])
@@ -1694,6 +2015,7 @@ export function ProductConsolePage({
             name: name.trim(),
             slug: slug.trim(),
             categoryId: categoryId || "",
+            categoryIds: [...categoryIds].sort(),
             customProductId: customProductId.trim(),
             status,
           }
@@ -1740,6 +2062,23 @@ export function ProductConsolePage({
               hsnCode: (v.hsnCode || "").trim(),
               eanCode: (v.eanCode || "").trim(),
             })),
+            packs: packs.map((p) => {
+              const chosenVar = availableVariants.find((v) => (v.weight || v.name) === p.variantWeight || v.id === p.variantId)
+              return {
+                id: p.id,
+                variantId: p.variantId || chosenVar?.id || null,
+                variantWeight: p.variantWeight,
+                name: p.name,
+                quantity: p.quantity,
+                mrp: p.mrp,
+                price: p.price,
+                discountPercent: p.discountPercent,
+                sku: chosenVar?.sku || (p.sku ? p.sku.replace(/-PACK-\d+/i, "") : null),
+                hsnCode: chosenVar?.hsnCode || p.hsnCode || null,
+                isActive: p.isActive,
+              }
+            }),
+            showPacksSection,
           }
         case 4:
           return {
@@ -1762,6 +2101,7 @@ export function ProductConsolePage({
       name,
       slug,
       categoryId,
+      categoryIds,
       customProductId,
       status,
       thumbnailUrls,
@@ -1784,6 +2124,8 @@ export function ProductConsolePage({
       discountEndDate,
       discountStackable,
       variants,
+      packs,
+      showPacksSection,
       spiceLevel,
       taxIncluded,
       isActive,
@@ -1809,19 +2151,31 @@ export function ProductConsolePage({
   const updateAllStepBaselinesRef = useRef(updateAllStepBaselines)
   updateAllStepBaselinesRef.current = updateAllStepBaselines
 
+  const handleCategoryToggle = (idToToggle: string) => {
+    setCategoryIds((prev) => {
+      const exists = prev.some((id) => String(id) === String(idToToggle))
+      const next = exists
+        ? prev.filter((id) => String(id) !== String(idToToggle))
+        : [...prev, idToToggle]
+      setCategoryId(next[0] ?? "")
+      loadedCategoryIdsRef.current = next
+      loadedCategoryIdRef.current = next[0] ?? ""
+      return next
+    })
+  }
+
   const handleCategoryChange = (value: string) => {
     if (!value) {
-      const desired = loadedCategoryIdRef.current
-      if (desired && categoryApplyAttemptsRef.current < 8) {
-        categoryApplyAttemptsRef.current += 1
-        setCategoryId(desired)
-        return
-      }
-    } else {
-      categoryApplyAttemptsRef.current = 0
-      loadedCategoryIdRef.current = value
+      setCategoryIds([])
+      setCategoryId("")
+      loadedCategoryIdsRef.current = []
+      loadedCategoryIdRef.current = ""
+      return
     }
+    setCategoryIds([value])
     setCategoryId(value)
+    loadedCategoryIdsRef.current = [value]
+    loadedCategoryIdRef.current = value
   }
 
   // The category options arrive with the product. Setting the select value in that
@@ -1830,21 +2184,22 @@ export function ProductConsolePage({
   // options are mounted. A later manual change is kept.
   useEffect(() => {
     if (mode !== "edit" && mode !== "view") return
-    const desired = loadedCategoryIdRef.current
-    if (desired) {
-      const optionReady = categories.some((category) => String(category.id) === String(desired))
-      if (!optionReady) return
-      if (categoryId !== desired && categoryApplyAttemptsRef.current < 8) {
+    const desiredIds = loadedCategoryIdsRef.current
+    if (desiredIds.length > 0) {
+      const anyReady = categories.some((category) => desiredIds.some((d) => String(d) === String(category.id)))
+      if (!anyReady) return
+      const hasAll = desiredIds.every((d) => categoryIds.includes(d))
+      if (!hasAll && categoryApplyAttemptsRef.current < 8) {
         categoryApplyAttemptsRef.current += 1
-        setCategoryId(desired)
+        setCategoryIds(desiredIds)
+        setCategoryId(desiredIds[0] ?? "")
         return
       }
     }
     if (mode !== "edit" || !editHydrated || categoryBaselineReadyRef.current) return
-    if (desired && categoryId !== desired) return
     categoryBaselineReadyRef.current = true
     updateAllStepBaselinesRef.current()
-  }, [categories, categoryId, editHydrated, mode])
+  }, [categories, categoryId, categoryIds, editHydrated, mode])
 
   const isStepDirty = useCallback(
     (step: ProductFormStepId) => {
@@ -1866,7 +2221,9 @@ export function ProductConsolePage({
         if (step === 1) {
           setName(data.name ?? "")
           setSlug(data.slug ?? "")
-          setCategoryId(data.categoryId ?? "")
+          const restoredIds = Array.isArray(data.categoryIds) ? data.categoryIds : (data.categoryId ? [data.categoryId] : [])
+          setCategoryIds(restoredIds)
+          setCategoryId(restoredIds[0] ?? "")
           setCustomProductId(data.customProductId ?? "")
           if (data.status) setStatus(data.status)
         } else if (step === 2) {
@@ -1891,6 +2248,8 @@ export function ProductConsolePage({
           setDiscountEndDate(data.discountEndDate ?? "")
           setDiscountStackable(Boolean(data.discountStackable))
           if (data.variants) setVariants(data.variants)
+          if (data.packs) setPacks(data.packs)
+          if (data.showPacksSection !== undefined) setShowPacksSection(Boolean(data.showPacksSection))
         } else if (step === 4) {
           setSpiceLevel(data.spiceLevel ?? "")
           setTaxIncluded(Boolean(data.taxIncluded))
@@ -1988,7 +2347,7 @@ export function ProductConsolePage({
     const step1: string[] = []
     if (!name.trim()) step1.push("Product name")
     if (!slug.trim()) step1.push("Product slug/url")
-    if (!categoryId) step1.push("Category")
+    if (!categoryId && categoryIds.length === 0) step1.push("Category")
     if (!foodType) step1.push("Food type")
     if (!spiceLevel) step1.push("Spice level")
 
@@ -2016,7 +2375,7 @@ export function ProductConsolePage({
 
     return { 1: step1, 2: step2, 3: step3, 4: step4 } as Record<1 | 2 | 3 | 4, string[]>
   }, [
-    name, slug, categoryId, foodType, spiceLevel, thumbnailUrls, description,
+    name, slug, categoryId, categoryIds, foodType, spiceLevel, thumbnailUrls, description,
     selectedFeatureDefinitionIds, sections, variantMode, variants, discountEnabled,
   ])
   const reviewMissingCount = Object.values(reviewMissing).reduce((n, list) => n + list.length, 0)
@@ -2046,12 +2405,13 @@ export function ProductConsolePage({
     if (p.sku.length >= 2) return true
     if (p.description && !isEmptyRichText(p.description)) return true
     if (p.thumbnail || (p.images?.length ?? 0) > 0) return true
-    if (p.categoryId) return true
+    if (p.categoryId || ((p as any).categoryIds?.length ?? 0) > 0) return true
     if ((p.featureDefinitionIds?.length ?? 0) > 0) return true
     if ((p.sections?.length ?? 0) > 0) return true
     if (p.metaTitle || p.metaDescription) return true
     if (p.amazonLink) return true
     if (p.basePrice != null || (p.salePrice != null && p.salePrice > 0) || p.price > 0) return true
+    if (packsRef.current.length > 0) return true
     const source = variantModeRef.current === "single" ? variantsRef.current.slice(0, 1) : variantsRef.current
     return source.some(
       (v) =>
@@ -2105,18 +2465,18 @@ export function ProductConsolePage({
         }
       })
       .filter(Boolean) as Array<{
-      id?: string
-      name: string
-      weight: string | null
-      sku: string
-      price: number
-      mrp: number | null
-      discountPercent: number | null
-      stock: number
-      isDefault: boolean
-      hsnCode: string | null
-      eanCode: string | null
-    }>
+        id?: string
+        name: string
+        weight: string | null
+        sku: string
+        price: number
+        mrp: number | null
+        discountPercent: number | null
+        stock: number
+        isDefault: boolean
+        hsnCode: string | null
+        eanCode: string | null
+      }>
 
     softVariants = withSingleDefault(softVariants)
 
@@ -2148,6 +2508,7 @@ export function ProductConsolePage({
       sku: sku.length >= 2 ? sku : tempSku,
       type,
       variants,
+      packs: packsRef.current,
       price,
       status: "draft" as const,
     }
@@ -2700,7 +3061,7 @@ export function ProductConsolePage({
       setSaving(false)
     }
   }
-
+  // products list view page 
   if (mode === "list") {
     if (catalog === "combos") {
       const q = searchQuery.trim().toLowerCase()
@@ -2751,7 +3112,13 @@ export function ProductConsolePage({
           {loading && <p className="text-sm text-[#646464]">Loading...</p>}
 
           {!loading && (
-            <ConsoleTable headers={["Combo", "Slug", "Items", "Price", "Mode", "Active", "Actions"]}>
+            <ConsoleTable
+              headers={["Combo", "Slug", "Items", "Price", "Mode", "Active", "Actions"]}
+              tableClassName="min-w-[720px]"
+              headerClassNames={{
+                6: "whitespace-nowrap min-w-[124px]",
+              }}
+            >
               {filteredCombos.length === 0 ? (
                 <tr>
                   <ConsoleTd colSpan={7} className="py-8 text-center text-[#646464]">
@@ -2779,14 +3146,14 @@ export function ProductConsolePage({
                     </ConsoleTd>
                     <ConsoleTd className="align-middle text-[11px] text-[#646464]">{b.pricingMode ?? "fixed"}</ConsoleTd>
                     <ConsoleTd className="align-middle text-[11px] text-[#646464]">{b.isActive === false ? "No" : "Yes"}</ConsoleTd>
-                    <ConsoleTd className="align-middle">
-                      <div className="flex items-center gap-2">
+                    <ConsoleTd className="align-middle whitespace-nowrap min-w-[124px]">
+                      <div className="flex flex-row flex-nowrap items-center gap-1.5 shrink-0">
                         <button
                           type="button"
                           title="View"
                           aria-label="View combo"
                           onClick={() => setActiveCombo(b)}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
                         >
                           <Eye className="h-4 w-4" />
                         </button>
@@ -2795,7 +3162,7 @@ export function ProductConsolePage({
                           title="Edit (coming soon)"
                           aria-label="Edit combo"
                           disabled
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] opacity-50"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] opacity-50"
                         >
                           <Pencil className="h-4 w-4" />
                         </button>
@@ -2804,7 +3171,7 @@ export function ProductConsolePage({
                           title="Delete (coming soon)"
                           aria-label="Delete combo"
                           disabled
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#C03621] opacity-50"
+                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#C03621] opacity-50"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -2879,7 +3246,7 @@ export function ProductConsolePage({
         </section>
       )
     }
-
+    // table or products 
     return (
       <section className="w-full space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
@@ -2911,7 +3278,7 @@ export function ProductConsolePage({
             </button>
           </div>
         </div>
-
+        {/* search filters  */}
         <div className="flex flex-col gap-2.5 w-full xl:flex-row xl:items-center">
           <div className="relative w-full xl:w-72 2xl:w-80 shrink-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#7A7A7A] pointer-events-none" />
@@ -2983,6 +3350,7 @@ export function ProductConsolePage({
             </Select>
           </div>
         </div>
+        {/* reset all filters button */}
         <div className="flex justify-end">
           <button
             type="button"
@@ -2992,409 +3360,514 @@ export function ProductConsolePage({
             Reset All Filters
           </button>
         </div>
+
         {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800">{error}</p>}
         {loading && <p className="text-sm text-[#646464]">Loading...</p>}
         {!loading && (
           <>
-          <ConsoleTable
-            headers={["S.No", "Product ID", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}
-          >
-            {filteredRows.length === 0 ? (
-              <tr>
-                <ConsoleTd colSpan={9} className="py-8 text-center text-[#646464]">
-                  No products yet.
-                </ConsoleTd>
-              </tr>
-            ) : (
-              pagedRows.map((p, idx) => {
-                const isMulti = isMultiVariantProduct(p)
-                const isExpanded = Boolean(expandedProductIds[p.id])
-                const variants = p.variants ?? []
+            <ConsoleTable
+              headers={["S.No.", "Product ID", "Created At", "SKU", "Product Name", "Stock", "Sale Price", "Status", "Actions"]}
+              tableClassName="min-w-[980px]"
+              headerClassNames={{
+                7: "whitespace-nowrap min-w-[130px]",
+                8: "whitespace-nowrap min-w-[124px]",
+              }}
+            >
+              {filteredRows.length === 0 ? (
+                <tr>
+                  <ConsoleTd colSpan={9} className="py-8 text-center text-[#646464]">
+                    No products yet.
+                  </ConsoleTd>
+                </tr>
+              ) : (
+                pagedRows.map((p, idx) => {
+                  const isMulti = isMultiVariantProduct(p)
+                  const isExpanded = Boolean(expandedProductIds[p.id])
+                  const variants = p.variants ?? []
 
-                return (
-                  <Fragment key={p.id}>
-                    <tr className={`hover:bg-[#FFFBF3]/80 transition-colors ${isExpanded ? "bg-[#FFFBF3]/60" : ""}`}>
-                      <ConsoleTd className="align-middle w-14 text-[#646464]">
-                        {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        <code className="text-[11px] font-bold text-[#7B3010] font-mono">{p.id}</code>
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
-                        {formatCreatedAt(p.createdAt)}
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        <code className="text-[11px] font-medium text-[#2A1810]">{p.sku}</code>
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        <div className="flex flex-col">
-                          <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
-                            {p.name}
-                          </Link>
-                          {isMulti && (
-                            <div className="mt-1 flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => toggleProductAccordion(p.id)}
-                                className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${
-                                  isExpanded
-                                    ? "bg-[#7B3010] text-white shadow-2xs"
-                                    : "bg-[#7B3010]/10 text-[#7B3010] hover:bg-[#7B3010]/20"
-                                }`}
-                                title={isExpanded ? "Collapse variants" : "Expand variant details"}
-                              >
-                                <Layers className="h-3 w-3" />
-                                <span>{variants.length} Variants</span>
-                                <ChevronDown
-                                  className={`h-3 w-3 transition-transform duration-200 ${
-                                    isExpanded ? "rotate-180" : ""
-                                  }`}
-                                />
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        {isMulti ? (
+                  return (
+                    <Fragment key={p.id}>
+                      <tr className={`hover:bg-[#FFFBF3]/80 transition-colors ${isExpanded ? "bg-[#FFFBF3]/60" : ""}`}>
+                        <ConsoleTd className="align-middle w-14 text-[#646464]">
+                          {(currentListPage - 1) * LIST_PAGE_SIZE + idx + 1}
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle">
+                          <code className="text-[11px] font-bold text-[#7B3010] font-mono">{p.id}</code>
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle whitespace-nowrap text-[12px] text-[#646464]">
+                          {formatCreatedAt(p.createdAt)}
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle">
+                          <code className="text-[11px] font-medium text-[#2A1810]">{p.sku}</code>
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle">
                           <div className="flex flex-col">
-                            <span className="text-[12px] font-semibold text-[#2A1810]">
-                              {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}
-                            </span>
-                            <span className="text-[10px] text-[#7A7A7A] whitespace-nowrap">
-                              in {variants.length} variants
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-[12px] font-semibold text-[#2A1810]">
-                            {p.type === "variant" && variants.length > 0
-                              ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
-                              : Number(p.totalStock ?? 0)}
-                          </span>
-                        )}
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle font-semibold text-[11px]">
-                        {(() => {
-                          const defaultVariant = variants.find((v) => v.isDefault) ?? variants[0]
-                          const displayPrice = defaultVariant?.price != null ? defaultVariant.price : p.price
-                          return displayPrice != null && displayPrice !== "" ? `Rs.${Number(displayPrice).toFixed(2)}` : "—"
-                        })()}
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        <Select
-                          value={rowStatus[p.id] ?? p.status}
-                          onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}
-                        >
-                          <SelectTrigger className="w-[115px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs font-medium" size="sm">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {p.status === "draft" ? (
-                              <>
-                                <SelectItem value="draft" disabled className="text-gray-400">
-                                  Draft
-                                </SelectItem>
-                                <SelectItem value="published" className="text-emerald-700 font-medium">
-                                  Publish
-                                </SelectItem>
-                              </>
-                            ) : (
-                              <>
-                                <SelectItem value="published" className="text-emerald-700 font-medium">
-                                  Enabled
-                                </SelectItem>
-                                <SelectItem value="archived" className="text-gray-600 font-medium">
-                                  Disabled
-                                </SelectItem>
-                              </>
-                            )}
-                          </SelectContent>
-                        </Select>
-                      </ConsoleTd>
-                      <ConsoleTd className="align-middle">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Link
-                            href={`${basePath}/${p.id}`}
-                            aria-label={`View ${p.name}`}
-                            title="View"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Link>
-                          <Link
-                            href={`${basePath}/${p.id}/edit`}
-                            aria-label={`Edit ${p.name}`}
-                            title="Edit"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Link>
-                          <button
-                            type="button"
-                            onClick={() => saveRowStatus(p.id)}
-                            disabled={saving || (rowStatus[p.id] ?? p.status) === p.status}
-                            aria-label={`Save ${p.name}`}
-                            title="Save"
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#7B3010] text-white disabled:opacity-40"
-                          >
-                            <Save className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </ConsoleTd>
-                    </tr>
-                    {isMulti && isExpanded && (
-                      <tr key={`${p.id}-accordion-panel`} className="bg-[#FFFBF3]/40 border-y border-[#E8DCC8]">
-                        <ConsoleTd colSpan={9} className="p-0">
-                          <div className="border-y-2 border-[#7B3010]/20 bg-gradient-to-b from-[#FFFDF9] via-[#FAF6EE] to-[#FFFBF3] p-4 md:p-6 shadow-inner">
-                            {/* Accordion Header */}
-                            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#E8DCC8] pb-3">
-                              <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#7B3010] text-white shadow-sm">
-                                  <Layers className="h-5 w-5" />
-                                </div>
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <h4 className="font-melon text-base font-bold text-[#4A1D1F]">
-                                      Variant Details &amp; Inventory
-                                    </h4>
-                                    <span className="rounded-full bg-[#7B3010]/15 px-2.5 py-0.5 text-xs font-bold text-[#7B3010]">
-                                      {variants.length} Variants
-                                    </span>
-                                    <span className="text-xs text-[#7A7A7A]">
-                                      for <strong className="text-[#2A1810] font-medium">{p.name}</strong>
-                                    </span>
-                                  </div>
-                                  <p className="mt-0.5 text-xs text-[#646464]">
-                                    Product ID: <code className="font-mono font-bold text-[#7B3010]">{p.id}</code> · Base SKU: <code className="font-mono text-[#2A1810]">{p.sku}</code>
-                                  </p>
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <Link
-                                  href={`${basePath}/${p.id}/edit?step=3`}
-                                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#7B3010] bg-white px-3 py-1.5 text-xs font-semibold text-[#7B3010] hover:bg-[#FFFBF3] transition-colors shadow-2xs"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                  <span>Edit Variants</span>
-                                </Link>
+                            <Link href={`${basePath}/${p.id}`} className="text-[#7B3010] font-semibold hover:underline">
+                              {p.name}
+                            </Link>
+                            {isMulti && (
+                              <div className="mt-1 flex items-center gap-1.5">
                                 <button
                                   type="button"
                                   onClick={() => toggleProductAccordion(p.id)}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-[#D9D9D1] bg-white px-3 py-1.5 text-xs font-semibold text-[#646464] hover:bg-neutral-50 transition-colors"
+                                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium transition-colors cursor-pointer ${isExpanded
+                                    ? "bg-[#7B3010] text-white shadow-2xs"
+                                    : "bg-[#7B3010]/10 text-[#7B3010] hover:bg-[#7B3010]/20"
+                                    }`}
+                                  title={isExpanded ? "Collapse variants" : "Expand variant details"}
                                 >
-                                  <X className="h-3.5 w-3.5" />
-                                  <span>Close</span>
+                                  <Layers className="h-3 w-3" />
+                                  <span>{variants.length} Variants</span>
+                                  <ChevronDown
+                                    className={`h-3 w-3 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""
+                                      }`}
+                                  />
                                 </button>
                               </div>
+                            )}
+                          </div>
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle">
+                          {isMulti ? (
+                            <div className="flex flex-col">
+                              <span className="text-[12px] font-semibold text-[#2A1810]">
+                                {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}
+                              </span>
+                              <span className="text-[10px] text-[#7A7A7A] whitespace-nowrap">
+                                in {variants.length} variants
+                              </span>
                             </div>
-
-                            {/* Quick KPI Stats Bar */}
-                            <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 md:gap-3">
-                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Total Stock</p>
-                                <p className="mt-1 text-base font-bold text-[#2A1810]">
-                                  {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}{" "}
-                                  <span className="text-xs font-normal text-[#646464]">units</span>
-                                </p>
-                              </div>
-                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Price Range</p>
-                                <p className="mt-1 text-base font-bold text-[#7B3010]">
-                                  {(() => {
-                                    const prices = variants.map((v) => Number(v.price)).filter((n) => !isNaN(n))
-                                    if (prices.length === 0) return "—"
-                                    const min = Math.min(...prices)
-                                    const max = Math.max(...prices)
-                                    return min === max
-                                      ? `₹${min.toFixed(2)}`
-                                      : `₹${min.toFixed(2)} – ₹${max.toFixed(2)}`
-                                  })()}
-                                </p>
-                              </div>
-                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Default Variant</p>
-                                <p className="mt-1 text-sm font-semibold text-[#2A1810] truncate">
-                                  {variants.find((v) => v.isDefault)?.name || variants[0]?.name || "—"}
-                                </p>
-                              </div>
-                              <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
-                                <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Stock Health</p>
-                                <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold">
-                                  <span className="inline-flex items-center gap-1 text-emerald-700">
-                                    <span className="h-2 w-2 rounded-full bg-emerald-500" />
-                                    {variants.filter((v) => Number(v.stock ?? 0) > 0).length} In Stock
-                                  </span>
-                                  {variants.some((v) => Number(v.stock ?? 0) <= 0) && (
-                                    <span className="inline-flex items-center gap-1 text-rose-700 ml-1">
-                                      <span className="h-2 w-2 rounded-full bg-rose-500" />
-                                      {variants.filter((v) => Number(v.stock ?? 0) <= 0).length} OOS
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Variants Table */}
-                            <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
-                              <table className="w-full text-left text-xs">
-                                <thead className="border-b border-[#E8DCC8] bg-[#F5F1E6] text-[11px] font-semibold uppercase tracking-wider text-[#4A1D1F]">
-                                  <tr>
-                                    <th className="px-3 py-2.5 text-center w-10">#</th>
-                                    <th className="px-3 py-2.5">Variant Title / Weight</th>
-                                    <th className="px-3 py-2.5">Variant SKU</th>
-                                    <th className="px-3 py-2.5">MRP</th>
-                                    <th className="px-3 py-2.5">Variant Price</th>
-                                    <th className="px-3 py-2.5">Discount</th>
-                                    <th className="px-3 py-2.5">Stock</th>
-                                    <th className="px-3 py-2.5">HSN Code</th>
-                                    <th className="px-3 py-2.5">EAN / Barcode</th>
-                                    <th className="px-3 py-2.5 text-center">Default</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-[#E8DCC8]/60 text-[#2A1810]">
-                                  {variants.map((v, vIdx) => {
-                                    const priceNum = Number(v.price)
-                                    const mrpNum = v.mrp != null ? Number(v.mrp) : null
-                                    const stockNum = Number(v.stock ?? 0)
-                                    const discount =
-                                      v.discountPercent != null
-                                        ? Number(v.discountPercent)
-                                        : mrpNum && mrpNum > priceNum
-                                        ? Math.round(((mrpNum - priceNum) / mrpNum) * 100)
-                                        : 0
-                                    const isOutOfStock = stockNum <= 0
-                                    const isLowStock = stockNum > 0 && stockNum <= 10
-
-                                    return (
-                                      <tr
-                                        key={v.id || v.sku || vIdx}
-                                        className={`transition-colors hover:bg-[#FFFBF3] ${
-                                          v.isDefault ? "bg-[#FFFBF3]/50 font-medium" : ""
-                                        }`}
-                                      >
-                                        <td className="px-3 py-2.5 text-center text-[#7A7A7A] font-mono">
-                                          {vIdx + 1}
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                          <div className="flex items-center gap-2">
-                                            <span className="font-semibold text-[#4A1D1F]">{v.name}</span>
-                                            {v.weight && v.weight !== v.name && (
-                                              <span className="rounded-sm bg-neutral-100 px-1.5 py-0.5 text-[10px] text-[#646464]">
-                                                {v.weight}
-                                              </span>
-                                            )}
-                                            {v.isDefault && (
-                                              <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
-                                                <Check className="h-3 w-3" />
-                                                Default
-                                              </span>
-                                            )}
-                                          </div>
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                          <code className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-[#2A1810]">
-                                            {v.sku}
-                                          </code>
-                                        </td>
-                                        <td className="px-3 py-2.5 text-[#646464]">
-                                          {mrpNum != null && !isNaN(mrpNum) ? (
-                                            <span className={discount > 0 ? "line-through text-neutral-400" : ""}>
-                                              ₹{mrpNum.toFixed(2)}
-                                            </span>
-                                          ) : (
-                                            "—"
-                                          )}
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                          <span className="font-bold text-[#7B3010] text-[13px]">
-                                            {!isNaN(priceNum) ? `₹${priceNum.toFixed(2)}` : "—"}
-                                          </span>
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                          {discount > 0 ? (
-                                            <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
-                                              {discount}% OFF
-                                            </span>
-                                          ) : (
-                                            <span className="text-neutral-400 text-xs">—</span>
-                                          )}
-                                        </td>
-                                        <td className="px-3 py-2.5">
-                                          <div className="flex items-center gap-1.5">
-                                            <span
-                                              className={`h-2 w-2 rounded-full ${
-                                                isOutOfStock
-                                                  ? "bg-red-500"
-                                                  : isLowStock
-                                                  ? "bg-amber-500"
-                                                  : "bg-emerald-500"
-                                              }`}
-                                            />
-                                            <span className="font-semibold">{stockNum}</span>
-                                            <span className="text-[10px] text-[#7A7A7A]">
-                                              {isOutOfStock ? "(Out)" : isLowStock ? "(Low)" : "units"}
-                                            </span>
-                                          </div>
-                                        </td>
-                                        <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
-                                          {v.hsnCode || (v as any).hsn_code || "—"}
-                                        </td>
-                                        <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
-                                          {v.eanCode || (v as any).ean_code || "—"}
-                                        </td>
-                                        <td className="px-3 py-2.5 text-center">
-                                          {v.isDefault ? (
-                                            <span className="inline-block rounded-full bg-emerald-500 p-0.5 text-white" title="Default Variant">
-                                              <Check className="h-3 w-3" />
-                                            </span>
-                                          ) : (
-                                            <span className="text-neutral-300">—</span>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    )
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
+                          ) : (
+                            <span className="text-[12px] font-semibold text-[#2A1810]">
+                              {p.type === "variant" && variants.length > 0
+                                ? variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)
+                                : Number(p.totalStock ?? 0)}
+                            </span>
+                          )}
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle font-semibold text-[11px]">
+                          {(() => {
+                            const defaultVariant = variants.find((v) => v.isDefault) ?? variants[0]
+                            const displayPrice = defaultVariant?.price != null ? defaultVariant.price : p.price
+                            return displayPrice != null && displayPrice !== "" ? `Rs.${Number(displayPrice).toFixed(2)}` : "—"
+                          })()}
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle whitespace-nowrap min-w-[130px]">
+                          <Select
+                            value={rowStatus[p.id] ?? p.status}
+                            onValueChange={(value) => setRowStatus((prev) => ({ ...prev, [p.id]: value }))}
+                          >
+                            <SelectTrigger className="w-[115px] justify-between rounded-lg border border-[#D9D9D1] bg-white px-2 text-xs font-medium" size="sm">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {p.status === "draft" ? (
+                                <>
+                                  <SelectItem value="draft" disabled className="text-gray-400">
+                                    Draft
+                                  </SelectItem>
+                                  <SelectItem value="published" className="text-emerald-700 font-medium">
+                                    Publish
+                                  </SelectItem>
+                                </>
+                              ) : (
+                                <>
+                                  <SelectItem value="published" className="text-emerald-700 font-medium">
+                                    Enabled
+                                  </SelectItem>
+                                  <SelectItem value="archived" className="text-gray-600 font-medium">
+                                    Disabled
+                                  </SelectItem>
+                                </>
+                              )}
+                            </SelectContent>
+                          </Select>
+                        </ConsoleTd>
+                        <ConsoleTd className="align-middle whitespace-nowrap min-w-[124px]">
+                          <div className="flex flex-nowrap items-center gap-1.5 shrink-0">
+                            <Link
+                              href={`${basePath}/${p.id}`}
+                              aria-label={`View ${p.name}`}
+                              title="View"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Link>
+                            <Link
+                              href={`${basePath}/${p.id}/edit`}
+                              aria-label={`Edit ${p.name}`}
+                              title="Edit"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9D9D1] text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Link>
+                            <button
+                              type="button"
+                              onClick={() => saveRowStatus(p.id)}
+                              disabled={saving || (rowStatus[p.id] ?? p.status) === p.status}
+                              aria-label={`Save ${p.name}`}
+                              title="Save"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#7B3010] text-white disabled:opacity-40 cursor-pointer"
+                            >
+                              <Save className="h-4 w-4" />
+                            </button>
                           </div>
                         </ConsoleTd>
                       </tr>
-                    )}
-                  </Fragment>
-                )
-              })
-            )}
-          </ConsoleTable>
-          {filteredRows.length > 0 ? (
-            <div className="flex items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={() => setListPage((prev) => Math.max(1, prev - 1))}
-                disabled={currentListPage <= 1}
-                className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
-              >
-                Previous
-              </button>
-              <p className="text-xs text-[#646464]">
-                Page {currentListPage} / {listPageCount}
-              </p>
-              <button
-                type="button"
-                onClick={() => setListPage((prev) => Math.min(listPageCount, prev + 1))}
-                disabled={currentListPage >= listPageCount}
-                className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
-              >
-                Next
-              </button>
-            </div>
-          ) : null}
-        </>
+                      {isMulti && isExpanded && (
+                        <tr key={`${p.id}-accordion-panel`} className="bg-[#FFFBF3]/40 border-y border-[#E8DCC8]">
+                          <ConsoleTd colSpan={9} className="p-0">
+                            <div className="border-y-2 border-[#7B3010]/20 bg-gradient-to-b from-[#FFFDF9] via-[#FAF6EE] to-[#FFFBF3] p-4 md:p-6 shadow-inner">
+                              {/* Accordion Header */}
+                              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#E8DCC8] pb-3">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#7B3010] text-white shadow-sm">
+                                    <Layers className="h-5 w-5" />
+                                  </div>
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h4 className="font-melon text-base font-bold text-[#4A1D1F]">
+                                        Variant Details &amp; Inventory
+                                      </h4>
+                                      <span className="rounded-full bg-[#7B3010]/15 px-2.5 py-0.5 text-xs font-bold text-[#7B3010]">
+                                        {variants.length} Variants
+                                      </span>
+                                      <span className="text-xs text-[#7A7A7A]">
+                                        for <strong className="text-[#2A1810] font-medium">{p.name}</strong>
+                                      </span>
+                                    </div>
+                                    <p className="mt-0.5 text-xs text-[#646464]">
+                                      Product ID: <code className="font-mono font-bold text-[#7B3010]">{p.id}</code> · Base SKU: <code className="font-mono text-[#2A1810]">{p.sku}</code>
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Link
+                                    href={`${basePath}/${p.id}/edit?step=3`}
+                                    className="inline-flex items-center gap-1.5 rounded-lg border border-[#7B3010] bg-white px-3 py-1.5 text-xs font-semibold text-[#7B3010] hover:bg-[#FFFBF3] transition-colors shadow-2xs"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    <span>Edit Variants</span>
+                                  </Link>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleProductAccordion(p.id)}
+                                    className="inline-flex items-center gap-1 rounded-lg border border-[#D9D9D1] bg-white px-3 py-1.5 text-xs font-semibold text-[#646464] hover:bg-neutral-50 transition-colors"
+                                  >
+                                    <X className="h-3.5 w-3.5" />
+                                    <span>Close</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Quick KPI Stats Bar */}
+                              <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 md:gap-3">
+                                <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Total Stock</p>
+                                  <p className="mt-1 text-base font-bold text-[#2A1810]">
+                                    {variants.reduce((sum, v) => sum + Number(v.stock ?? 0), 0)}{" "}
+                                    <span className="text-xs font-normal text-[#646464]">units</span>
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Price Range</p>
+                                  <p className="mt-1 text-base font-bold text-[#7B3010]">
+                                    {(() => {
+                                      const prices = variants.map((v) => Number(v.price)).filter((n) => !isNaN(n))
+                                      if (prices.length === 0) return "—"
+                                      const min = Math.min(...prices)
+                                      const max = Math.max(...prices)
+                                      return min === max
+                                        ? `₹${min.toFixed(2)}`
+                                        : `₹${min.toFixed(2)} – ₹${max.toFixed(2)}`
+                                    })()}
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Default Variant</p>
+                                  <p className="mt-1 text-sm font-semibold text-[#2A1810] truncate">
+                                    {variants.find((v) => v.isDefault)?.name || variants[0]?.name || "—"}
+                                  </p>
+                                </div>
+                                <div className="rounded-xl border border-[#E8DCC8] bg-white/90 p-3 shadow-2xs">
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-[#7A7A7A]">Stock Health</p>
+                                  <div className="mt-1 flex items-center gap-1.5 text-xs font-semibold">
+                                    <span className="inline-flex items-center gap-1 text-emerald-700">
+                                      <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                                      {variants.filter((v) => Number(v.stock ?? 0) > 0).length} In Stock
+                                    </span>
+                                    {variants.some((v) => Number(v.stock ?? 0) <= 0) && (
+                                      <span className="inline-flex items-center gap-1 text-rose-700 ml-1">
+                                        <span className="h-2 w-2 rounded-full bg-rose-500" />
+                                        {variants.filter((v) => Number(v.stock ?? 0) <= 0).length} OOS
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Variants Table */}
+                              <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+                                <table className="w-full text-left text-xs">
+                                  <thead className="border-b border-[#E8DCC8] bg-[#F5F1E6] text-[11px] font-semibold uppercase tracking-wider text-[#4A1D1F]">
+                                    <tr>
+                                      <th className="px-3 py-2.5 text-center w-10">#</th>
+                                      <th className="px-3 py-2.5">Variant Title / Weight</th>
+                                      <th className="px-3 py-2.5">Variant SKU</th>
+                                      <th className="px-3 py-2.5">MRP</th>
+                                      <th className="px-3 py-2.5">Variant Price</th>
+                                      <th className="px-3 py-2.5">Discount</th>
+                                      <th className="px-3 py-2.5">Stock</th>
+                                      <th className="px-3 py-2.5">HSN Code</th>
+                                      <th className="px-3 py-2.5">EAN / Barcode</th>
+                                      <th className="px-3 py-2.5 text-center">Default</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-[#E8DCC8]/60 text-[#2A1810]">
+                                    {variants.map((v, vIdx) => {
+                                      const priceNum = Number(v.price)
+                                      const mrpNum = v.mrp != null ? Number(v.mrp) : null
+                                      const stockNum = Number(v.stock ?? 0)
+                                      const discount =
+                                        v.discountPercent != null
+                                          ? Number(v.discountPercent)
+                                          : mrpNum && mrpNum > priceNum
+                                            ? Math.round(((mrpNum - priceNum) / mrpNum) * 100)
+                                            : 0
+                                      const isOutOfStock = stockNum <= 0
+                                      const isLowStock = stockNum > 0 && stockNum <= 10
+
+                                      return (
+                                        <tr
+                                          key={v.id || v.sku || vIdx}
+                                          className={`transition-colors hover:bg-[#FFFBF3] ${v.isDefault ? "bg-[#FFFBF3]/50 font-medium" : ""
+                                            }`}
+                                        >
+                                          <td className="px-3 py-2.5 text-center text-[#7A7A7A] font-mono">
+                                            {vIdx + 1}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-semibold text-[#4A1D1F]">{v.name}</span>
+                                              {v.weight && v.weight !== v.name && (
+                                                <span className="rounded-sm bg-neutral-100 px-1.5 py-0.5 text-[10px] text-[#646464]">
+                                                  {v.weight}
+                                                </span>
+                                              )}
+                                              {v.isDefault && (
+                                                <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                                  <Check className="h-3 w-3" />
+                                                  Default
+                                                </span>
+                                              )}
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <code className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[11px] text-[#2A1810]">
+                                              {v.sku}
+                                            </code>
+                                          </td>
+                                          <td className="px-3 py-2.5 text-[#646464]">
+                                            {mrpNum != null && !isNaN(mrpNum) ? (
+                                              <span className={discount > 0 ? "line-through text-neutral-400" : ""}>
+                                                ₹{mrpNum.toFixed(2)}
+                                              </span>
+                                            ) : (
+                                              "—"
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <span className="font-bold text-[#7B3010] text-[13px]">
+                                              {!isNaN(priceNum) ? `₹${priceNum.toFixed(2)}` : "—"}
+                                            </span>
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            {discount > 0 ? (
+                                              <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
+                                                {discount}% OFF
+                                              </span>
+                                            ) : (
+                                              <span className="text-neutral-400 text-xs">—</span>
+                                            )}
+                                          </td>
+                                          <td className="px-3 py-2.5">
+                                            <div className="flex items-center gap-1.5">
+                                              <span
+                                                className={`h-2 w-2 rounded-full ${isOutOfStock
+                                                  ? "bg-red-500"
+                                                  : isLowStock
+                                                    ? "bg-amber-500"
+                                                    : "bg-emerald-500"
+                                                  }`}
+                                              />
+                                              <span className="font-semibold">{stockNum}</span>
+                                              <span className="text-[10px] text-[#7A7A7A]">
+                                                {isOutOfStock ? "(Out)" : isLowStock ? "(Low)" : "units"}
+                                              </span>
+                                            </div>
+                                          </td>
+                                          <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
+                                            {v.hsnCode || (v as any).hsn_code || "—"}
+                                          </td>
+                                          <td className="px-3 py-2.5 font-mono text-[11px] text-[#646464]">
+                                            {v.eanCode || (v as any).ean_code || "—"}
+                                          </td>
+                                          <td className="px-3 py-2.5 text-center">
+                                            {v.isDefault ? (
+                                              <span className="inline-block rounded-full bg-emerald-500 p-0.5 text-white" title="Default Variant">
+                                                <Check className="h-3 w-3" />
+                                              </span>
+                                            ) : (
+                                              <span className="text-neutral-300">—</span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+
+                              {(() => {
+                                const pPacks = Array.isArray((p as any).packs)
+                                  ? (p as any).packs
+                                  : typeof (p as any).packs === "string"
+                                    ? (() => {
+                                        try {
+                                          const parsed = JSON.parse((p as any).packs)
+                                          return Array.isArray(parsed) ? parsed : []
+                                        } catch {
+                                          return []
+                                        }
+                                      })()
+                                    : []
+                                if (pPacks.length === 0) return null
+
+                                return (
+                                  <div className="mt-3.5 space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2">
+                                        <span className="flex h-5 w-5 items-center justify-center rounded-md bg-[#7B3010]/10 text-[#7B3010]">
+                                          <Boxes className="h-3 w-3" />
+                                        </span>
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-[#4A1D1F]">
+                                          Pack&apos;s Management
+                                        </span>
+                                        <span className="rounded-full bg-[#FFF7EA] border border-[#E8DCC8] px-2 py-0.5 text-[10px] font-bold text-[#7B3010]">
+                                          {pPacks.length} {pPacks.length === 1 ? "Pack" : "Packs"}
+                                        </span>
+                                      </div>
+                                      <Link
+                                        href={`${basePath}/${p.id}/edit?step=3`}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#7B3010] hover:underline"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                        Update Packs in Edit
+                                      </Link>
+                                    </div>
+                                    <div className="overflow-x-auto rounded-xl border border-[#E8DCC8] bg-white shadow-sm">
+                                      <table className="w-full text-left text-xs">
+                                        <thead className="border-b border-[#E8DCC8] bg-[#F5F1E6] text-[11px] font-semibold uppercase tracking-wider text-[#4A1D1F]">
+                                          <tr>
+                                            <th className="px-3 py-2 text-center w-10">#</th>
+                                            <th className="px-3 py-2">Pack Name</th>
+                                            <th className="px-3 py-2">Variant</th>
+                                            <th className="px-3 py-2">Quantity</th>
+                                            <th className="px-3 py-2">MRP</th>
+                                            <th className="px-3 py-2">Pack Price</th>
+                                            <th className="px-3 py-2">Per Unit</th>
+                                            <th className="px-3 py-2">Savings</th>
+                                            <th className="px-3 py-2 text-center">Status</th>
+                                            <th className="px-3 py-2 text-center">Action</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-[#E8DCC8]/60 text-[#2A1810]">
+                                          {pPacks.map((pk: any, pkIdx: number) => {
+                                            const mrpNum = Number(pk.mrp || 0)
+                                            const priceNum = Number(pk.price || 0)
+                                            const qty = Number(pk.quantity || 1)
+                                            const unitPrice = qty > 0 ? priceNum / qty : priceNum
+                                            const diff = mrpNum - priceNum
+                                            const disc = pk.discountPercent != null ? Number(pk.discountPercent) : (mrpNum > 0 && diff > 0 ? Math.round((diff / mrpNum) * 100) : 0)
+                                            const isPkActive = pk.isActive !== false && pk.is_active !== false
+
+                                            return (
+                                              <tr key={pk.id || pkIdx} className="transition-colors hover:bg-[#FFFBF3]">
+                                                <td className="px-3 py-2 text-center text-[#7A7A7A] font-mono">{pkIdx + 1}</td>
+                                                <td className="px-3 py-2 font-semibold text-[#4A1D1F]">{pk.name}</td>
+                                                <td className="px-3 py-2 text-[#646464]">{pk.variantWeight || pk.variant_weight || "—"}</td>
+                                                <td className="px-3 py-2 font-medium">{qty} units</td>
+                                                <td className="px-3 py-2 text-[#646464]">₹{mrpNum.toFixed(2)}</td>
+                                                <td className="px-3 py-2 font-bold text-[#7B3010]">₹{priceNum.toFixed(2)}</td>
+                                                <td className="px-3 py-2 text-[#646464]">₹{unitPrice.toFixed(2)} /unit</td>
+                                                <td className="px-3 py-2">
+                                                  {disc > 0 ? (
+                                                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                                                      {disc}% OFF
+                                                    </span>
+                                                  ) : "—"}
+                                                </td>
+                                                <td className="px-3 py-2 text-center">
+                                                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${isPkActive ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600"}`}>
+                                                    {isPkActive ? "Active" : "Inactive"}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2 text-center">
+                                                  <Link
+                                                    href={`${basePath}/${p.id}/edit?step=3`}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#7B3010] hover:underline"
+                                                  >
+                                                    <Pencil className="h-3 w-3" />
+                                                    Edit
+                                                  </Link>
+                                                </td>
+                                              </tr>
+                                            )
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )
+                              })()}
+                            </div>
+                          </ConsoleTd>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })
+              )}
+            </ConsoleTable>
+            {filteredRows.length > 0 ? (
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setListPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentListPage <= 1}
+                  className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <p className="text-xs text-[#646464]">
+                  Page {currentListPage} / {listPageCount}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setListPage((prev) => Math.min(listPageCount, prev + 1))}
+                  disabled={currentListPage >= listPageCount}
+                  className="rounded-full border border-[#E8DCC8] bg-white px-3 py-1.5 text-xs font-semibold text-[#4A1D1F] disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            ) : null}
+          </>
         )}
       </section>
     )
   }
-
+  // Add/ edit / view products return 
   return (
     <section className="w-full space-y-4 pb-2">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -3449,13 +3922,12 @@ export function ProductConsolePage({
                   variant="outline"
                   disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon || draftSaveStatus === "saving"}
                   onClick={() => {
-                    void onSubmit({ preventDefault() {} } as React.FormEvent, "draft")
+                    void onSubmit({ preventDefault() { } } as React.FormEvent, "draft")
                   }}
-                  className={`rounded-full border-[#E8DCC8] px-4 text-xs font-semibold uppercase ${
-                    draftSaveStatus === "saved"
-                      ? "bg-[#E8F5E9] text-[#1B5E20] border-[#A5D6A7]"
-                      : "bg-[#FFF7EA] text-[#4A1D1F]"
-                  }`}
+                  className={`rounded-full border-[#E8DCC8] px-4 text-xs font-semibold uppercase ${draftSaveStatus === "saved"
+                    ? "bg-[#E8F5E9] text-[#1B5E20] border-[#A5D6A7]"
+                    : "bg-[#FFF7EA] text-[#4A1D1F]"
+                    }`}
                 >
                   {draftSaveStatus === "saving" || (saving && status === "draft")
                     ? "Saving Draft..."
@@ -3482,9 +3954,8 @@ export function ProductConsolePage({
               onClick={(e) => {
                 if (!slug) e.preventDefault()
               }}
-              className={`inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase text-[#4A1D1F] ${
-                slug ? "hover:bg-[#FFF7EA]" : "pointer-events-none opacity-50"
-              }`}
+              className={`inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase text-[#4A1D1F] ${slug ? "hover:bg-[#FFF7EA]" : "pointer-events-none opacity-50"
+                }`}
             >
               View on Store
               <ExternalLink className="h-3.5 w-3.5" />
@@ -3521,228 +3992,309 @@ export function ProductConsolePage({
           </div>
         ) : null
       ) : (
-      <form onSubmit={onSubmit} className="flex flex-col gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-        {/* Product info, images and description and seo meta data */}
-        {mode === "view" ? null : (
+        <form onSubmit={onSubmit} className="flex flex-col gap-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+          {/* Product info, images and description and seo meta data */}
+          {mode === "view" ? null : (
             <>
-            <div className={`space-y-4 ${currentStep === 1 ? "" : "hidden"}`}>
-              <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-5">
-                <div>
-                  <h2 className="text-base font-semibold text-[#4A1D1F]">Basic Information</h2>
-                </div>
+              <div className={`space-y-4 ${currentStep === 1 ? "" : "hidden"}`}>
+                <div className="rounded-2xl border border-[#E8DCC8] bg-white p-5 shadow-sm space-y-5">
+                  <div>
+                    <h2 className="text-base font-semibold text-[#4A1D1F]">Basic Information</h2>
+                  </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  {/* Row 1 */}
-                  <Field label="Category" required>
-                    <Select value={categoryId || undefined} onValueChange={handleCategoryChange}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm capitalize">
-                        <SelectValue placeholder="Select Category">
-                          {categories.find((category) => String(category.id) === String(categoryId))?.name}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {categories.length === 0 ? (
-                          <div className="px-2 py-1.5 text-sm text-[#646464]">No Categories Available</div>
-                        ) : (
-                          categories.map((c) => (
-                            <SelectItem key={c.id} value={c.id} className="capitalize">
-                              {c.name}
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-
-                  <Field label="Product Name" required>
-                    <Input
-                      placeholder="Enter product name"
-                      value={name}
-                      onChange={(e) => {
-                        const newName = e.target.value
-                        setName(newName)
-                        if (mode === "add") {
-                          const autoSlug = newName
-                            .toLowerCase()
-                            .replace(/\s+/g, "-")
-                            .replace(/[^a-z0-9-_]/g, "")
-                            .replace(/[-_]{2,}/g, "-")
-                            .replace(/^[-_]+|[-_]+$/g, "")
-                          setSlug(autoSlug)
-                        }
-                      }}
-                      required
-                      className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm"
-                    />
-                  </Field>
-
-                  <Field label="Product ID" info="Auto-generated sequence product ID (for example PRD-000001)">
-                    <Input
-                      value={displayProductId}
-                      placeholder="PRD-000001"
-                      readOnly
-                      disabled
-                      className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed font-mono uppercase"
-                      title="Auto-generated sequence product ID"
-                    />
-                    <p className="mt-1 text-[11px] text-[#646464]">
-                      Assigned in order, starting at PRD-000001. This field cannot be edited.
-                    </p>
-                  </Field>
-
-                  {/* Row 2 */}
-                  <Field label="Product slug/url" required>
-                    <div className="relative">
-                      <Input
-                        placeholder="Enter product slug/url"
-                        value={slug}
-                        onChange={(e) => {
-                          let value = e.target.value.toLowerCase()
-                          value = value.replace(/\s+/g, "-")
-                          value = value.replace(/[^a-z0-9-_]/g, "")
-                          value = value.replace(/[-_]{2,}/g, "-")
-                          setSlug(value)
-                        }}
-                        required
-                        pattern="^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
-                        title="Only lowercase letters, numbers, hyphens (-), and underscores (_) are allowed. No spaces."
-                        className="rounded-lg border border-[#D9D9D1] px-3 py-2 pr-10 text-sm"
-                      />
-                      <button
-                        type="button"
-                        title="Regenerate from name"
-                        onClick={() => {
-                          const autoSlug = name
-                            .toLowerCase()
-                            .replace(/\s+/g, "-")
-                            .replace(/[^a-z0-9-_]/g, "")
-                            .replace(/[-_]{2,}/g, "-")
-                            .replace(/^[-_]+|[-_]+$/g, "")
-                          setSlug(autoSlug)
-                        }}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[#7B3010] hover:bg-[#FFF7EA]"
-                      >
-                        <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                      </button>
-                    </div>
-                  </Field>
-
-                  <Field label="Food Type" required={status !== "draft"}>
-                    <div className="grid grid-cols-2 gap-2 sm:gap-3">
-                      {([
-                        { value: "veg" as const, label: "Vegetarian", Icon: VegLeafIcon },
-                        { value: "non-veg" as const, label: "Non-Vegetarian", Icon: NonVegDrumstickIcon },
-                      ]).map((option) => {
-                        const isSelected = foodType === option.value
-                        const Icon = option.Icon
-                        return (
-                          <button
-                            key={option.value}
-                            type="button"
-                            onClick={() => setFoodType(option.value)}
-                            className={`flex items-center justify-center gap-2.5 rounded-xl border px-3 py-2.5 text-center text-xs font-semibold transition sm:text-sm ${
-                              isSelected
-                                ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30 shadow-sm"
-                                : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
-                            }`}
-                          >
-                            <Icon className="h-5 w-5 shrink-0" />
-                            <span>{option.label}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </Field>
-
-                  <Field label="Spice Level" required={status !== "draft"}>
-                    <Select value={spiceLevel} onValueChange={(value) => setSpiceLevel(value as "" | "mild" | "medium" | "hot" | "extra_hot")}>
-                      <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm">
-                        <SelectValue placeholder="Select Spice Level" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {spiceLevels.map((item) => (
-                          <SelectItem key={item} value={item} className="capitalize">
-                            {item === "mild" ? "Mild" : item === "medium" ? "Medium" : item === "hot" ? "Hot" : "Extra Hot"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-
-                  <div className="sm:col-span-2 lg:col-span-2">
-                    <Field
-                      label="Select Weight Options"
-                      required
-                      info="Select variant based on weight. Example: if a product has both 250 gm and 500 gm packs, choose Multi variant. If it has only one weight (for example only 250 gm), choose Single variant."
-                    >
-                      <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {/* Row 1 */}
+                    <Field label="Food Type" required={status !== "draft"}>
+                      <div className="grid grid-cols-2 gap-2 sm:gap-3">
                         {([
-                          { value: "single" as const, label: "Single variant", hint: "One weight only (e.g. 250 gm)" },
-                          { value: "multiple" as const, label: "Multi variant", hint: "Multiple weights (e.g. 250 gm & 500 gm)" },
+                          { value: "veg" as const, label: "Vegetarian", Icon: VegLeafIcon },
+                          { value: "non-veg" as const, label: "Non-Vegetarian", Icon: NonVegDrumstickIcon },
                         ]).map((option) => {
-                          const selected = variantMode === option.value
+                          const isSelected = foodType === option.value
+                          const Icon = option.Icon
                           return (
                             <button
                               key={option.value}
                               type="button"
-                              aria-pressed={selected}
-                              onClick={() => {
-                                setType(option.value === "single" ? "simple" : "variant")
-                                setVariantMode(option.value)
-                                if (option.value === "single") {
-                                  setVariants((prev) => {
-                                    const keep = prev.find((v) => v.isDefault) ?? prev[0]
-                                    return keep
-                                      ? [{ ...keep, isDefault: true }]
-                                      : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true, hsnCode: "", eanCode: "" }]
-                                  })
-                                } else {
-                                  setVariants((prev) =>
-                                    prev.length > 0
-                                      ? prev
-                                      : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true, hsnCode: "", eanCode: "" }],
-                                  )
-                                }
-                              }}
-                              className={`rounded-xl border px-4 py-3 text-left transition ${
-                                selected
-                                  ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30"
-                                  : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
-                              }`}
+                              onClick={() => setFoodType(option.value)}
+                              className={`flex items-center justify-center gap-2.5 rounded-xl border px-3 py-2.5 text-center text-xs font-semibold transition sm:text-sm ${isSelected
+                                ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30 shadow-sm"
+                                : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
+                                }`}
                             >
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <p className="text-sm font-semibold">{option.label}</p>
-                                  <p className="mt-0.5 text-xs text-[#7A7A72]">{option.hint}</p>
-                                </div>
-                                <span
-                                  className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                                    selected ? "border-[#7B3010] bg-[#7B3010]" : "border-[#D9D9D1] bg-white"
-                                  }`}
-                                >
-                                  {selected ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
-                                </span>
-                              </div>
+                              <Icon className="h-5 w-5 shrink-0" />
+                              <span>{option.label}</span>
                             </button>
                           )
                         })}
                       </div>
                     </Field>
+
+                    <Field label="Product Name" required>
+                      <Input
+                        placeholder="Enter product name"
+                        value={name}
+                        onChange={(e) => {
+                          const newName = e.target.value
+                          setName(newName)
+                          if (mode === "add") {
+                            const autoSlug = newName
+                              .toLowerCase()
+                              .replace(/\s+/g, "-")
+                              .replace(/[^a-z0-9-_]/g, "")
+                              .replace(/[-_]{2,}/g, "-")
+                              .replace(/^[-_]+|[-_]+$/g, "")
+                            setSlug(autoSlug)
+                          }
+                        }}
+                        required
+                        className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm"
+                      />
+                    </Field>
+
+                    <Field label="Product ID" info="Auto-generated sequence product ID (for example PRD-000001)">
+                      <Input
+                        value={displayProductId}
+                        placeholder="PRD-000001"
+                        readOnly
+                        disabled
+                        className="rounded-lg border border-[#D9D9D1] bg-[#F5F5F5] px-3 py-2 text-sm text-[#646464] cursor-not-allowed font-mono uppercase"
+                        title="Auto-generated sequence product ID"
+                      />
+                      <p className="mt-1 text-[11px] text-[#646464]">
+                        Assigned in order, starting at PRD-000001. This field cannot be edited.
+                      </p>
+                    </Field>
+
+                    {/* Row 2 */}
+                    <Field label="Product slug/url" required>
+                      <div className="relative">
+                        <Input
+                          placeholder="Enter product slug/url"
+                          value={slug}
+                          onChange={(e) => {
+                            let value = e.target.value.toLowerCase()
+                            value = value.replace(/\s+/g, "-")
+                            value = value.replace(/[^a-z0-9-_]/g, "")
+                            value = value.replace(/[-_]{2,}/g, "-")
+                            setSlug(value)
+                          }}
+                          required
+                          pattern="^[a-z0-9]+(?:[-_][a-z0-9]+)*$"
+                          title="Only lowercase letters, numbers, hyphens (-), and underscores (_) are allowed. No spaces."
+                          className="rounded-lg border border-[#D9D9D1] px-3 py-2 pr-10 text-sm"
+                        />
+                        <button
+                          type="button"
+                          title="Regenerate from name"
+                          onClick={() => {
+                            const autoSlug = name
+                              .toLowerCase()
+                              .replace(/\s+/g, "-")
+                              .replace(/[^a-z0-9-_]/g, "")
+                              .replace(/[-_]{2,}/g, "-")
+                              .replace(/^[-_]+|[-_]+$/g, "")
+                            setSlug(autoSlug)
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-[#7B3010] hover:bg-[#FFF7EA]"
+                        >
+                          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                        </button>
+                      </div>
+                    </Field>
+
+                    <Field
+                      label="Categories"
+                      required
+                      info="Select one or more categories that this product belongs to."
+                    >
+                      <div className="relative" ref={categoriesDropdownRef}>
+                        <button
+                          type="button"
+                          onClick={() => setCategoriesDropdownOpen((prev) => !prev)}
+                          className="flex min-h-[42px] w-full items-center justify-between gap-2 rounded-lg border border-[#D9D9D1] bg-white px-3 py-2 text-left text-sm transition focus:border-[#7B3010] focus:outline-none focus:ring-1 focus:ring-[#7B3010]/30"
+                        >
+                          <div className="flex flex-wrap items-center gap-1.5 flex-1">
+                            {categoryIds.length === 0 ? (
+                              <span className="text-[#646464]">Select Categories</span>
+                            ) : (
+                              categoryIds.map((cId) => {
+                                const cat = categories.find((c) => String(c.id) === String(cId))
+                                const catName = cat?.name || cId
+                                return (
+                                  <span
+                                    key={cId}
+                                    className="inline-flex items-center gap-1 rounded-md bg-[#FFF5EB] border border-[#F5D8C3] px-2 py-0.5 text-xs font-semibold text-[#7B3010] capitalize"
+                                  >
+                                    {catName}
+                                    <span
+                                      role="button"
+                                      tabIndex={0}
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleCategoryToggle(cId)
+                                      }}
+                                      className="hover:text-red-600 cursor-pointer p-0.5"
+                                      title="Remove category"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </span>
+                                  </span>
+                                )
+                              })
+                            )}
+                          </div>
+                          <ChevronDown
+                            className={`h-4 w-4 shrink-0 text-[#646464] transition-transform duration-200 ${
+                              categoriesDropdownOpen ? "rotate-180" : ""
+                            }`}
+                          />
+                        </button>
+
+                        {categoriesDropdownOpen && (
+                          <div className="absolute left-0 right-0 top-[calc(100%+4px)] z-50 rounded-xl border border-[#E8DCC8] bg-white p-2 shadow-lg animate-in fade-in slide-in-from-top-1 duration-150">
+                            <div className="flex items-center justify-between px-2 py-1.5 border-b border-[#F0EAE1] mb-1">
+                              <span className="text-[11px] font-bold text-[#7A7A72] uppercase tracking-wider">
+                                {categories.length} Categories Available
+                              </span>
+                              {categoryIds.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCategoryIds([])
+                                    setCategoryId("")
+                                    loadedCategoryIdsRef.current = []
+                                    loadedCategoryIdRef.current = ""
+                                  }}
+                                  className="text-xs text-red-600 hover:underline font-semibold"
+                                >
+                                  Clear all
+                                </button>
+                              )}
+                            </div>
+                            <div className="max-h-56 overflow-y-auto space-y-1">
+                              {categories.length === 0 ? (
+                                <div className="px-3 py-2 text-sm text-[#646464] text-center">No categories found</div>
+                              ) : (
+                                categories.map((c) => {
+                                  const isChecked = categoryIds.some((id) => String(id) === String(c.id))
+                                  return (
+                                    <div
+                                      key={c.id}
+                                      className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm cursor-pointer transition select-none ${
+                                        isChecked
+                                          ? "bg-[#FFF7EA] text-[#7B3010] font-semibold"
+                                          : "text-[#4A1D1F] hover:bg-[#FFFBF3]"
+                                      }`}
+                                      onClick={() => handleCategoryToggle(String(c.id))}
+                                    >
+                                      <div
+                                        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition ${
+                                          isChecked
+                                            ? "border-[#7B3010] bg-[#7B3010] text-white"
+                                            : "border-[#D9D9D1] bg-white"
+                                        }`}
+                                      >
+                                        {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
+                                      </div>
+                                      <span className="capitalize">{c.name}</span>
+                                    </div>
+                                  )
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </Field>
+
+                    <Field label="Spice Level" required={status !== "draft"}>
+                      <Select value={spiceLevel} onValueChange={(value) => setSpiceLevel(value as "" | "mild" | "medium" | "hot" | "extra_hot")}>
+                        <SelectTrigger className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm">
+                          <SelectValue placeholder="Select Spice Level" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {spiceLevels.map((item) => (
+                            <SelectItem key={item} value={item} className="capitalize">
+                              {item === "mild" ? "Mild" : item === "medium" ? "Medium" : item === "hot" ? "Hot" : "Extra Hot"}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </Field>
+
+                    <div className="sm:col-span-2 lg:col-span-2">
+                      <Field
+                        label="Select Weight Options"
+                        required
+                        info="Select variant based on weight. Example: if a product has both 250 gm and 500 gm packs, choose Multi variant. If it has only one weight (for example only 250 gm), choose Single variant."
+                      >
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {([
+                            { value: "single" as const, label: "Single variant", hint: "One weight only (e.g. 250 gm)" },
+                            { value: "multiple" as const, label: "Multi variant", hint: "Multiple weights (e.g. 250 gm & 500 gm)" },
+                          ]).map((option) => {
+                            const selected = variantMode === option.value
+                            return (
+                              <button
+                                key={option.value}
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() => {
+                                  setType(option.value === "single" ? "simple" : "variant")
+                                  setVariantMode(option.value)
+                                  if (option.value === "single") {
+                                    setVariants((prev) => {
+                                      const keep = prev.find((v) => v.isDefault) ?? prev[0]
+                                      return keep
+                                        ? [{ ...keep, isDefault: true }]
+                                        : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true, hsnCode: "", eanCode: "" }]
+                                    })
+                                  } else {
+                                    setVariants((prev) =>
+                                      prev.length > 0
+                                        ? prev
+                                        : [{ name: "250g", weight: "250g", sku: "", price: "", mrp: "", discountPercent: "", stock: "0", isDefault: true, hsnCode: "", eanCode: "" }],
+                                    )
+                                  }
+                                }}
+                                className={`rounded-xl border px-4 py-3 text-left transition ${selected
+                                  ? "border-[#7B3010] bg-[#FFF7EA] text-[#4A1D1F] ring-1 ring-[#7B3010]/30"
+                                  : "border-[#E8DCC8] bg-white text-[#646464] hover:bg-[#FFFBF3]"
+                                  }`}
+                              >
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <p className="text-sm font-semibold">{option.label}</p>
+                                    <p className="mt-0.5 text-xs text-[#7A7A72]">{option.hint}</p>
+                                  </div>
+                                  <span
+                                    className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selected ? "border-[#7B3010] bg-[#7B3010]" : "border-[#D9D9D1] bg-white"
+                                      }`}
+                                  >
+                                    {selected ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+                                  </span>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </Field>
+                    </div>
+                  </div>
+
+                  <div className="flex items-start gap-3 rounded-xl border border-[#F0E0D0] bg-[#FFF5F0] px-4 py-3">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#7B3010] text-[11px] font-bold leading-none text-white">
+                      i
+                    </span>
+                    <p className="text-sm text-[#7B3010]">
+                      You can add images, pricing, variants, and more in the next steps.
+                    </p>
                   </div>
                 </div>
-
-                <div className="flex items-start gap-3 rounded-xl border border-[#F0E0D0] bg-[#FFF5F0] px-4 py-3">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#7B3010] text-[11px] font-bold leading-none text-white">
-                    i
-                  </span>
-                  <p className="text-sm text-[#7B3010]">
-                    You can add images, pricing, variants, and more in the next steps.
-                  </p>
-                </div>
               </div>
-            </div>
               <div className={`md:col-span-3 grid gap-3 md:grid-cols-2 md:items-stretch ${currentStep === 2 ? "" : "hidden"}`}>
                 <ImageUploadPicker
                   label="Thumbnails"
@@ -3809,383 +4361,617 @@ export function ProductConsolePage({
                     </Field>
                   </div>
                 </div>
-              <Field label="Amazon Link">
-                <Input placeholder="Enter Amazon link" value={amazonLink} onChange={(e) => setAmazonLink(e.target.value)} className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm md:col-span-2" />
-              </Field>
-              <p className="text-[11px] text-[#646464]">Product URL preview: https://www.ziply5.com/products/{slug || "your-product-slug"}</p>
+                <Field label="Amazon Link">
+                  <Input placeholder="Enter Amazon link" value={amazonLink} onChange={(e) => setAmazonLink(e.target.value)} className="rounded-lg border border-[#D9D9D1] px-3 py-2 text-sm md:col-span-2" />
+                </Field>
+                <p className="text-[11px] text-[#646464]">Product URL preview: https://www.ziply5.com/products/{slug || "your-product-slug"}</p>
               </div>
               {/* Step 3 — Pricing & Inventory (variants table) */}
               <div className={`space-y-3 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm ${currentStep === 3 ? "" : "hidden"}`}>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="flex items-start gap-2.5">
-                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#7B3010]/10 text-[#7B3010]">
-                        <Package className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <p className="text-sm font-semibold text-[#4A1D1F]">Product Variants</p>
-                        <p className="mt-1 text-[11px] text-[#646464]">
-                          Add different sizes or packs with their own price and stock.
-                        </p>
-                      </div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#7B3010]/10 text-[#7B3010]">
+                      <Package className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-[#4A1D1F]">Product Variants</p>
+                      <p className="mt-1 text-[11px] text-[#646464]">
+                        Add different sizes or packs with their own price and stock.
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setType("variant")
-                        setVariantMode("multiple")
-                        setVariants((prev) => [
-                          ...prev,
-                          {
-                            name: "",
-                            weight: "",
-                            sku: "",
-                            price: "",
-                            mrp: "",
-                            discountPercent: "",
-                            stock: "0",
-                            isDefault: prev.length === 0,
-                            hsnCode: "",
-                            eanCode: "",
-                          },
-                        ])
-                      }}
-                      className="shrink-0 rounded-full border border-[#7B3010] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA]"
-                    >
-                      + Add Variant
-                    </button>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setType("variant")
+                      setVariantMode("multiple")
+                      setVariants((prev) => [
+                        ...prev,
+                        {
+                          name: "",
+                          weight: "",
+                          sku: "",
+                          price: "",
+                          mrp: "",
+                          discountPercent: "",
+                          stock: "0",
+                          isDefault: prev.length === 0,
+                          hsnCode: "",
+                          eanCode: "",
+                        },
+                      ])
+                    }}
+                    className="shrink-0 rounded-full border border-[#7B3010] bg-white px-3 py-1.5 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA]"
+                  >
+                    + Add Variant
+                  </button>
+                </div>
 
-                  <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
-                    <table className="min-w-[1140px] w-full border-collapse text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[10px] font-semibold uppercase tracking-wide text-[#646464]">
-                          <th className="px-2 py-2.5">#</th>
-                          <th className="px-2 py-2.5">Weight / Size</th>
-                          <th className="px-2 py-2.5">Unit</th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              MRP (₹)
-                              <span title="Maximum retail price before discount" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              Discount %
-                              <span title="Percent off MRP; sale price updates automatically" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              Sale Price (₹)
-                              <span title="Calculated from MRP and discount %" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              Stock
-                              <span title="Available inventory for this variant" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              SKU
-                              <span title="Unique stock keeping unit for this variant" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              HSN Code <span className="text-red-500">*</span>
-                              <span title="HSN / tax classification code (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5">
-                            <span className="inline-flex items-center gap-1">
-                              Barcode Number <span className="text-red-500">*</span>
-                              <span title="Barcode / GTIN for this variant (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
-                            </span>
-                          </th>
-                          <th className="px-2 py-2.5 text-center">Default</th>
-                          <th className="px-2 py-2.5 text-center">Remove</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(variantMode === "single" ? variants.slice(0, 1) : variants).map((variant, idx) => {
-                          const weightParts = parseWeight(variant.weight)
-                          const discNum = Number(variant.discountPercent || 0)
-                          return (
-                            <tr key={`${variant.id ?? "new"}-${idx}`} className="border-b border-[#F0E8DC] bg-white last:border-b-0">
-                              <td className="px-2 py-2 align-middle text-xs font-semibold text-[#646464]">{idx + 1}</td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  inputMode="decimal"
-                                  placeholder="250"
-                                  value={weightParts.value}
-                                  onKeyDown={blockNumberFieldKeys}
-                                  onChange={(e) => {
-                                    const newVal = sanitizeNonNegativeInput(e.target.value) + weightParts.unit
-                                    setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, weight: newVal, name: newVal } : x)),
-                                    )
-                                  }}
-                                  className={`h-9 w-20 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Select
-                                  value={weightParts.unit || "g"}
-                                  onValueChange={(unit) => {
-                                    const newVal = weightParts.value + unit
-                                    setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, weight: newVal, name: newVal } : x)),
-                                    )
-                                  }}
-                                >
-                                  <SelectTrigger className="h-9 w-[72px] rounded border border-[#D9D9D1] bg-white px-2 text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="g">G</SelectItem>
-                                    <SelectItem value="mg">MG</SelectItem>
-                                    <SelectItem value="kg">KG</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </td>
-                              <td className="px-2 py-2 align-middle">
+                <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
+                  <table className="min-w-[1140px] w-full border-collapse text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[10px] font-semibold uppercase tracking-wide text-[#646464]">
+                        <th className="px-2 py-2.5">#</th>
+                        <th className="px-2 py-2.5">Weight / Size</th>
+                        <th className="px-2 py-2.5">Unit</th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            MRP (₹)
+                            <span title="Maximum retail price before discount" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            Discount %
+                            <span title="Percent off MRP; sale price updates automatically" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            Sale Price (₹)
+                            <span title="Calculated from MRP and discount %" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            Stock
+                            <span title="Available inventory for this variant" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            SKU
+                            <span title="Unique stock keeping unit for this variant" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            HSN Code <span className="text-red-500">*</span>
+                            <span title="HSN / tax classification code (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5">
+                          <span className="inline-flex items-center gap-1">
+                            Barcode Number <span className="text-red-500">*</span>
+                            <span title="Barcode / GTIN for this variant (Mandatory)" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                          </span>
+                        </th>
+                        <th className="px-2 py-2.5 text-center">Default</th>
+                        <th className="px-2 py-2.5 text-center">Remove</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(variantMode === "single" ? variants.slice(0, 1) : variants).map((variant, idx) => {
+                        const weightParts = parseWeight(variant.weight)
+                        const discNum = Number(variant.discountPercent || 0)
+                        return (
+                          <tr key={`${variant.id ?? "new"}-${idx}`} className="border-b border-[#F0E8DC] bg-white last:border-b-0">
+                            <td className="px-2 py-2 align-middle text-xs font-semibold text-[#646464]">{idx + 1}</td>
+                            <td className="px-2 py-2 align-middle">
+                              <Input
+                                type="number"
+                                min={0}
+                                inputMode="decimal"
+                                placeholder="250"
+                                value={weightParts.value}
+                                onKeyDown={blockNumberFieldKeys}
+                                onChange={(e) => {
+                                  const newVal = sanitizeNonNegativeInput(e.target.value) + weightParts.unit
+                                  setVariants((prev) =>
+                                    prev.map((x, i) => (i === idx ? { ...x, weight: newVal, name: newVal } : x)),
+                                  )
+                                }}
+                                className={`h-9 w-20 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <Select
+                                value={weightParts.unit || "g"}
+                                onValueChange={(unit) => {
+                                  const newVal = weightParts.value + unit
+                                  setVariants((prev) =>
+                                    prev.map((x, i) => (i === idx ? { ...x, weight: newVal, name: newVal } : x)),
+                                  )
+                                }}
+                              >
+                                <SelectTrigger className="h-9 w-[72px] rounded border border-[#D9D9D1] bg-white px-2 text-xs">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="g">G</SelectItem>
+                                  <SelectItem value="mg">MG</SelectItem>
+                                  <SelectItem value="kg">KG</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <Input
+                                type="number"
+                                min={0}
+                                inputMode="decimal"
+                                placeholder="0"
+                                value={variant.mrp}
+                                onKeyDown={blockNumberFieldKeys}
+                                onChange={(e) => {
+                                  const val = sanitizeNonNegativeInput(e.target.value)
+                                  const base = parseFloat(val) || 0
+                                  const disc = parseFloat(variant.discountPercent) || 0
+                                  const sale = base - (base * disc) / 100
+                                  const res = sale > 0 ? sale.toFixed(2) : base > 0 ? base.toFixed(2) : ""
+                                  setVariants((prev) => prev.map((x, i) => (i === idx ? { ...x, mrp: val, price: res } : x)))
+                                }}
+                                className={`h-9 w-24 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <div className="flex items-center gap-1.5">
                                 <Input
                                   type="number"
                                   min={0}
                                   inputMode="decimal"
                                   placeholder="0"
-                                  value={variant.mrp}
+                                  value={variant.discountPercent}
                                   onKeyDown={blockNumberFieldKeys}
                                   onChange={(e) => {
                                     const val = sanitizeNonNegativeInput(e.target.value)
-                                    const base = parseFloat(val) || 0
-                                    const disc = parseFloat(variant.discountPercent) || 0
+                                    const base = parseFloat(variant.mrp) || 0
+                                    const disc = parseFloat(val) || 0
                                     const sale = base - (base * disc) / 100
                                     const res = sale > 0 ? sale.toFixed(2) : base > 0 ? base.toFixed(2) : ""
-                                    setVariants((prev) => prev.map((x, i) => (i === idx ? { ...x, mrp: val, price: res } : x)))
+                                    setVariants((prev) =>
+                                      prev.map((x, i) => (i === idx ? { ...x, discountPercent: val, price: res } : x)),
+                                    )
                                   }}
-                                  className={`h-9 w-24 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
+                                  className={`h-9 w-16 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
                                 />
-                              </td>
-                              <td className="px-2 py-2 align-middle">
-                                <div className="flex items-center gap-1.5">
-                                  <Input
-                                    type="number"
-                                    min={0}
-                                    inputMode="decimal"
-                                    placeholder="0"
-                                    value={variant.discountPercent}
-                                    onKeyDown={blockNumberFieldKeys}
-                                    onChange={(e) => {
-                                      const val = sanitizeNonNegativeInput(e.target.value)
-                                      const base = parseFloat(variant.mrp) || 0
-                                      const disc = parseFloat(val) || 0
-                                      const sale = base - (base * disc) / 100
-                                      const res = sale > 0 ? sale.toFixed(2) : base > 0 ? base.toFixed(2) : ""
-                                      setVariants((prev) =>
-                                        prev.map((x, i) => (i === idx ? { ...x, discountPercent: val, price: res } : x)),
-                                      )
-                                    }}
-                                    className={`h-9 w-16 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
-                                  />
-                                  {discNum > 0 ? (
-                                    <span
-                                      title={discountEnabled ? undefined : "Turn on Enable Discount to apply this"}
-                                      className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                        discountEnabled ? "bg-[#E8F5E9] text-[#2E7D32]" : "bg-[#F0F0EC] text-[#8A8A82] line-through"
+                                {discNum > 0 ? (
+                                  <span
+                                    title={discountEnabled ? undefined : "Turn on Enable Discount to apply this"}
+                                    className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${discountEnabled ? "bg-[#E8F5E9] text-[#2E7D32]" : "bg-[#F0F0EC] text-[#8A8A82] line-through"
                                       }`}
-                                    >
-                                      {discNum}% OFF
-                                    </span>
-                                  ) : null}
-                                </div>
-                              </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  inputMode="decimal"
-                                  placeholder="0"
-                                  value={variant.mrp || variant.price ? String(variantSalePrice(variant, discountEnabled)) : ""}
-                                  readOnly
-                                  className={`h-9 w-24 cursor-not-allowed rounded border border-[#D9D9D1] bg-[#F5F5F5] px-2 text-sm ${NUMBER_INPUT_CLASS}`}
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  type="number"
-                                  min={0}
-                                  inputMode="numeric"
-                                  placeholder="0"
-                                  value={variant.stock}
-                                  onKeyDown={blockNumberFieldKeys}
-                                  onChange={(e) =>
-                                    setVariants((prev) =>
-                                      prev.map((x, i) =>
-                                        i === idx ? { ...x, stock: sanitizeNonNegativeInput(e.target.value) } : x,
-                                      ),
-                                    )
-                                  }
-                                  className={`h-9 w-20 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle">
-                                <Input
-                                  placeholder="SKU"
-                                  value={variant.sku}
-                                  onChange={(e) =>
-                                    setVariants((prev) => prev.map((x, i) => (i === idx ? { ...x, sku: e.target.value } : x)))
-                                  }
-                                  className="h-9 w-28 rounded border border-[#D9D9D1] bg-white px-2 text-sm"
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle min-w-[150px]">
-                                <SearchableMasterSelect
-                                  value={variant.hsnCode}
-                                  onChange={(val) =>
-                                    setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, hsnCode: val } : x)),
-                                    )
-                                  }
-                                  options={hsnOptions}
-                                  placeholder="Select HSN *"
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle min-w-[160px]">
-                                <SearchableMasterSelect
-                                  value={variant.eanCode}
-                                  onChange={(val) =>
-                                    setVariants((prev) =>
-                                      prev.map((x, i) => (i === idx ? { ...x, eanCode: val } : x)),
-                                    )
-                                  }
-                                  options={barcodeOptions}
-                                  placeholder="Select Barcode *"
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle text-center">
-                                <input
-                                  type="radio"
-                                  name="default-variant"
-                                  checked={variant.isDefault || (variantMode === "single" && idx === 0)}
-                                  onChange={() =>
-                                    setVariants((prev) => prev.map((x, i) => ({ ...x, isDefault: i === idx })))
-                                  }
-                                  className="h-4 w-4 accent-[#7B3010]"
-                                  title="Set as default variant"
-                                />
-                              </td>
-                              <td className="px-2 py-2 align-middle text-center">
-                                <button
-                                  type="button"
-                                  disabled={variantMode === "single" || variants.length <= 1}
-                                  onClick={() => {
-                                    const label = variant.weight || `Variant ${idx + 1}`
-                                    if (!window.confirm(`Remove variant "${label}"?`)) return
-                                    setVariants((prev) => {
-                                      const next = prev.filter((_, i) => i !== idx)
-                                      if (next.length > 0 && !next.some((x) => x.isDefault)) {
-                                        next[0] = { ...next[0], isDefault: true }
-                                      }
-                                      return next
-                                    })
-                                  }}
-                                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#F0C7C7] text-[#B44444] transition hover:bg-[#FFF5F5] disabled:cursor-not-allowed disabled:border-[#E8E8E2] disabled:text-[#BDBDB5] disabled:hover:bg-transparent"
-                                  title={
-                                    variantMode === "single" || variants.length <= 1
-                                      ? "At least one variant is required"
-                                      : "Remove this variant"
-                                  }
-                                  aria-label={`Remove variant ${idx + 1}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                                  >
+                                    {discNum}% OFF
+                                  </span>
+                                ) : null}
+                              </div>
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <Input
+                                type="number"
+                                min={0}
+                                inputMode="decimal"
+                                placeholder="0"
+                                value={variant.mrp || variant.price ? String(variantSalePrice(variant, discountEnabled)) : ""}
+                                readOnly
+                                className={`h-9 w-24 cursor-not-allowed rounded border border-[#D9D9D1] bg-[#F5F5F5] px-2 text-sm ${NUMBER_INPUT_CLASS}`}
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <Input
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                placeholder="0"
+                                value={variant.stock}
+                                onKeyDown={blockNumberFieldKeys}
+                                onChange={(e) =>
+                                  setVariants((prev) =>
+                                    prev.map((x, i) =>
+                                      i === idx ? { ...x, stock: sanitizeNonNegativeInput(e.target.value) } : x,
+                                    ),
+                                  )
+                                }
+                                className={`h-9 w-20 rounded border border-[#D9D9D1] bg-white px-2 text-sm ${NUMBER_INPUT_CLASS}`}
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle">
+                              <Input
+                                placeholder="SKU"
+                                value={variant.sku}
+                                onChange={(e) =>
+                                  setVariants((prev) => prev.map((x, i) => (i === idx ? { ...x, sku: e.target.value } : x)))
+                                }
+                                className="h-9 w-28 rounded border border-[#D9D9D1] bg-white px-2 text-sm"
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle min-w-[150px]">
+                              <SearchableMasterSelect
+                                value={variant.hsnCode}
+                                onChange={(val) =>
+                                  setVariants((prev) =>
+                                    prev.map((x, i) => (i === idx ? { ...x, hsnCode: val } : x)),
+                                  )
+                                }
+                                options={hsnOptions}
+                                placeholder="Select HSN *"
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle min-w-[160px]">
+                              <SearchableMasterSelect
+                                value={variant.eanCode}
+                                onChange={(val) =>
+                                  setVariants((prev) =>
+                                    prev.map((x, i) => (i === idx ? { ...x, eanCode: val } : x)),
+                                  )
+                                }
+                                options={barcodeOptions}
+                                placeholder="Select Barcode *"
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle text-center">
+                              <input
+                                type="radio"
+                                name="default-variant"
+                                checked={variant.isDefault || (variantMode === "single" && idx === 0)}
+                                onChange={() =>
+                                  setVariants((prev) => prev.map((x, i) => ({ ...x, isDefault: i === idx })))
+                                }
+                                className="h-4 w-4 accent-[#7B3010]"
+                                title="Set as default variant"
+                              />
+                            </td>
+                            <td className="px-2 py-2 align-middle text-center">
+                              <button
+                                type="button"
+                                disabled={variantMode === "single" || variants.length <= 1}
+                                onClick={() => {
+                                  const label = variant.weight || `Variant ${idx + 1}`
+                                  if (!window.confirm(`Remove variant "${label}"?`)) return
+                                  setVariants((prev) => {
+                                    const next = prev.filter((_, i) => i !== idx)
+                                    if (next.length > 0 && !next.some((x) => x.isDefault)) {
+                                      next[0] = { ...next[0], isDefault: true }
+                                    }
+                                    return next
+                                  })
+                                }}
+                                className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#F0C7C7] text-[#B44444] transition hover:bg-[#FFF5F5] disabled:cursor-not-allowed disabled:border-[#E8E8E2] disabled:text-[#BDBDB5] disabled:hover:bg-transparent"
+                                title={
+                                  variantMode === "single" || variants.length <= 1
+                                    ? "At least one variant is required"
+                                    : "Remove this variant"
+                                }
+                                aria-label={`Remove variant ${idx + 1}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                  <div className="flex items-start gap-3 rounded-xl border border-[#F0C7C7] bg-[#FFF5F5] px-4 py-3">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#B44444] text-[11px] font-bold leading-none text-white">
-                      i
-                    </span>
-                    <p className="text-sm text-[#8A2E2E]">The default variant will be selected on the product page.</p>
-                  </div>
+                <div className="flex items-start gap-3 rounded-xl border border-[#F0C7C7] bg-[#FFF5F5] px-4 py-3">
+                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#B44444] text-[11px] font-bold leading-none text-white">
+                    i
+                  </span>
+                  <p className="text-sm text-[#8A2E2E]">The default variant will be selected on the product page.</p>
+                </div>
 
-                  <div className="flex flex-wrap items-center gap-3 border-t border-[#E8DCC8] pt-3">
-                    <span className="text-xs font-semibold uppercase text-[#4A1D1F]">Enable Discount:</span>
+                <div className="flex flex-wrap items-center gap-3 border-t border-[#E8DCC8] pt-3">
+                  <span className="text-xs font-semibold uppercase text-[#4A1D1F]">Enable Discount:</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={discountEnabled}
+                    onClick={() => setDiscountEnabled((prev) => !prev)}
+                    className={`relative h-7 w-12 rounded-full transition ${discountEnabled ? "bg-[#7B3010]" : "bg-[#D9D9D1]"
+                      }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${discountEnabled ? "left-5" : "left-0.5"
+                        }`}
+                    />
+                  </button>
+                  <span className="text-xs font-semibold text-[#646464]">{discountEnabled ? "ON" : "OFF"}</span>
+                  <span className="text-[11px] text-[#646464]">
+                    {discountEnabled
+                      ? "Website shows the sale price (MRP minus each variant's discount %) with MRP struck through."
+                      : "Website shows the MRP as the product price. Variant discount % is not applied."}
+                  </span>
+
+                  <div className="ml-auto">
                     <button
                       type="button"
-                      role="switch"
-                      aria-checked={discountEnabled}
-                      onClick={() => setDiscountEnabled((prev) => !prev)}
-                      className={`relative h-7 w-12 rounded-full transition ${
-                        discountEnabled ? "bg-[#7B3010]" : "bg-[#D9D9D1]"
-                      }`}
+                      id="create-packs-btn"
+                      onClick={handleCreatePacksClick}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-3.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-[#63270c] shadow-sm active:scale-95"
                     >
-                      <span
-                        className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
-                          discountEnabled ? "left-5" : "left-0.5"
-                        }`}
-                      />
+                      <PackagePlus className="h-4 w-4" />
+                      Create Pack&apos;s
                     </button>
-                    <span className="text-xs font-semibold text-[#646464]">{discountEnabled ? "ON" : "OFF"}</span>
-                    <span className="text-[11px] text-[#646464]">
-                      {discountEnabled
-                        ? "Website shows the sale price (MRP minus each variant's discount %) with MRP struck through."
-                        : "Website shows the MRP as the product price. Variant discount % is not applied."}
+                  </div>
+                </div>
+              </div>
+
+              {/* Pack's Handling / Management Section (Step 3) */}
+              {showPacksSection && currentStep === 3 && (
+                <div className="space-y-4 rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="flex items-start gap-2.5">
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#7B3010]/10 text-[#7B3010]">
+                        <Boxes className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-[#4A1D1F]">Pack&apos;s Management</p>
+                          <span className="rounded-full bg-[#FFF7EA] border border-[#E8DCC8] px-2 py-0.5 text-[10px] font-bold text-[#7B3010]">
+                            {packs.length} {packs.length === 1 ? "Pack" : "Packs"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-[#646464]">
+                          Manage multi-pack bundles for variants (e.g., Pack of 2, Pack of 3). MRP auto-calculates from variant base price × quantity, with customizable selling prices and active/inactive status.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        id="add-pack-btn"
+                        onClick={handleAddPack}
+                        className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-[#7B3010] bg-white px-3.5 py-1.5 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA] transition active:scale-95 shadow-xs"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        + Add Pack
+                      </button>
+                    </div>
+                  </div>
+
+                  {packs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[#E8DCC8] bg-[#FFFDF9] py-8 text-center">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#FFF7EA] text-[#7B3010] mb-2">
+                        <PackagePlus className="h-6 w-6" />
+                      </div>
+                      <p className="text-sm font-semibold text-[#4A1D1F]">No Packs Created Yet</p>
+                      <p className="text-xs text-[#7A7A72] max-w-sm mt-1 mb-3">
+                        Create bundles of multiple units (e.g. Pack of 2, 3, 4) with special pricing.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleAddPack}
+                        className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-4 py-1.5 text-xs font-semibold uppercase text-white hover:bg-[#63270c] transition shadow-sm"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Create First Pack
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
+                      <table className="min-w-[820px] w-full border-collapse text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[10px] font-semibold uppercase tracking-wide text-[#646464]">
+                            <th className="px-3 py-2.5 w-10">#</th>
+                            <th className="px-3 py-2.5 min-w-[170px]">Select Variant *</th>
+                            <th className="px-3 py-2.5 min-w-[110px]">Quantity *</th>
+                            <th className="px-3 py-2.5 min-w-[150px]">Pack Name</th>
+                            <th className="px-3 py-2.5 min-w-[120px]">
+                              <span className="inline-flex items-center gap-1">
+                                MRP (₹)
+                                <span title="Auto-calculated based on variant MRP × quantity" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                              </span>
+                            </th>
+                            <th className="px-3 py-2.5 min-w-[180px]">
+                              <span className="inline-flex items-center gap-1">
+                                Selling Price (₹) *
+                                <span title="Auto-calculated initially, admin can update as needed" className="text-[#7B3010]"><InfoIcon className="h-3 w-3" /></span>
+                              </span>
+                            </th>
+                            <th className="px-3 py-2.5 text-center min-w-[120px]">Status</th>
+                            <th className="px-3 py-2.5 text-center w-16">Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {packs.map((pack, idx) => {
+                            const chosenVar = availableVariants.find((v) => (v.weight || v.name) === pack.variantWeight) || availableVariants[0]
+                            const mrpNum = Number(pack.mrp) || 0
+                            const priceNum = Number(pack.price) || 0
+                            const hasDiscount = mrpNum > priceNum && priceNum > 0
+                            const diff = mrpNum - priceNum
+
+                            return (
+                              <tr key={pack.id || idx} className="border-b border-[#F0E8DC] bg-white last:border-b-0 hover:bg-[#FFFDF9]/60 transition">
+                                <td className="px-3 py-2.5 align-middle text-xs font-semibold text-[#646464]">{idx + 1}</td>
+                                <td className="px-3 py-2.5 align-middle">
+                                  <Select
+                                    value={pack.variantWeight || (availableVariants[0]?.weight ?? "")}
+                                    onValueChange={(val) => handlePackVariantChange(pack.id, val)}
+                                  >
+                                    <SelectTrigger className="h-9 w-full rounded border border-[#D9D9D1] bg-white px-2.5 text-xs font-medium">
+                                      <SelectValue placeholder="Select variant" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {availableVariants.map((v) => (
+                                        <SelectItem key={v.weight} value={v.weight}>
+                                          <div className="flex items-center justify-between gap-3">
+                                            <span className="font-semibold text-[#4A1D1F]">{v.weight}</span>
+                                            <span className="text-[11px] text-[#7A7A72]">
+                                              (MRP: ₹{v.mrp} | Price: ₹{v.price})
+                                            </span>
+                                          </div>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </td>
+                                <td className="px-3 py-2.5 align-middle">
+                                  <div className="flex items-center gap-1.5">
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      inputMode="numeric"
+                                      value={pack.quantity}
+                                      onKeyDown={blockNumberFieldKeys}
+                                      onChange={(e) => handlePackQuantityChange(pack.id, e.target.value)}
+                                      className={`h-9 w-20 rounded border border-[#D9D9D1] bg-white px-2 text-sm font-semibold text-center ${NUMBER_INPUT_CLASS}`}
+                                    />
+                                    <span className="text-xs text-[#7A7A72]">units</span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 align-middle">
+                                  <Input
+                                    type="text"
+                                    value={pack.name}
+                                    onChange={(e) => {
+                                      const val = e.target.value
+                                      setPacks((prev) => prev.map((p) => (p.id === pack.id ? { ...p, name: val } : p)))
+                                    }}
+                                    placeholder="e.g. Pack of 2"
+                                    className="h-9 w-full rounded border border-[#D9D9D1] bg-white px-2.5 text-xs font-medium"
+                                  />
+                                </td>
+                                <td className="px-3 py-2.5 align-middle">
+                                  <div className="flex flex-col">
+                                    <span className="text-xs font-bold text-[#2A1810]">
+                                      ₹{mrpNum.toFixed(2)}
+                                    </span>
+                                    <span className="text-[10px] text-[#8A8A82]">
+                                      ₹{chosenVar?.mrp || 0} × {pack.quantity}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 align-middle">
+                                  <div className="flex items-center gap-2">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      inputMode="decimal"
+                                      placeholder="0"
+                                      value={pack.price}
+                                      onKeyDown={blockNumberFieldKeys}
+                                      onChange={(e) => handlePackPriceChange(pack.id, e.target.value)}
+                                      className={`h-9 w-24 rounded border border-[#D9D9D1] bg-white px-2 text-sm font-bold text-[#7B3010] ${NUMBER_INPUT_CLASS}`}
+                                    />
+                                    {hasDiscount ? (
+                                      <span
+                                        title={`Save ₹${diff.toFixed(2)} (${pack.discountPercent ?? Math.round((diff / mrpNum) * 100)}% off)`}
+                                        className="shrink-0 rounded bg-[#E8F5E9] px-1.5 py-0.5 text-[10px] font-bold text-[#2E7D32]"
+                                      >
+                                        {pack.discountPercent ? `${pack.discountPercent}% OFF` : `Save ₹${Math.round(diff)}`}
+                                      </span>
+                                    ) : null}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetPackPrice(pack.id)}
+                                      title="Reset to auto-calculated price"
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded text-[#8A8A82] hover:bg-[#FFF7EA] hover:text-[#7B3010] transition"
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 align-middle text-center">
+                                  <div className="inline-flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={pack.isActive}
+                                      onClick={() => handlePackToggleActive(pack.id)}
+                                      className={`relative h-6 w-11 rounded-full transition ${
+                                        pack.isActive ? "bg-[#2E7D32]" : "bg-[#D9D9D1]"
+                                      }`}
+                                      title={pack.isActive ? "Pack is Active (Click to disable)" : "Pack is Inactive (Click to activate)"}
+                                    >
+                                      <span
+                                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition ${
+                                          pack.isActive ? "left-5" : "left-0.5"
+                                        }`}
+                                      />
+                                    </button>
+                                    <span className={`text-[10px] font-bold uppercase ${pack.isActive ? "text-[#2E7D32]" : "text-[#8A8A82]"}`}>
+                                      {pack.isActive ? "ON" : "OFF"}
+                                    </span>
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2.5 align-middle text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePack(pack.id)}
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#F0C7C7] text-[#B44444] transition hover:bg-[#FFF5F5]"
+                                    title="Remove this pack"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  <div className="flex items-start gap-2.5 rounded-xl border border-[#E8DCC8] bg-[#FFFBF3] px-3.5 py-2.5 text-xs text-[#7A5B3E]">
+                    <span className="font-bold text-[#7B3010]">Tip:</span>
+                    <span>
+                      MRP is automatically calculated as <code>variant MRP × quantity</code>. Selling price initially defaults to <code>variant sale price × quantity</code>, and you can freely adjust it to offer special combo/pack savings. Inactive packs won&apos;t be shown to customers.
                     </span>
                   </div>
                 </div>
+              )}
               <div className={currentStep === 2 ? "" : "hidden"}>
-              <Field label="Description" required info="Description is mandatory (maximum 350 characters)">
-                <RichTextEditor
-                  value={description}
-                  onChange={setDescription}
-                  placeholder="Enter product description (mandatory, max 350 characters)"
-                  maxLength={DESCRIPTION_MAX_CHARS}
-                  compact
-                />
-                <p className="mt-1 text-[11px] text-[#646464]">
-                  {stripHtmlText(description).length} / {DESCRIPTION_MAX_CHARS} characters (Mandatory field)
-                </p>
-              </Field></div>
+                <Field label="Description" required info="Description is mandatory (maximum 350 characters)">
+                  <RichTextEditor
+                    value={description}
+                    onChange={setDescription}
+                    placeholder="Enter product description (mandatory, max 350 characters)"
+                    maxLength={DESCRIPTION_MAX_CHARS}
+                    compact
+                  />
+                  <p className="mt-1 text-[11px] text-[#646464]">
+                    {stripHtmlText(description).length} / {DESCRIPTION_MAX_CHARS} characters (Mandatory field)
+                  </p>
+                </Field></div>
             </>
           )}
-        {/* Product Specifications and Details */}
-        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
-                Product Details <span className="text-red-500">*</span>
-              </p>
-              <p className="text-[11px] text-[#646464]">
-                At least 1 detail section with title and description is mandatory.
-              </p>
+          {/* Product Specifications and Details */}
+          <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
+                  Product Details <span className="text-red-500">*</span>
+                </p>
+                <p className="text-[11px] text-[#646464]">
+                  At least 1 detail section with title and description is mandatory.
+                </p>
+              </div>
+              {mode !== "view" ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (sections.length >= MAX_SECTIONS) return
+                    setSections((prev) => [
+                      ...prev,
+                      { title: "", description: "<p></p>", sortOrder: prev.length, isActive: true },
+                    ])
+                  }}
+                  className="rounded-full border border-[#7B3010] px-3 py-1 text-[11px] font-semibold uppercase text-[#7B3010]"
+                >
+                  Add Section
+                </button>
+              ) : null}
             </div>
-            {mode !== "view" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (sections.length >= MAX_SECTIONS) return
-                  setSections((prev) => [
-                    ...prev,
-                    { title: "", description: "<p></p>", sortOrder: prev.length, isActive: true },
-                  ])
-                }}
-                className="rounded-full border border-[#7B3010] px-3 py-1 text-[11px] font-semibold uppercase text-[#7B3010]"
-              >
-                Add Section
-              </button>
-            ) : null}
-          </div>
             <Accordion
               type="multiple"
               value={openDetailSections}
@@ -4298,620 +5084,801 @@ export function ProductConsolePage({
                 )
               })}
             </Accordion>
-          <p className="text-[11px] text-[#646464]">
-            {status === "draft"
-              ? `Draft products can save partial details. At least 1 section with title and description is required to publish.`
-              : `Up to ${MAX_SECTIONS} sections. At least 1 section with title and description is mandatory.`}
-          </p>
-        </div>
-        {/* Product Features (from shared catalog) */}
-        <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
-                Product Features <span className="text-red-500">*</span>
-              </p>
-              <p className="mt-1 text-[11px] text-[#646464]">
-                Select at least 1 feature (up to {MAX_PRODUCT_FEATURES}) from Settings → Product Features.
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-[11px] font-semibold text-[#646464]">
-                {selectedFeatureDefinitionIds.length}/{MAX_PRODUCT_FEATURES}
-              </span>
-              <Link href="/admin/product-features" className="text-[10px] font-semibold uppercase text-[#7B3010] underline">
-                Manage features
-              </Link>
-            </div>
-          </div>
-          {featureCatalog.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-[#E8DCC8] bg-[#FFFBF3] px-3 py-4 text-sm text-[#646464]">
-              No active features yet. Create feature icons and titles in Product Features first.
+            <p className="text-[11px] text-[#646464]">
+              {status === "draft"
+                ? `Draft products can save partial details. At least 1 section with title and description is required to publish.`
+                : `Up to ${MAX_SECTIONS} sections. At least 1 section with title and description is mandatory.`}
             </p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {featureCatalog.map((feature) => {
-                const checked = selectedFeatureDefinitionIds.includes(feature.id)
-                const atLimit = !checked && selectedFeatureDefinitionIds.length >= MAX_PRODUCT_FEATURES
-                return (
-                  <label
-                    key={feature.id}
-                    className={`flex items-center gap-3 rounded-xl border px-3 py-3 transition ${
-                      checked ? "border-[#7B3010] bg-[#FFF7EA]" : "border-[#E8DCC8] bg-white"
-                    } ${atLimit ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-[#FFFBF3]"}`}
-                  >
-                    <Checkbox
-                      checked={checked}
-                      disabled={atLimit}
-                      onCheckedChange={(value) => {
-                        const next = Boolean(value)
-                        setSelectedFeatureDefinitionIds((prev) => {
-                          if (!next) return prev.filter((id) => id !== feature.id)
-                          if (prev.includes(feature.id)) return prev
-                          if (prev.length >= MAX_PRODUCT_FEATURES) {
-                            setError(`You can select up to ${MAX_PRODUCT_FEATURES} product features`)
-                            return prev
-                          }
-                          return [...prev, feature.id]
-                        })
-                      }}
-                    />
-                    {feature.icon ? (
-                      <img src={feature.icon} alt="" className="h-8 w-8 rounded object-cover border border-[#E8DCC8]" />
-                    ) : (
-                      <span className="flex h-8 w-8 items-center justify-center rounded bg-[#FFFBF3] text-[10px] text-[#7A7A72]">N/A</span>
-                    )}
-                    <span className="text-sm font-medium text-[#2A1810]">{feature.title}</span>
-                  </label>
-                )
-              })}
-            </div>
-          )}
-        </div>
-        {/* Step 5 — Review & Publish (also used as the read-only product view) */}
-        {mode === "view" || currentStep === 5 ? (
-          <div className="md:col-span-3 space-y-4">
-            {reviewMissingCount > 0 ? (
-              <div className="flex items-start gap-3 rounded-xl border border-[#F0C7C7] bg-[#FFF5F5] px-4 py-3">
-                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B44444]" />
-                <div className="space-y-1 text-sm text-[#8A2E2E]">
-                  <p className="font-semibold">
-                    {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing. Review the list below. Required fields are checked on their own steps.
-                  </p>
-                  {([1, 2, 3, 4] as const).map((stepId) =>
-                    reviewMissing[stepId].length ? (
-                      <p key={stepId} className="text-xs">
-                        <button
-                          type="button"
-                          onClick={() => goToEditStep(stepId)}
-                          className="font-semibold underline underline-offset-2"
-                        >
-                          Step {stepId}
-                        </button>
-                        : {reviewMissing[stepId].join(", ")}
-                      </p>
-                    ) : null,
-                  )}
-                </div>
+          </div>
+          {/* Product Features (from shared catalog) */}
+          <div className={`md:col-span-3 space-y-3 shadow-sm rounded-xl border border-[#E8DCC8] p-3 ${mode !== "view" && currentStep === 2 ? "" : "hidden"}`}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-[#4A1D1F]">
+                  Product Features <span className="text-red-500">*</span>
+                </p>
+                <p className="mt-1 text-[11px] text-[#646464]">
+                  Select at least 1 feature (up to {MAX_PRODUCT_FEATURES}) from Settings → Product Features.
+                </p>
               </div>
-            ) : mode === "view" ? null : (
-              <div className="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
-                <Check className="h-4 w-4 shrink-0" />
-                All required details are filled. Review below and publish when ready.
+              <div className="flex items-center gap-3">
+                <span className="text-[11px] font-semibold text-[#646464]">
+                  {selectedFeatureDefinitionIds.length}/{MAX_PRODUCT_FEATURES}
+                </span>
+                <Link href="/admin/product-features" className="text-[10px] font-semibold uppercase text-[#7B3010] underline">
+                  Manage features
+                </Link>
+              </div>
+            </div>
+            {featureCatalog.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-[#E8DCC8] bg-[#FFFBF3] px-3 py-4 text-sm text-[#646464]">
+                No active features yet. Create feature icons and titles in Product Features first.
+              </p>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {featureCatalog.map((feature) => {
+                  const checked = selectedFeatureDefinitionIds.includes(feature.id)
+                  const atLimit = !checked && selectedFeatureDefinitionIds.length >= MAX_PRODUCT_FEATURES
+                  return (
+                    <label
+                      key={feature.id}
+                      className={`flex items-center gap-3 rounded-xl border px-3 py-3 transition ${checked ? "border-[#7B3010] bg-[#FFF7EA]" : "border-[#E8DCC8] bg-white"
+                        } ${atLimit ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-[#FFFBF3]"}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={atLimit}
+                        onCheckedChange={(value) => {
+                          const next = Boolean(value)
+                          setSelectedFeatureDefinitionIds((prev) => {
+                            if (!next) return prev.filter((id) => id !== feature.id)
+                            if (prev.includes(feature.id)) return prev
+                            if (prev.length >= MAX_PRODUCT_FEATURES) {
+                              setError(`You can select up to ${MAX_PRODUCT_FEATURES} product features`)
+                              return prev
+                            }
+                            return [...prev, feature.id]
+                          })
+                        }}
+                      />
+                      {feature.icon ? (
+                        <img src={feature.icon} alt="" className="h-8 w-8 rounded object-cover border border-[#E8DCC8]" />
+                      ) : (
+                        <span className="flex h-8 w-8 items-center justify-center rounded bg-[#FFFBF3] text-[10px] text-[#7A7A72]">N/A</span>
+                      )}
+                      <span className="text-sm font-medium text-[#2A1810]">{feature.title}</span>
+                    </label>
+                  )
+                })}
               </div>
             )}
-
-            {/* Basic Information */}
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <ReviewSectionHeader
-                icon={<Package className="h-4 w-4" />}
-                title="Basic Information"
-                subtitle="Core details about your product."
-                missing={reviewMissing[1]}
-                readOnly={mode === "view"}
-                onEdit={() => goToEditStep(1)}
-              />
-              <div className="grid gap-x-10 gap-y-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                <div className="min-w-0">
-                  <ReviewRow label="Product Name">{name.trim() || <ReviewMissing />}</ReviewRow>
-                  <ReviewRow label="Category">
-                    {categories.find((c) => c.id === categoryId)?.name || <ReviewMissing />}
-                  </ReviewRow>
-                  <ReviewRow label="Product ID">
-                    <span className="font-mono text-sm font-bold text-[#4A1D1F]">{displayProductId || "Generated on first save"}</span>
-                  </ReviewRow>
-                  <ReviewRow label="Product Slug">{slug.trim() || <ReviewMissing />}</ReviewRow>
-                  <ReviewRow label="Spice Level">
-                    {spiceLevel ? <span className="capitalize">{spiceLevel.replace(/_/g, " ")}</span> : <ReviewMissing />}
-                  </ReviewRow>
-                </div>
-                <div className="min-w-0">
-                  <ReviewRow label="Food Type">
-                    {foodType === "veg" ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800">
-                        <VegLeafIcon className="h-4 w-4 shrink-0" />
-                        Vegetarian
-                      </span>
-                    ) : foodType === "non-veg" ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-800">
-                        <NonVegDrumstickIcon className="h-4 w-4 shrink-0" />
-                        Non-Vegetarian
-                      </span>
-                    ) : (
-                      <ReviewMissing />
+          </div>
+          {/* Step 5 — Review & Publish (also used as the read-only product view) */}
+          {mode === "view" || currentStep === 5 ? (
+            <div className="md:col-span-3 space-y-4">
+              {reviewMissingCount > 0 ? (
+                <div className="flex items-start gap-3 rounded-xl border border-[#F0C7C7] bg-[#FFF5F5] px-4 py-3">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[#B44444]" />
+                  <div className="space-y-1 text-sm text-[#8A2E2E]">
+                    <p className="font-semibold">
+                      {reviewMissingCount} detail{reviewMissingCount === 1 ? "" : "s"} still missing. Review the list below. Required fields are checked on their own steps.
+                    </p>
+                    {([1, 2, 3, 4] as const).map((stepId) =>
+                      reviewMissing[stepId].length ? (
+                        <p key={stepId} className="text-xs">
+                          <button
+                            type="button"
+                            onClick={() => goToEditStep(stepId)}
+                            className="font-semibold underline underline-offset-2"
+                          >
+                            Step {stepId}
+                          </button>
+                          : {reviewMissing[stepId].join(", ")}
+                        </p>
+                      ) : null,
                     )}
-                  </ReviewRow>
-                  <ReviewRow label="Variant Type">
-                    {variantMode === "multiple" ? "Multi Variant" : "Single Variant"}
-                  </ReviewRow>
-                  <ReviewRow label="Created On">{createdAt ? formatUpdatedAt(createdAt) : "—"}</ReviewRow>
-                  <ReviewRow label="Status">
-                    <span className="inline-flex items-center gap-1.5">
-                      <span className={`h-2 w-2 rounded-full ${isActive ? "bg-green-500" : "bg-gray-400"}`} />
-                      {isActive ? "Active" : "Inactive"}
-                      <span className="text-[#8A8A82]">·</span>
-                      <span className="capitalize text-[#646464]">{status}</span>
-                    </span>
-                  </ReviewRow>
-                  {preparationType ? (
-                    <ReviewRow label="Preparation">
-                      <span className="capitalize">{preparationType.replace(/_/g, " ")}</span>
+                  </div>
+                </div>
+              ) : mode === "view" ? null : (
+                <div className="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-medium text-green-800">
+                  <Check className="h-4 w-4 shrink-0" />
+                  All required details are filled. Review below and publish when ready.
+                </div>
+              )}
+
+              {/* Basic Information */}
+              <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+                <ReviewSectionHeader
+                  icon={<Package className="h-4 w-4" />}
+                  title="Basic Information"
+                  subtitle="Core details about your product."
+                  missing={reviewMissing[1]}
+                  readOnly={mode === "view"}
+                  onEdit={() => goToEditStep(1)}
+                />
+                <div className="grid gap-x-10 gap-y-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <div className="min-w-0">
+                    <ReviewRow label="Food Type">
+                      {foodType === "veg" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-800">
+                          <VegLeafIcon className="h-4 w-4 shrink-0" />
+                          Vegetarian
+                        </span>
+                      ) : foodType === "non-veg" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full border border-orange-200 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-800">
+                          <NonVegDrumstickIcon className="h-4 w-4 shrink-0" />
+                          Non-Vegetarian
+                        </span>
+                      ) : (
+                        <ReviewMissing />
+                      )}
                     </ReviewRow>
-                  ) : null}
+                    <ReviewRow label="Product Name">{name.trim() || <ReviewMissing />}</ReviewRow>
+                    <ReviewRow label="Product ID">
+                      <span className="font-mono text-sm font-bold text-[#4A1D1F]">{displayProductId || "Generated on first save"}</span>
+                    </ReviewRow>
+                    <ReviewRow label="Product Slug">{slug.trim() || <ReviewMissing />}</ReviewRow>
+                    <ReviewRow label="Spice Level">
+                      {spiceLevel ? <span className="capitalize">{spiceLevel.replace(/_/g, " ")}</span> : <ReviewMissing />}
+                    </ReviewRow>
+                  </div>
+                  <div className="min-w-0">
+                    <ReviewRow label="Category / Categories">
+                      {(() => {
+                        const activeIds = categoryIds.length ? categoryIds : (categoryId ? [categoryId] : [])
+                        const names = activeIds
+                          .map((id) => categories.find((c) => String(c.id) === String(id))?.name)
+                          .filter(Boolean)
+                        if (names.length === 0) return <ReviewMissing />
+                        return (
+                          <div className="flex flex-wrap gap-1.5">
+                            {names.map((n) => (
+                              <span
+                                key={n}
+                                className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-[#FFF5EB] text-[#7B3010] border border-[#F5D8C3] capitalize"
+                              >
+                                {n}
+                              </span>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </ReviewRow>
+                    <ReviewRow label="Variant Type">
+                      {variantMode === "multiple" ? "Multi Variant" : "Single Variant"}
+                    </ReviewRow>
+                    <ReviewRow label="Created On">{createdAt ? formatUpdatedAt(createdAt) : "—"}</ReviewRow>
+                    <ReviewRow label="Status">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={`h-2 w-2 rounded-full ${isActive ? "bg-green-500" : "bg-gray-400"}`} />
+                        {isActive ? "Active" : "Inactive"}
+                        <span className="text-[#8A8A82]">·</span>
+                        <span className="capitalize text-[#646464]">{status}</span>
+                      </span>
+                    </ReviewRow>
+                    {preparationType ? (
+                      <ReviewRow label="Preparation">
+                        <span className="capitalize">{preparationType.replace(/_/g, " ")}</span>
+                      </ReviewRow>
+                    ) : null}
+                  </div>
                 </div>
               </div>
-            </div>
 
-            {/* Media & Content */}
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <ReviewSectionHeader
-                icon={<ImageIcon className="h-4 w-4" />}
-                title="Media & Content"
-                subtitle="Product images and description."
-                missing={reviewMissing[2]}
-                readOnly={mode === "view"}
-                onEdit={() => goToEditStep(2)}
-              />
-              {(() => {
-                const mediaUrls = uniq([...thumbnailUrls, ...imageUrls].filter(Boolean))
-                const preview = mediaUrls.slice(0, 4)
-                const extra = mediaUrls.length - preview.length
-                const thumbCount = thumbnailUrls.filter(Boolean).length
-                const galleryVideos = imageUrls.filter((u) => isVideoUrl(u)).length
-                const galleryImages = imageUrls.length - galleryVideos
-                const selectedFeatures = featureCatalog.filter((f) => selectedFeatureDefinitionIds.includes(f.id))
-                const filledSections = sections.filter((s) => s.title.trim() || !isEmptyRichText(s.description))
-                return (
-                  <div className="space-y-4">
-                    <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
-                      <div className="flex flex-wrap gap-2">
-                        {preview.length ? (
-                          preview.map((url, idx) => (
+              {/* Media & Content */}
+              <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+                <ReviewSectionHeader
+                  icon={<ImageIcon className="h-4 w-4" />}
+                  title="Media & Content"
+                  subtitle="Product images and description."
+                  missing={reviewMissing[2]}
+                  readOnly={mode === "view"}
+                  onEdit={() => goToEditStep(2)}
+                />
+                {(() => {
+                  const mediaUrls = uniq([...thumbnailUrls, ...imageUrls].filter(Boolean))
+                  const preview = mediaUrls.slice(0, 4)
+                  const extra = mediaUrls.length - preview.length
+                  const thumbCount = thumbnailUrls.filter(Boolean).length
+                  const galleryVideos = imageUrls.filter((u) => isVideoUrl(u)).length
+                  const galleryImages = imageUrls.length - galleryVideos
+                  const selectedFeatures = featureCatalog.filter((f) => selectedFeatureDefinitionIds.includes(f.id))
+                  const filledSections = sections.filter((s) => s.title.trim() || !isEmptyRichText(s.description))
+                  return (
+                    <div className="space-y-4">
+                      <div className="grid gap-4 lg:grid-cols-[auto_1fr] lg:items-center">
+                        <div className="flex flex-wrap gap-2">
+                          {preview.length ? (
+                            preview.map((url, idx) => (
+                              <button
+                                type="button"
+                                key={url}
+                                onClick={() => setMediaViewerIndex(idx)}
+                                title="View media"
+                                className="relative h-20 w-20 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] transition hover:ring-2 hover:ring-[#7B3010]/40"
+                              >
+                                {isVideoUrl(url) ? (
+                                  <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
+                                    <Play className="h-5 w-5" />
+                                  </div>
+                                ) : (
+                                  // eslint-disable-next-line @next/next/no-img-element
+                                  <img src={url} alt="" className="h-full w-full object-cover" />
+                                )}
+                              </button>
+                            ))
+                          ) : (
+                            <p className="text-sm italic text-[#B44444]">No media uploaded yet.</p>
+                          )}
+                          {extra > 0 ? (
                             <button
                               type="button"
-                              key={url}
-                              onClick={() => setMediaViewerIndex(idx)}
-                              title="View media"
-                              className="relative h-20 w-20 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] transition hover:ring-2 hover:ring-[#7B3010]/40"
+                              onClick={() => setMediaViewerIndex(preview.length)}
+                              title="View more media"
+                              className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border border-[#E8DCC8] bg-[#F5F1E6] text-[#4A1D1F] transition hover:bg-[#FFEFD6]"
                             >
-                              {isVideoUrl(url) ? (
-                                <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
-                                  <Play className="h-5 w-5" />
-                                </div>
-                              ) : (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img src={url} alt="" className="h-full w-full object-cover" />
-                              )}
+                              <span className="text-base font-semibold">+{extra}</span>
+                              <span className="text-[10px]">View more</span>
                             </button>
-                          ))
-                        ) : (
-                          <p className="text-sm italic text-[#B44444]">No media uploaded yet.</p>
-                        )}
-                        {extra > 0 ? (
-                          <button
-                            type="button"
-                            onClick={() => setMediaViewerIndex(preview.length)}
-                            title="View more media"
-                            className="flex h-20 w-20 flex-col items-center justify-center rounded-lg border border-[#E8DCC8] bg-[#F5F1E6] text-[#4A1D1F] transition hover:bg-[#FFEFD6]"
-                          >
-                            <span className="text-base font-semibold">+{extra}</span>
-                            <span className="text-[10px]">View more</span>
-                          </button>
-                        ) : null}
-                        {mediaUrls.length ? (
-                          <button
-                            type="button"
-                            onClick={() => setMediaViewerIndex(0)}
-                            className="inline-flex h-8 items-center gap-1.5 self-center rounded-full border border-[#7B3010] px-3 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA]"
-                          >
-                            <Eye className="h-3.5 w-3.5" />
-                            View all ({mediaUrls.length})
-                          </button>
-                        ) : null}
-                      </div>
-                      <Dialog
-                        open={mediaViewerIndex !== null && mediaUrls.length > 0}
-                        onOpenChange={(open) => {
-                          if (!open) setMediaViewerIndex(null)
-                        }}
-                      >
-                        <DialogContent className="max-w-4xl">
-                          {(() => {
-                            const total = mediaUrls.length
-                            const current = Math.min(Math.max(mediaViewerIndex ?? 0, 0), Math.max(total - 1, 0))
-                            const url = mediaUrls[current]
-                            if (!url) return null
-                            const isThumb = thumbnailUrls.includes(url)
-                            const step = (delta: number) => setMediaViewerIndex((current + delta + total) % total)
-                            return (
-                              <div className="space-y-3">
-                                <DialogHeader>
-                                  <DialogTitle className="text-[#4A1D1F]">Product Media</DialogTitle>
-                                  <DialogDescription>
-                                    {current + 1} of {total} · {isThumb ? "Thumbnail" : "Gallery"} {isVideoUrl(url) ? "video" : "image"}
-                                  </DialogDescription>
-                                </DialogHeader>
-                                <div className="relative flex h-[55vh] items-center justify-center overflow-hidden rounded-xl bg-[#FFFBF3]">
-                                  {isVideoUrl(url) ? (
-                                    <video key={url} src={url} controls className="max-h-full max-w-full" />
-                                  ) : (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={url} alt="" className="max-h-full max-w-full object-contain" />
-                                  )}
-                                  {total > 1 ? (
-                                    <>
+                          ) : null}
+                          {mediaUrls.length ? (
+                            <button
+                              type="button"
+                              onClick={() => setMediaViewerIndex(0)}
+                              className="inline-flex h-8 items-center gap-1.5 self-center rounded-full border border-[#7B3010] px-3 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA]"
+                            >
+                              <Eye className="h-3.5 w-3.5" />
+                              View all ({mediaUrls.length})
+                            </button>
+                          ) : null}
+                        </div>
+                        <Dialog
+                          open={mediaViewerIndex !== null && mediaUrls.length > 0}
+                          onOpenChange={(open) => {
+                            if (!open) setMediaViewerIndex(null)
+                          }}
+                        >
+                          <DialogContent className="max-w-4xl">
+                            {(() => {
+                              const total = mediaUrls.length
+                              const current = Math.min(Math.max(mediaViewerIndex ?? 0, 0), Math.max(total - 1, 0))
+                              const url = mediaUrls[current]
+                              if (!url) return null
+                              const isThumb = thumbnailUrls.includes(url)
+                              const step = (delta: number) => setMediaViewerIndex((current + delta + total) % total)
+                              return (
+                                <div className="space-y-3">
+                                  <DialogHeader>
+                                    <DialogTitle className="text-[#4A1D1F]">Product Media</DialogTitle>
+                                    <DialogDescription>
+                                      {current + 1} of {total} · {isThumb ? "Thumbnail" : "Gallery"} {isVideoUrl(url) ? "video" : "image"}
+                                    </DialogDescription>
+                                  </DialogHeader>
+                                  <div className="relative flex h-[55vh] items-center justify-center overflow-hidden rounded-xl bg-[#FFFBF3]">
+                                    {isVideoUrl(url) ? (
+                                      <video key={url} src={url} controls className="max-h-full max-w-full" />
+                                    ) : (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={url} alt="" className="max-h-full max-w-full object-contain" />
+                                    )}
+                                    {total > 1 ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => step(-1)}
+                                          aria-label="Previous media"
+                                          className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
+                                        >
+                                          <ChevronLeft className="h-5 w-5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => step(1)}
+                                          aria-label="Next media"
+                                          className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
+                                        >
+                                          <ChevronRight className="h-5 w-5" />
+                                        </button>
+                                      </>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex gap-2 overflow-x-auto pb-1">
+                                    {mediaUrls.map((thumbUrl, idx) => (
                                       <button
                                         type="button"
-                                        onClick={() => step(-1)}
-                                        aria-label="Previous media"
-                                        className="absolute left-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
+                                        key={thumbUrl}
+                                        onClick={() => setMediaViewerIndex(idx)}
+                                        className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border-2 ${idx === current ? "border-[#7B3010]" : "border-transparent opacity-70 hover:opacity-100"
+                                          }`}
                                       >
-                                        <ChevronLeft className="h-5 w-5" />
+                                        {isVideoUrl(thumbUrl) ? (
+                                          <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
+                                            <Play className="h-4 w-4" />
+                                          </div>
+                                        ) : (
+                                          // eslint-disable-next-line @next/next/no-img-element
+                                          <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
+                                        )}
                                       </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => step(1)}
-                                        aria-label="Next media"
-                                        className="absolute right-2 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 text-[#4A1D1F] shadow hover:bg-white"
-                                      >
-                                        <ChevronRight className="h-5 w-5" />
-                                      </button>
-                                    </>
-                                  ) : null}
+                                    ))}
+                                  </div>
                                 </div>
-                                <div className="flex gap-2 overflow-x-auto pb-1">
-                                  {mediaUrls.map((thumbUrl, idx) => (
-                                    <button
-                                      type="button"
-                                      key={thumbUrl}
-                                      onClick={() => setMediaViewerIndex(idx)}
-                                      className={`relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border-2 ${
-                                        idx === current ? "border-[#7B3010]" : "border-transparent opacity-70 hover:opacity-100"
-                                      }`}
-                                    >
-                                      {isVideoUrl(thumbUrl) ? (
-                                        <div className="flex h-full w-full items-center justify-center bg-[#2A1810]/10 text-[#7B3010]">
-                                          <Play className="h-4 w-4" />
-                                        </div>
-                                      ) : (
-                                        // eslint-disable-next-line @next/next/no-img-element
-                                        <img src={thumbUrl} alt="" className="h-full w-full object-cover" />
-                                      )}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )
-                          })()}
-                        </DialogContent>
-                      </Dialog>
-                      <div>
-                        <ReviewRow label="Thumbnail Images">
-                          {thumbCount ? `${thumbCount} image${thumbCount === 1 ? "" : "s"}` : <ReviewMissing />}
-                        </ReviewRow>
-                        <ReviewRow label="Gallery Images / Video">
-                          {imageUrls.length
-                            ? `${imageUrls.length} item${imageUrls.length === 1 ? "" : "s"} (${galleryImages} image${galleryImages === 1 ? "" : "s"}${galleryVideos ? `, ${galleryVideos} video${galleryVideos === 1 ? "" : "s"}` : ""})`
-                            : "—"}
-                        </ReviewRow>
+                              )
+                            })()}
+                          </DialogContent>
+                        </Dialog>
+                        <div>
+                          <ReviewRow label="Thumbnail Images">
+                            {thumbCount ? `${thumbCount} image${thumbCount === 1 ? "" : "s"}` : <ReviewMissing />}
+                          </ReviewRow>
+                          <ReviewRow label="Gallery Images / Video">
+                            {imageUrls.length
+                              ? `${imageUrls.length} item${imageUrls.length === 1 ? "" : "s"} (${galleryImages} image${galleryImages === 1 ? "" : "s"}${galleryVideos ? `, ${galleryVideos} video${galleryVideos === 1 ? "" : "s"}` : ""})`
+                              : "—"}
+                          </ReviewRow>
+                        </div>
                       </div>
-                    </div>
-                    <div className="grid gap-x-10 border-t border-[#F0E8DC] pt-3 md:grid-cols-2">
-                      <div>
-                        <ReviewRow label="Description">
-                          {isEmptyRichText(description) ? (
-                            <ReviewMissing />
-                          ) : (
-                            <div
-                              className="prose prose-sm max-w-none font-normal text-[#2A1810] [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-1 [&_ul]:list-disc [&_ul]:pl-5"
-                              dangerouslySetInnerHTML={{ __html: description }}
-                            />
-                          )}
-                        </ReviewRow>
-                      </div>
-                      <div>
-                        <ReviewRow label="Features">
-                          {selectedFeatures.length ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {selectedFeatures.map((f) => (
-                                <span
-                                  key={f.id}
-                                  className="inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-[#FFFBF3] px-2 py-0.5 text-xs"
-                                >
-                                  {f.icon ? (
-                                    // eslint-disable-next-line @next/next/no-img-element
-                                    <img src={f.icon} alt="" className="h-4 w-4 rounded object-cover" />
-                                  ) : null}
-                                  {f.title}
-                                </span>
-                              ))}
-                            </div>
-                          ) : (
-                            <ReviewMissing />
-                          )}
-                        </ReviewRow>
-                        <ReviewRow label="Detail Sections">
-                          {filledSections.length ? (
-                            <Accordion type="single" collapsible className="mt-1 space-y-2 border-0">
-                              {filledSections.map((s, idx) => {
-                                const itemVal = `sec-${idx}`
-                                const hasDesc = !isEmptyRichText(s.description)
-                                return (
-                                  <AccordionItem
-                                    key={`${s.id ?? "sec"}-${idx}`}
-                                    value={itemVal}
-                                    className="rounded-xl border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-1 text-sm shadow-2xs"
+                      <div className="grid gap-x-10 border-t border-[#F0E8DC] pt-3 md:grid-cols-2">
+                        <div>
+                          <ReviewRow label="Description">
+                            {isEmptyRichText(description) ? (
+                              <ReviewMissing />
+                            ) : (
+                              <div
+                                className="prose prose-sm max-w-none font-normal text-[#2A1810] [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:mb-1 [&_ul]:list-disc [&_ul]:pl-5"
+                                dangerouslySetInnerHTML={{ __html: description }}
+                              />
+                            )}
+                          </ReviewRow>
+                        </div>
+                        <div>
+                          <ReviewRow label="Features">
+                            {selectedFeatures.length ? (
+                              <div className="flex flex-wrap gap-1.5">
+                                {selectedFeatures.map((f) => (
+                                  <span
+                                    key={f.id}
+                                    className="inline-flex items-center gap-1.5 rounded-full border border-[#E8DCC8] bg-[#FFFBF3] px-2 py-0.5 text-xs"
                                   >
-                                    <AccordionTrigger className="py-1.5 text-xs font-semibold text-[#2A1810] hover:no-underline">
-                                      <div className="flex items-center gap-1.5 text-left">
-                                        <span>{idx + 1}.</span>
-                                        <span>{s.title.trim() || "Untitled section"}</span>
-                                        {!s.isActive ? (
-                                          <span className="ml-1 rounded bg-[#F0F0EC] px-1.5 py-0.5 text-[10px] font-normal text-[#8A8A82]">
-                                            hidden
-                                          </span>
-                                        ) : null}
-                                      </div>
-                                    </AccordionTrigger>
-                                    <AccordionContent className="border-t border-[#EFE3D5] pb-2.5 pt-2 text-xs text-[#4A1D1F]">
-                                      {hasDesc ? (
-                                        <div
-                                          className="prose prose-xs max-w-none font-normal leading-relaxed text-[#2A1810] [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:mb-1 [&_ul]:list-disc [&_ul]:pl-4"
-                                          dangerouslySetInnerHTML={{ __html: s.description }}
-                                        />
-                                      ) : (
-                                        <span className="italic text-[#8A8A82]">No description provided</span>
-                                      )}
-                                    </AccordionContent>
-                                  </AccordionItem>
-                                )
-                              })}
-                            </Accordion>
-                          ) : (
-                            "—"
-                          )}
-                        </ReviewRow>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })()}
-            </div>
-
-            {/* Pricing & Inventory */}
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <ReviewSectionHeader
-                icon={<Tag className="h-4 w-4" />}
-                title="Pricing & Inventory"
-                subtitle="Variants, pricing and stock details."
-                missing={reviewMissing[3]}
-                readOnly={mode === "view"}
-                onEdit={() => goToEditStep(3)}
-              />
-              <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
-                <table className="min-w-[980px] w-full border-collapse text-center text-sm">
-                  <thead>
-                    <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[11px] font-semibold text-[#4A1D1F]">
-                      <th className="px-2 py-2.5">#</th>
-                      <th className="px-2 py-2.5">Weight / Size</th>
-                      <th className="px-2 py-2.5">Unit</th>
-                      <th className="px-2 py-2.5">MRP (₹)</th>
-                      <th className="px-2 py-2.5">Discount %</th>
-                      <th className="px-2 py-2.5">Sale Price (₹)</th>
-                      <th className="px-2 py-2.5">Stock</th>
-                      <th className="px-2 py-2.5">SKU</th>
-                      <th className="px-2 py-2.5">HSN Code</th>
-                      <th className="px-2 py-2.5">EAN / GTIN / Barcode</th>
-                      <th className="px-2 py-2.5">Default</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(variantMode === "single" ? variants.slice(0, 1) : variants).map((variant, idx) => {
-                      const weightParts = parseWeight(variant.weight)
-                      const discNum = Number(variant.discountPercent || 0)
-                      const salePrice = variantSalePrice(variant, discountEnabled)
-                      const missingCell = <span className="italic text-[#B44444]">—</span>
-                      return (
-                        <tr key={`${variant.id ?? "rev"}-${idx}`} className="border-b border-[#F0E8DC] last:border-b-0">
-                          <td className="px-2 py-2.5 text-xs text-[#646464]">{idx + 1}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.value || missingCell}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.unit || "g"}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{Number(variant.mrp) > 0 ? variant.mrp : missingCell}</td>
-                          <td className="px-2 py-2.5">
-                            {discNum > 0 ? (
-                              <span
-                                title={discountEnabled ? undefined : "Discount is turned off — not applied"}
-                                className={`rounded px-2 py-0.5 text-xs font-semibold ${
-                                  discountEnabled ? "bg-[#E8F5E9] text-[#2E7D32]" : "bg-[#F0F0EC] text-[#8A8A82] line-through"
-                                }`}
-                              >
-                                {discNum}%
-                              </span>
+                                    {f.icon ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={f.icon} alt="" className="h-4 w-4 rounded object-cover" />
+                                    ) : null}
+                                    {f.title}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <ReviewMissing />
+                            )}
+                          </ReviewRow>
+                          <ReviewRow label="Detail Sections">
+                            {filledSections.length ? (
+                              <Accordion type="single" collapsible className="mt-1 space-y-2 border-0">
+                                {filledSections.map((s, idx) => {
+                                  const itemVal = `sec-${idx}`
+                                  const hasDesc = !isEmptyRichText(s.description)
+                                  return (
+                                    <AccordionItem
+                                      key={`${s.id ?? "sec"}-${idx}`}
+                                      value={itemVal}
+                                      className="rounded-xl border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-1 text-sm shadow-2xs"
+                                    >
+                                      <AccordionTrigger className="py-1.5 text-xs font-semibold text-[#2A1810] hover:no-underline">
+                                        <div className="flex items-center gap-1.5 text-left">
+                                          <span>{idx + 1}.</span>
+                                          <span>{s.title.trim() || "Untitled section"}</span>
+                                          {!s.isActive ? (
+                                            <span className="ml-1 rounded bg-[#F0F0EC] px-1.5 py-0.5 text-[10px] font-normal text-[#8A8A82]">
+                                              hidden
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      </AccordionTrigger>
+                                      <AccordionContent className="border-t border-[#EFE3D5] pb-2.5 pt-2 text-xs text-[#4A1D1F]">
+                                        {hasDesc ? (
+                                          <div
+                                            className="prose prose-xs max-w-none font-normal leading-relaxed text-[#2A1810] [&_ol]:list-decimal [&_ol]:pl-4 [&_p]:mb-1 [&_ul]:list-disc [&_ul]:pl-4"
+                                            dangerouslySetInnerHTML={{ __html: s.description }}
+                                          />
+                                        ) : (
+                                          <span className="italic text-[#8A8A82]">No description provided</span>
+                                        )}
+                                      </AccordionContent>
+                                    </AccordionItem>
+                                  )
+                                })}
+                              </Accordion>
                             ) : (
                               "—"
                             )}
-                          </td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{salePrice > 0 ? salePrice.toFixed(2) : missingCell}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{variant.stock || "0"}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{variant.sku.trim() || missingCell}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{variant.hsnCode || "—"}</td>
-                          <td className="px-2 py-2.5 text-[#2A1810]">{variant.eanCode || "—"}</td>
-                          <td className="px-2 py-2.5">
-                            <span
-                              className={`inline-flex h-4 w-4 items-center justify-center rounded-full border-2 ${
-                                variant.isDefault || (variantMode === "single" && idx === 0)
+                          </ReviewRow>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+
+              {/* Pricing & Inventory */}
+              <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+                <ReviewSectionHeader
+                  icon={<Tag className="h-4 w-4" />}
+                  title="Pricing & Inventory"
+                  subtitle="Variants, pricing and stock details."
+                  missing={reviewMissing[3]}
+                  readOnly={mode === "view"}
+                  onEdit={() => goToEditStep(3)}
+                />
+                <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
+                  <table className="min-w-[980px] w-full border-collapse text-center text-sm">
+                    <thead>
+                      <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[11px] font-semibold text-[#4A1D1F]">
+                        <th className="px-2 py-2.5">#</th>
+                        <th className="px-2 py-2.5">Weight / Size</th>
+                        <th className="px-2 py-2.5">Unit</th>
+                        <th className="px-2 py-2.5">MRP (₹)</th>
+                        <th className="px-2 py-2.5">Discount %</th>
+                        <th className="px-2 py-2.5">Sale Price (₹)</th>
+                        <th className="px-2 py-2.5">Stock</th>
+                        <th className="px-2 py-2.5">SKU</th>
+                        <th className="px-2 py-2.5">HSN Code</th>
+                        <th className="px-2 py-2.5">EAN / GTIN / Barcode</th>
+                        <th className="px-2 py-2.5">Default</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(variantMode === "single" ? variants.slice(0, 1) : variants).map((variant, idx) => {
+                        const weightParts = parseWeight(variant.weight)
+                        const discNum = Number(variant.discountPercent || 0)
+                        const salePrice = variantSalePrice(variant, discountEnabled)
+                        const missingCell = <span className="italic text-[#B44444]">—</span>
+                        return (
+                          <tr key={`${variant.id ?? "rev"}-${idx}`} className="border-b border-[#F0E8DC] last:border-b-0">
+                            <td className="px-2 py-2.5 text-xs text-[#646464]">{idx + 1}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.value || missingCell}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{weightParts.unit || "g"}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{Number(variant.mrp) > 0 ? variant.mrp : missingCell}</td>
+                            <td className="px-2 py-2.5">
+                              {discNum > 0 ? (
+                                <span
+                                  title={discountEnabled ? undefined : "Discount is turned off — not applied"}
+                                  className={`rounded px-2 py-0.5 text-xs font-semibold ${discountEnabled ? "bg-[#E8F5E9] text-[#2E7D32]" : "bg-[#F0F0EC] text-[#8A8A82] line-through"
+                                    }`}
+                                >
+                                  {discNum}%
+                                </span>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{salePrice > 0 ? salePrice.toFixed(2) : missingCell}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{variant.stock || "0"}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{variant.sku.trim() || missingCell}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{variant.hsnCode || "—"}</td>
+                            <td className="px-2 py-2.5 text-[#2A1810]">{variant.eanCode || "—"}</td>
+                            <td className="px-2 py-2.5">
+                              <span
+                                className={`inline-flex h-4 w-4 items-center justify-center rounded-full border-2 ${variant.isDefault || (variantMode === "single" && idx === 0)
                                   ? "border-[#7B3010]"
                                   : "border-[#D9D9D1]"
-                              }`}
-                            >
-                              {variant.isDefault || (variantMode === "single" && idx === 0) ? (
-                                <span className="h-2 w-2 rounded-full bg-[#7B3010]" />
-                              ) : null}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl bg-[#FFF1E8] px-4 py-3 text-xs text-[#4A1D1F]">
-                <span className="inline-flex items-center gap-2 font-semibold text-[#7B3010]">
-                  <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#7B3010]/10">
-                    <Percent className="h-3.5 w-3.5" />
-                  </span>
-                  Product Discount
-                </span>
-                <span className="inline-flex items-center gap-2">
-                  Enable Discount
-                  <span className={`relative inline-flex h-5 w-9 rounded-full ${discountEnabled ? "bg-[#7B3010]" : "bg-[#D9D9D1]"}`}>
-                    <span
-                      className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow ${discountEnabled ? "right-0.5" : "left-0.5"}`}
-                    />
-                  </span>
-                  <span className="font-semibold">{discountEnabled ? "ON" : "OFF"}</span>
-                </span>
-                <span className="h-4 w-px bg-[#E8DCC8]" />
-                <span>
-                  Website price{" "}
-                  <strong className="ml-2 font-semibold">
-                    {discountEnabled ? "Sale price (MRP struck through)" : "MRP (no discount)"}
-                  </strong>
-                </span>
-              </div>
-            </div>
-
-            {/* SEO & Channels */}
-            <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
-              <ReviewSectionHeader
-                icon={<Search className="h-4 w-4" />}
-                title="SEO & Channels"
-                subtitle="Search engine optimization and external links."
-                missing={reviewMissing[4]}
-                readOnly={mode === "view"}
-                onEdit={() => goToEditStep(4)}
-              />
-              <div className="grid gap-6 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-                <div className="min-w-0 space-y-1">
-                  <ReviewRow label="Meta Title">{metaTitle.trim() || <span className="font-normal text-[#8A8A82]">Not added</span>}</ReviewRow>
-                  <ReviewRow label="Meta Description">
-                    {metaDescription.trim() ? (
-                      <span className="font-normal leading-relaxed">{metaDescription}</span>
-                    ) : (
-                      <span className="font-normal text-[#8A8A82]">Not added</span>
-                    )}
-                  </ReviewRow>
-                  <ReviewRow label="Product URL (Slug)">
-                    <span className="break-all font-normal">
-                      https://www.ziply5.com/products/{slug || "your-product-slug"}
-                    </span>
-                  </ReviewRow>
+                                  }`}
+                              >
+                                {variant.isDefault || (variantMode === "single" && idx === 0) ? (
+                                  <span className="h-2 w-2 rounded-full bg-[#7B3010]" />
+                                ) : null}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
                 </div>
-                <div className="min-w-0">
-                  <p className="mb-2 text-xs font-semibold text-[#4A1D1F]">External Marketplace Links</p>
-                  <div className="flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-2 text-sm">
-                    <span className="w-24 shrink-0 font-medium text-[#2A1810]">Amazon Link</span>
-                    <span className="shrink-0 text-[#8A8A82]">:</span>
-                    <div className="min-w-0 flex-1 truncate">
-                      {amazonLink.trim() ? (
-                        <a
-                          href={amazonLink}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="block truncate text-[#7B3010] hover:underline"
-                          title={amazonLink}
+
+                {/* Packs Management Section */}
+                <div className="mt-5 space-y-3 border-t border-[#F0E8DC] pt-4">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#7B3010]/10 text-[#7B3010]">
+                          <Boxes className="h-3.5 w-3.5" />
+                        </span>
+                        <p className="text-xs font-semibold uppercase tracking-wider text-[#4A1D1F]">
+                          Pack&apos;s Management
+                        </p>
+                        <span className="rounded-full bg-[#FFF7EA] border border-[#E8DCC8] px-2 py-0.5 text-[10px] font-bold text-[#7B3010]">
+                          {packs.length} {packs.length === 1 ? "Pack" : "Packs"}
+                        </span>
+                        {packs.length > 0 && (
+                          <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
+                            {packs.filter((p) => p.isActive).length} Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-[#7A7A72]">
+                        Multi-pack bundle configurations, per-unit economics, and customer savings.
+                      </p>
+                    </div>
+                    {mode === "view" && productId ? (
+                      <Link
+                        href={`${basePath}/${productId}/edit?step=3`}
+                        className="inline-flex items-center gap-1.5 shrink-0 rounded-full border border-[#7B3010] bg-white px-3.5 py-1.5 text-[11px] font-semibold uppercase text-[#7B3010] hover:bg-[#FFF7EA] transition shadow-xs"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Update in Edit Page
+                      </Link>
+                    ) : null}
+                  </div>
+
+                  {packs.length === 0 ? (
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-dashed border-[#E8DCC8] bg-[#FFFDF9] px-4 py-3.5 text-xs text-[#7A7A72]">
+                      <div className="flex items-center gap-2.5">
+                        <PackagePlus className="h-4 w-4 text-[#7B3010] shrink-0" />
+                        <span>No multi-pack bundles configured for this product yet.</span>
+                      </div>
+                      {mode === "view" && productId ? (
+                        <Link
+                          href={`${basePath}/${productId}/edit?step=3`}
+                          className="inline-flex items-center gap-1 rounded-full bg-[#7B3010] px-3.5 py-1 text-[11px] font-semibold uppercase text-white hover:bg-[#6A280D] transition shadow-xs shrink-0"
                         >
-                          {amazonLink}
-                        </a>
+                          + Configure Packs
+                        </Link>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <>
+                      {/* Quick Analytical Summary Strip */}
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <div className="rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A7A72]">Total Bundles</p>
+                          <p className="mt-0.5 text-sm font-bold text-[#4A1D1F]">{packs.length}</p>
+                        </div>
+                        <div className="rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A7A72]">Active Packs</p>
+                          <p className="mt-0.5 text-sm font-bold text-emerald-800">
+                            {packs.filter((p) => p.isActive).length} <span className="text-[10px] font-normal text-[#7A7A72]">/ {packs.length}</span>
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A7A72]">Pack Price Range</p>
+                          <p className="mt-0.5 text-sm font-bold text-[#7B3010]">
+                            {(() => {
+                              const prices = packs.map((p) => Number(p.price || 0)).filter((n) => n > 0)
+                              if (prices.length === 0) return "—"
+                              const min = Math.min(...prices)
+                              const max = Math.max(...prices)
+                              return min === max ? `₹${min.toFixed(2)}` : `₹${min.toFixed(2)} – ₹${max.toFixed(2)}`
+                            })()}
+                          </p>
+                        </div>
+                        <div className="rounded-lg border border-[#E8DCC8] bg-[#FFFBF3] p-2.5">
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-[#7A7A72]">Max Savings</p>
+                          <p className="mt-0.5 text-sm font-bold text-emerald-700">
+                            {(() => {
+                              const discounts = packs.map((p) => {
+                                const m = Number(p.mrp || 0)
+                                const pr = Number(p.price || 0)
+                                if (p.discountPercent != null) return Number(p.discountPercent)
+                                return m > pr && m > 0 ? Math.round(((m - pr) / m) * 100) : 0
+                              })
+                              const maxD = Math.max(0, ...discounts)
+                              return maxD > 0 ? `${maxD}% OFF` : "No discount"
+                            })()}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto rounded-xl border border-[#E8DCC8]">
+                        <table className="min-w-[700px] w-full border-collapse text-center text-sm">
+                          <thead>
+                            <tr className="border-b border-[#E8DCC8] bg-[#FFFBF3] text-[11px] font-semibold text-[#4A1D1F]">
+                              <th className="px-2.5 py-2 text-center w-10">#</th>
+                              <th className="px-2.5 py-2 text-left">Pack Name</th>
+                              <th className="px-2.5 py-2">Variant</th>
+                              <th className="px-2.5 py-2">Quantity</th>
+                              <th className="px-2.5 py-2">MRP (₹)</th>
+                              <th className="px-2.5 py-2">Selling Price (₹)</th>
+                              <th className="px-2.5 py-2">Unit Price</th>
+                              <th className="px-2.5 py-2">Savings / Discount</th>
+                              <th className="px-2.5 py-2">Status</th>
+                              {mode === "view" && <th className="px-2.5 py-2 text-center">Action</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {packs.map((pk, idx) => {
+                              const mrpNum = Number(pk.mrp || 0)
+                              const priceNum = Number(pk.price || 0)
+                              const qty = Number(pk.quantity || 1)
+                              const unitPrice = qty > 0 ? priceNum / qty : priceNum
+                              const diff = mrpNum - priceNum
+                              const disc = pk.discountPercent != null ? Number(pk.discountPercent) : (mrpNum > 0 && diff > 0 ? Math.round((diff / mrpNum) * 100) : 0)
+
+                              return (
+                                <tr key={pk.id || idx} className="border-b border-[#F0E8DC] last:border-b-0 text-xs hover:bg-[#FFFDF9]/60 transition">
+                                  <td className="px-2.5 py-2.5 text-[#646464]">{idx + 1}</td>
+                                  <td className="px-2.5 py-2.5 text-left font-semibold text-[#2A1810]">{pk.name}</td>
+                                  <td className="px-2.5 py-2.5 text-[#4A1D1F] font-medium">{pk.variantWeight || "—"}</td>
+                                  <td className="px-2.5 py-2.5 text-[#2A1810] font-semibold">{qty} units</td>
+                                  <td className="px-2.5 py-2.5 text-[#7A7A72]">
+                                    {mrpNum > 0 ? `₹${mrpNum.toFixed(2)}` : "—"}
+                                  </td>
+                                  <td className="px-2.5 py-2.5 font-bold text-[#7B3010]">
+                                    ₹{priceNum.toFixed(2)}
+                                  </td>
+                                  <td className="px-2.5 py-2.5 text-[#646464]">
+                                    ₹{unitPrice.toFixed(2)} <span className="text-[10px] text-[#8A8A82]">/unit</span>
+                                  </td>
+                                  <td className="px-2.5 py-2.5">
+                                    {disc > 0 ? (
+                                      <span className="inline-flex items-center rounded bg-[#E8F5E9] px-2 py-0.5 text-[10px] font-bold text-[#2E7D32]">
+                                        {diff > 0 ? `Save ₹${Math.round(diff)} (${disc}%)` : `${disc}% OFF`}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[#8A8A82]">—</span>
+                                    )}
+                                  </td>
+                                  <td className="px-2.5 py-2.5">
+                                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${pk.isActive ? "bg-emerald-100 text-emerald-800" : "bg-gray-100 text-gray-600"}`}>
+                                      {pk.isActive ? "Active" : "Inactive"}
+                                    </span>
+                                  </td>
+                                  {mode === "view" && (
+                                    <td className="px-2.5 py-2.5 text-center">
+                                      <Link
+                                        href={`${basePath}/${productId}/edit?step=3`}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#7B3010] hover:underline"
+                                      >
+                                        <Pencil className="h-3 w-3" />
+                                        Edit
+                                      </Link>
+                                    </td>
+                                  )}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl bg-[#FFF1E8] px-4 py-3 text-xs text-[#4A1D1F]">
+                  <span className="inline-flex items-center gap-2 font-semibold text-[#7B3010]">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-md bg-[#7B3010]/10">
+                      <Percent className="h-3.5 w-3.5" />
+                    </span>
+                    Product Discount
+                  </span>
+                  <span className="inline-flex items-center gap-2">
+                    Enable Discount
+                    <span className={`relative inline-flex h-5 w-9 rounded-full ${discountEnabled ? "bg-[#7B3010]" : "bg-[#D9D9D1]"}`}>
+                      <span
+                        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow ${discountEnabled ? "right-0.5" : "left-0.5"}`}
+                      />
+                    </span>
+                    <span className="font-semibold">{discountEnabled ? "ON" : "OFF"}</span>
+                  </span>
+                  <span className="h-4 w-px bg-[#E8DCC8]" />
+                  <span>
+                    Website price{" "}
+                    <strong className="ml-2 font-semibold">
+                      {discountEnabled ? "Sale price (MRP struck through)" : "MRP (no discount)"}
+                    </strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* SEO & Channels */}
+              <div className="rounded-2xl border border-[#E8DCC8] bg-white p-4 shadow-sm">
+                <ReviewSectionHeader
+                  icon={<Search className="h-4 w-4" />}
+                  title="SEO & Channels"
+                  subtitle="Search engine optimization and external links."
+                  missing={reviewMissing[4]}
+                  readOnly={mode === "view"}
+                  onEdit={() => goToEditStep(4)}
+                />
+                <div className="grid gap-6 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+                  <div className="min-w-0 space-y-1">
+                    <ReviewRow label="Meta Title">{metaTitle.trim() || <span className="font-normal text-[#8A8A82]">Not added</span>}</ReviewRow>
+                    <ReviewRow label="Meta Description">
+                      {metaDescription.trim() ? (
+                        <span className="font-normal leading-relaxed">{metaDescription}</span>
                       ) : (
-                        <span className="text-[#8A8A82]">Not added</span>
+                        <span className="font-normal text-[#8A8A82]">Not added</span>
                       )}
+                    </ReviewRow>
+                    <ReviewRow label="Product URL (Slug)">
+                      <span className="break-all font-normal">
+                        https://www.ziply5.com/products/{slug || "your-product-slug"}
+                      </span>
+                    </ReviewRow>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="mb-2 text-xs font-semibold text-[#4A1D1F]">External Marketplace Links</p>
+                    <div className="flex w-full min-w-0 items-center gap-3 overflow-hidden rounded-lg border border-[#E8DCC8] bg-[#FFFBF7] px-3 py-2 text-sm">
+                      <span className="w-24 shrink-0 font-medium text-[#2A1810]">Amazon Link</span>
+                      <span className="shrink-0 text-[#8A8A82]">:</span>
+                      <div className="min-w-0 flex-1 truncate">
+                        {amazonLink.trim() ? (
+                          <a
+                            href={amazonLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block truncate text-[#7B3010] hover:underline"
+                            title={amazonLink}
+                          >
+                            {amazonLink}
+                          </a>
+                        ) : (
+                          <span className="text-[#8A8A82]">Not added</span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {/* Wizard footer */}
-        {mode !== "view" && (
-          <div className="md:col-span-3 flex flex-col gap-3 border-t border-[#E8DCC8] pt-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-3">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={currentStep <= 1}
-                onClick={() => setCurrentStep((prev) => Math.max(1, (prev - 1) as ProductFormStepId) as ProductFormStepId)}
-                className="rounded-full border-[#7B3010] px-4 text-xs font-semibold uppercase text-[#7B3010]"
-              >
-                ← Previous
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon || draftSaveStatus === "saving"}
-                onClick={() => void onSubmit({ preventDefault() {} } as React.FormEvent, "draft")}
-                className={`inline-flex items-center gap-1.5 rounded-full border-[#E8DCC8] px-4 text-xs font-semibold uppercase ${
-                  draftSaveStatus === "saved"
+          {/* Wizard footer */}
+          {mode !== "view" && (
+            <div className="md:col-span-3 flex flex-col gap-3 border-t border-[#E8DCC8] pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={currentStep <= 1}
+                  onClick={() => setCurrentStep((prev) => Math.max(1, (prev - 1) as ProductFormStepId) as ProductFormStepId)}
+                  className="rounded-full border-[#7B3010] px-4 text-xs font-semibold uppercase text-[#7B3010]"
+                >
+                  ← Previous
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon || draftSaveStatus === "saving"}
+                  onClick={() => void onSubmit({ preventDefault() { } } as React.FormEvent, "draft")}
+                  className={`inline-flex items-center gap-1.5 rounded-full border-[#E8DCC8] px-4 text-xs font-semibold uppercase ${draftSaveStatus === "saved"
                     ? "bg-[#E8F5E9] text-[#1B5E20] border-[#A5D6A7]"
                     : "bg-[#FFF7EA] text-[#4A1D1F]"
-                }`}
-              >
-                <Save className="h-3.5 w-3.5" />
-                {draftSaveStatus === "saving" || (saving && status === "draft")
-                  ? "Saving Draft..."
-                  : draftSaveStatus === "saved"
-                    ? "Draft Saved"
-                    : "Save Draft"}
-              </Button>
-              {currentStep < 5 ? (
-                <Button
-                  type="button"
-                  onClick={handleNextStep}
-                  className="rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white"
+                    }`}
                 >
-                  Next Step →
+                  <Save className="h-3.5 w-3.5" />
+                  {draftSaveStatus === "saving" || (saving && status === "draft")
+                    ? "Saving Draft..."
+                    : draftSaveStatus === "saved"
+                      ? "Draft Saved"
+                      : "Save Draft"}
                 </Button>
-              ) : (
-                <Button
-                  type="button"
-                  disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon}
-                  onClick={() => {
-                    void onSubmit({ preventDefault() {} } as React.FormEvent, "published")
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white disabled:opacity-50"
-                >
-                  <Rocket className="h-3.5 w-3.5" />
-                  {saving ? "Publishing..." : "Publish Product"}
-                </Button>
-              )}
+                {currentStep < 5 ? (
+                  <Button
+                    type="button"
+                    onClick={handleNextStep}
+                    className="rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white"
+                  >
+                    Next Step →
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    disabled={saving || uploadingThumbnails || uploadingGallery || uploadingIcon}
+                    onClick={() => {
+                      void onSubmit({ preventDefault() { } } as React.FormEvent, "published")
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-[#7B3010] px-4 text-xs font-semibold uppercase text-white disabled:opacity-50"
+                  >
+                    <Rocket className="h-3.5 w-3.5" />
+                    {saving ? "Publishing..." : "Publish Product"}
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
-        )}
-      </form>
+          )}
+        </form>
       )}
 
       {/* Unsaved Changes Confirmation Modal for Edit Mode */}
@@ -4961,7 +5928,7 @@ export function ProductConsolePage({
               disabled={saving}
               onClick={async () => {
                 try {
-                  await onSubmit({ preventDefault() {} } as React.FormEvent, "draft")
+                  await onSubmit({ preventDefault() { } } as React.FormEvent, "draft")
                   setShowUnsavedEditDialog(false)
                   if (pendingStepAction) {
                     const action = pendingStepAction

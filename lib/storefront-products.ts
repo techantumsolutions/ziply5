@@ -1,3 +1,17 @@
+export type StorefrontPack = {
+  id?: string
+  variantId?: string | null
+  variantWeight?: string | null
+  name: string
+  quantity: number
+  mrp: number
+  price: number
+  discountPercent?: number | null
+  sku?: string | null
+  hsnCode?: string | null
+  isActive?: boolean
+}
+
 export type StorefrontProduct = {
   id: string
   name: string
@@ -23,11 +37,14 @@ export type StorefrontProduct = {
   isBestSeller?: boolean
   tags?: Array<{ tag: { name: string } }>
   category: string
+  categoryName?: string | null
+  categorySlugs?: string[]
   labels: Array<{ label: string; color: string | null }>
   features: Array<{ title: string; icon: string | null }>
   details: Array<{ title: string; content: string }>
   sections: Array<{ id: string; title: string; description: string; sort_order: number; is_active: boolean }>
   variants: Array<{ id: string; name: string; weight: string; price: number; sku: string; stock: number; isDefault: boolean; discountPercent?: number | null; mrp?: number | null; promotion?: { name: string; kind: string } | null }>
+  packs?: StorefrontPack[]
   discountPercent?: number | null
   finalPrice?: number | null
   promotion?: { name: string; kind: string } | null
@@ -65,6 +82,7 @@ type ApiProduct = {
   features?: Array<{ title: string; icon: string | null }>
   details?: Array<{ title: string; content: string }>
   sections?: Array<{ id: string; title: string; description: string; sort_order: number; is_active: boolean }>
+  packs?: any[]
   categories?: Array<{ category: { slug: string } }>
 }
 
@@ -137,7 +155,13 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
     .map((i) => normalizeMediaUrl(i.url))
     .filter((url): url is string => Boolean(url))
 
-  const categorySlug = (() => {
+  const categoryNames = (p.categories ?? [])
+    .map((c: any) => String(c?.name ?? c?.category?.name ?? "").trim())
+    .filter(Boolean)
+  const categorySlugs = (p.categories ?? [])
+    .map((c: any) => String(c?.slug ?? c?.category?.slug ?? "").trim().toLowerCase())
+    .filter(Boolean)
+  const categorySlug = categorySlugs[0] || (() => {
     const c0: any = (p as any).categories?.[0]
     if (!c0) return "all"
     const direct = String(c0.slug ?? "").trim()
@@ -146,6 +170,16 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
     if (nested) return nested
     return "all"
   })()
+  const rawCategoryName = categoryNames[0] || null
+  const formattedSlugName =
+    categorySlug && categorySlug !== "all"
+      ? categorySlug
+          .split("-")
+          .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(" ")
+      : null
+  const categoryName = rawCategoryName || formattedSlugName || null
+
   return {
     id,
     name,
@@ -169,6 +203,8 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
       : (p.weight ?? ""),
     type: isVeg ? "veg" : "non-veg",
     category: categorySlug,
+    categoryName,
+    categorySlugs: categorySlugs.length ? categorySlugs : [categorySlug],
     labels: p.labels ?? [],
     isBestSeller: p.isBestSeller ?? false,
     tags: p.tags ?? [],
@@ -194,5 +230,31 @@ export const toStorefrontProduct = (p: ApiProduct): StorefrontProduct => {
       discountPercent: v.discountPercent ? Number(v.discountPercent) : null,
       price: v.price ? Number(v.price) : 0,
       promotion: v.promotion ?? null,
-    })) || [], } 
+    })) || [],
+    packs: (Array.isArray((p as any).packs)
+      ? (p as any).packs
+      : typeof (p as any).packs === "string"
+        ? (() => {
+            try {
+              const parsed = JSON.parse((p as any).packs)
+              return Array.isArray(parsed) ? parsed : []
+            } catch {
+              return []
+            }
+          })()
+        : []
+    ).map((pk: any) => ({
+      id: String(pk.id || ""),
+      variantId: pk.variantId ? String(pk.variantId) : null,
+      variantWeight: pk.variantWeight ? String(pk.variantWeight).trim() : null,
+      name: String(pk.name || `Pack of ${pk.quantity || 1}`).trim(),
+      quantity: Number(pk.quantity) || 1,
+      mrp: Number(pk.mrp) || 0,
+      price: Number(pk.price) || 0,
+      discountPercent: pk.discountPercent != null ? Number(pk.discountPercent) : null,
+      sku: pk.sku ? String(pk.sku).replace(/-PACK-\d+/i, "") : null,
+      hsnCode: pk.hsnCode || pk.hsn_code || null,
+      isActive: pk.isActive !== false,
+    })),
+  } 
 }

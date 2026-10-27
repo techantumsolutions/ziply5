@@ -30,6 +30,10 @@ export type CartItemNormalized = {
   tax: number
   stock: number | null
   weight?: string
+  packName?: string | null
+  packQuantity?: number
+  baseWeight?: string
+  savingAmount?: number
 }
 
 export type AppliedCoupon = {
@@ -88,6 +92,10 @@ const normalizeCartItem = (item: any): CartItemNormalized | null => {
     tax,
     stock: item?.stock == null ? null : toFinite(item.stock, 0),
     weight: item?.weight ? String(item.weight) : undefined,
+    packName: item?.packName ? String(item.packName) : null,
+    packQuantity: item?.packQuantity != null ? Math.max(1, Math.floor(toFinite(item.packQuantity, 1))) : undefined,
+    baseWeight: item?.baseWeight ? String(item.baseWeight) : undefined,
+    savingAmount: item?.savingAmount != null ? Math.max(0, toFinite(item.savingAmount, 0)) : undefined,
   }
 }
 

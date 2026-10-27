@@ -17,6 +17,7 @@ const updateSchema = z.object({
   productPrices: z.array(z.object({
     productId: z.string().min(1),
     comboPrice: z.number().nonnegative(),
+    variantId: z.string().nullable().optional(),
   })).max(3).optional(),
 })
 

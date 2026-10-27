@@ -12,6 +12,10 @@ type BundleProductLite = {
   status?: string | null
   isActive?: boolean | null
   comboPrice?: number | null
+  variantId?: string | null
+  variantName?: string | null
+  variantWeight?: string | null
+  variantSku?: string | null
 }
 
 type BundleAvailability = {
@@ -65,6 +69,10 @@ async function hydrateBundles(baseRows: BundleRow[]) {
         status: string | null
         isActive: boolean | null
         comboPrice: number | null
+        variantId: string | null
+        variantName: string | null
+        variantWeight: string | null
+        variantSku: string | null
       }>(
         `
           SELECT
@@ -72,14 +80,19 @@ async function hydrateBundles(baseRows: BundleRow[]) {
             p.id as "productId",
             p.name,
             p.slug,
-            p.price,
-            p."basePrice" as "basePrice",
+            COALESCE(pv.price, p.price) as price,
+            COALESCE(pv.mrp, p."basePrice", p.price) as "basePrice",
             p.thumbnail,
             p.status,
             p."isActive" as "isActive",
-            bp."comboPrice" as "comboPrice"
+            bp."comboPrice" as "comboPrice",
+            bp."variantId" as "variantId",
+            pv.name as "variantName",
+            pv.weight as "variantWeight",
+            pv.sku as "variantSku"
           FROM "BundleProduct" bp
           JOIN "Product" p ON p.id = bp."productId"
+          LEFT JOIN "ProductVariant" pv ON pv.id = bp."variantId"
           WHERE bp."bundleId" = ANY($1::text[])
           ORDER BY bp."createdAt" ASC
         `,
@@ -90,17 +103,21 @@ async function hydrateBundles(baseRows: BundleRow[]) {
   const byBundle = new Map<string, BundleProductLite[]>()
   for (const p of products) {
     const arr = byBundle.get(p.bundleId) ?? []
-      arr.push({
-        productId: p.productId,
-        name: p.name,
-        slug: p.slug,
-        price: Number(p.price),
-        basePrice: p.basePrice == null ? null : Number(p.basePrice),
-        thumbnail: p.thumbnail,
-        status: p.status,
-        isActive: p.isActive,
-        comboPrice: p.comboPrice == null ? null : Number(p.comboPrice),
-      })
+    arr.push({
+      productId: p.productId,
+      name: p.name,
+      slug: p.slug,
+      price: Number(p.price),
+      basePrice: p.basePrice == null ? null : Number(p.basePrice),
+      thumbnail: p.thumbnail,
+      status: p.status,
+      isActive: p.isActive,
+      comboPrice: p.comboPrice == null ? null : Number(p.comboPrice),
+      variantId: p.variantId ?? null,
+      variantName: p.variantName ?? null,
+      variantWeight: p.variantWeight ?? null,
+      variantSku: p.variantSku ?? null,
+    })
     byBundle.set(p.bundleId, arr)
   }
 
@@ -112,6 +129,7 @@ async function hydrateBundles(baseRows: BundleRow[]) {
         productIsActive: boolean | null
         productType: string | null
         productStock: number | null
+        chosenVariantId: string | null
         variantId: string | null
         variantStock: number | null
       }>(
@@ -123,6 +141,7 @@ async function hydrateBundles(baseRows: BundleRow[]) {
             p."isActive" as "productIsActive",
             p.type as "productType",
             p."totalStock" as "productStock",
+            bp."variantId" as "chosenVariantId",
             pv.id as "variantId",
             pv.stock as "variantStock"
           FROM "BundleProduct" bp
@@ -162,24 +181,35 @@ async function hydrateBundles(baseRows: BundleRow[]) {
         blockedReason = "product_inactive"
         break
       }
-      const hasVariants = productRows.some((row) => Boolean(row.variantId))
-      const isSimple = first.productType === "simple" || (!hasVariants && first.productType !== "variant")
-      if (isSimple) {
-        const stock = Math.floor(Number(first.productStock ?? 0))
+      const chosenVariantId = first.chosenVariantId
+      if (chosenVariantId) {
+        const matchingVariant = productRows.find((row) => row.variantId === chosenVariantId)
+        const stock = Math.floor(Number(matchingVariant?.variantStock ?? 0))
         if (stock <= 0) {
           blockedReason = "variant_unavailable"
           break
         }
         stockCaps.push(stock)
       } else {
-        const validVariant = productRows
-          .filter((row) => Boolean(row.variantId) && Number(row.variantStock ?? 0) > 0)
-          .sort((a, b) => Number(b.variantStock ?? 0) - Number(a.variantStock ?? 0))[0]
-        if (!validVariant) {
-          blockedReason = "variant_unavailable"
-          break
+        const hasVariants = productRows.some((row) => Boolean(row.variantId))
+        const isSimple = first.productType === "simple" || (!hasVariants && first.productType !== "variant")
+        if (isSimple) {
+          const stock = Math.floor(Number(first.productStock ?? 0))
+          if (stock <= 0) {
+            blockedReason = "variant_unavailable"
+            break
+          }
+          stockCaps.push(stock)
+        } else {
+          const validVariant = productRows
+            .filter((row) => Boolean(row.variantId) && Number(row.variantStock ?? 0) > 0)
+            .sort((a, b) => Number(b.variantStock ?? 0) - Number(a.variantStock ?? 0))[0]
+          if (!validVariant) {
+            blockedReason = "variant_unavailable"
+            break
+          }
+          stockCaps.push(Math.floor(Number(validVariant.variantStock ?? 0)))
         }
-        stockCaps.push(Math.floor(Number(validVariant.variantStock ?? 0)))
       }
     }
     const maxPurchasableQty = blockedReason ? 0 : Math.min(...stockCaps)
@@ -236,10 +266,15 @@ async function loadEligibleProducts(productIds: string[]) {
 const comboIsActive = (productCount: number, requested?: boolean) =>
   productCount >= 2 && requested !== false
 
-const storedProductComboPrice = (productId: string, productPrices?: Array<{ productId: string; comboPrice: number }>) => {
+const storedProductComboPrice = (productId: string, productPrices?: Array<{ productId: string; comboPrice: number; variantId?: string | null }>) => {
   const match = productPrices?.find((row) => row.productId === productId)
   const value = Number(match?.comboPrice)
   return Number.isFinite(value) && value >= 0 ? Number(value.toFixed(2)) : null
+}
+
+const storedProductVariantId = (productId: string, productPrices?: Array<{ productId: string; comboPrice: number; variantId?: string | null }>) => {
+  const match = productPrices?.find((row) => row.productId === productId)
+  return match?.variantId?.trim() || null
 }
 
 function validateInput(input: {
@@ -311,10 +346,11 @@ export const syncCombosAfterProductUnpublished = async (productId: string) => {
     const totals = await pgQuery<{ total: string; count: string }>(
       `
         SELECT
-          COALESCE(SUM(COALESCE(bp."comboPrice", NULLIF(p.price, 0), p."basePrice", 0)), 0)::text as total,
+          COALESCE(SUM(COALESCE(bp."comboPrice", NULLIF(pv.price, 0), NULLIF(p.price, 0), pv.mrp, p."basePrice", 0)), 0)::text as total,
           COUNT(*)::text as count
         FROM "BundleProduct" bp
         JOIN "Product" p ON p.id = bp."productId"
+        LEFT JOIN "ProductVariant" pv ON pv.id = bp."variantId"
         WHERE bp."bundleId" = $1
           AND lower(p.status::text) = 'published'
       `,
@@ -453,7 +489,7 @@ export const createBundleV2 = async (input: {
   image?: string | null
   isActive?: boolean
   productIds: string[]
-  productPrices?: Array<{ productId: string; comboPrice: number }>
+  productPrices?: Array<{ productId: string; comboPrice: number; variantId?: string | null }>
 }) => {
   const { name, slug } = validateInput(input)
   const productIds = await loadEligibleProducts(input.productIds)
@@ -484,8 +520,8 @@ export const createBundleV2 = async (input: {
     )
     for (const productId of productIds) {
       await client.query(
-        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,now(),now())`,
-        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices)],
+        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "variantId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,now(),now())`,
+        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices), storedProductVariantId(productId, input.productPrices)],
       )
     }
   })
@@ -503,7 +539,7 @@ export const updateBundleV2 = async (
     image?: string | null
     isActive?: boolean
     productIds: string[]
-    productPrices?: Array<{ productId: string; comboPrice: number }>
+    productPrices?: Array<{ productId: string; comboPrice: number; variantId?: string | null }>
   },
 ) => {
   const { name, slug } = validateInput(input)
@@ -545,8 +581,8 @@ export const updateBundleV2 = async (
     await client.query(`DELETE FROM "BundleProduct" WHERE "bundleId" = $1`, [id])
     for (const productId of productIds) {
       await client.query(
-        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,now(),now())`,
-        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices)],
+        `INSERT INTO "BundleProduct" (id, "bundleId", "productId", "comboPrice", "variantId", "createdAt", "updatedAt") VALUES ($1,$2,$3,$4,$5,now(),now())`,
+        [crypto.randomUUID(), id, productId, storedProductComboPrice(productId, input.productPrices), storedProductVariantId(productId, input.productPrices)],
       )
     }
   })

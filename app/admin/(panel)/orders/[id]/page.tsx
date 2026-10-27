@@ -12,6 +12,15 @@ import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
 import { orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status"
 import { toast } from "@/lib/toast"
+import {
+  multiplyWeight,
+  resolveItemHsn,
+  resolveItemPackName,
+  resolveItemPackQuantity,
+  resolveItemSavings,
+  resolveItemSku,
+  resolveItemWeightDisplay,
+} from "@/src/lib/orders/order-item-display"
 
 const STORAGE_KEY_SERVICEABLE = "ziply5_admin_serviceable_order_ids"
 const STORAGE_KEY_UNSERVICEABLE = "ziply5_admin_unserviceable_order_ids"
@@ -288,6 +297,52 @@ export default function AdminOrderDetailPage() {
     (courier && trackingNumber)
   )
 
+  const isServiceabilityChecked = useMemo(() => {
+    if (!order?.id) return false
+    if (Boolean(serviceabilitySummary)) return true
+    if (serviceableIds[order.id] || unserviceableIds[order.id]) return true
+    const raw = parseRawResponse((order as any)?.shiprocketRawResponse || (order as any)?.shiprocket_raw_response)
+    if (raw?.serviceability) return true
+    return false
+  }, [order, serviceabilitySummary, serviceableIds, unserviceableIds])
+
+  const isShiprocketSynced = useMemo(() => {
+    if (!order?.id) return false
+    return Boolean(
+      order?.shiprocketOrderId ||
+      order?.isShipmentCreated ||
+      order?.awbCode ||
+      (activeShipment && String(activeShipment.shipmentNo || "").trim() && !String(activeShipment.shipmentNo).startsWith("manual-"))
+    )
+  }, [order, activeShipment])
+
+  const isManualShipped = useMemo(() => {
+    if (!order?.id) return false
+    return Boolean(
+      isManualShipmentDone ||
+      (order as any)?.shippingMethod === "manual" ||
+      (order as any)?.shipping_method === "manual" ||
+      (activeShipment && (String(activeShipment.shipmentNo || "").startsWith("manual-") || String(activeShipment.carrier || "").toLowerCase() === "manual"))
+    )
+  }, [order, isManualShipmentDone, activeShipment])
+
+  const isShipmentUpdateAllowed = useMemo(() => {
+    if (!order?.id) return false
+    if (!isOrderAccepted) return false
+    if (!isServiceabilityChecked) return false
+    return isShiprocketSynced || isManualShipped
+  }, [order, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
+
+  const shipmentStatusDisabledReason = useMemo(() => {
+    if (shipmentState === "cancelled") return "Shipment is cancelled"
+    if (!isOrderAccepted) return "Order must be accepted first before updating shipment status"
+    if (!isServiceabilityChecked) return "Courier serviceability must be checked first before updating shipment status"
+    if (!isShiprocketSynced && !isManualShipped) {
+      return "Order must be synced with Shiprocket or manual shipment created before updating shipment status"
+    }
+    return "Manually Change Shipment Status"
+  }, [shipmentState, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
+
   const [manualModal, setManualModal] = useState<{
     courier: string
     trackingId: string
@@ -434,6 +489,43 @@ export default function AdminOrderDetailPage() {
     }
   }
 
+  const handleOpenManualModal = () => {
+    const existingCourier =
+      activeShipment?.carrier ||
+      activeShipment?.courierName ||
+      order?.courierName ||
+      ""
+    const existingTrackingId =
+      activeShipment?.trackingNo ||
+      activeShipment?.awbCode ||
+      order?.trackingNumber ||
+      order?.awbCode ||
+      ""
+    const existingTrackingUrl =
+      activeShipment?.trackingUrl ||
+      order?.trackingUrl ||
+      ""
+    const existingSlipUrl =
+      activeShipment?.labelUrl ||
+      order?.labelUrl ||
+      ((activeShipment?.trackingData as any)?.slipUrl as string) ||
+      ""
+    const existingPackageImages =
+      (activeShipment?.packageImages as string[]) ||
+      ((activeShipment?.trackingData as any)?.packageImages as string[]) ||
+      ((order as any)?.packageImages as string[]) ||
+      []
+
+    setManualModal({
+      courier: existingCourier,
+      trackingId: existingTrackingId,
+      trackingUrl: existingTrackingUrl,
+      slipUrl: existingSlipUrl,
+      slipName: existingSlipUrl ? "Existing slip" : "",
+      packageImages: existingPackageImages,
+    })
+  }
+
   // Generates and downloads the PDF invoice matching the admin commercial/dispatch template.
   const handleDownloadInvoice = async () => {
     if (!order) return
@@ -452,10 +544,11 @@ export default function AdminOrderDetailPage() {
     setSyncingOrder(true)
     try {
       await authedPost(`/api/v1/orders/${order.id}/shiprocket`, {
-        action: "resync_order",
-        forceResync: true,
+        action: "sync_order",
+        panelSync: true,
+        generatePickup: false,
       })
-      toast.success("Success", "Order and shipment synced successfully")
+      toast.success("Success", "Order synced with Shiprocket successfully")
       await loadOrder()
     } catch (err) {
       toast.error("Sync Error", err instanceof Error ? err.message : "Failed to sync order")
@@ -532,6 +625,20 @@ export default function AdminOrderDetailPage() {
 
   const handleUpdateShipmentStatus = async (nextStatus: string) => {
     if (!order?.id || updatingStatus) return
+
+    if (!isOrderAccepted) {
+      toast.error("Order not accepted", "Accept the order first before updating shipment status.")
+      return
+    }
+    if (!isServiceabilityChecked) {
+      toast.error("Serviceability not checked", "Check courier serviceability first before updating shipment status.")
+      return
+    }
+    if (!isShipmentUpdateAllowed) {
+      toast.error("Shipment required", "Sync with Shiprocket or create a manual shipment before updating shipment status.")
+      return
+    }
+
     const currentStatus = (shipmentState || "not_shipped").toLowerCase().trim()
     const normNext = nextStatus.toLowerCase().trim()
     if (normNext === currentStatus) return
@@ -853,41 +960,32 @@ export default function AdminOrderDetailPage() {
           <>
             <Button
               variant="outline"
-              disabled={Boolean(shiprocketBusy) || isManualShipmentDone}
+              disabled={Boolean(shiprocketBusy)}
               onClick={() => void runShiprocketAction("serviceability")}
-              title={isManualShipmentDone ? "Shipment details already added" : "Check courier serviceability"}
-              className={isManualShipmentDone ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200" : ""}
+              title="Check courier serviceability"
             >
               {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
               {busy("serviceability") ? "Checking..." : "Check serviceability"}
             </Button>
 
-            {isUnserviceable ? (
-              <Button
-                variant="outline"
-                disabled={isManualShipmentDone}
-                className={
-                  isManualShipmentDone
-                    ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200"
-                    : "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                }
-                onClick={() => setManualModal({ courier: "", trackingId: "", trackingUrl: "", slipUrl: "", slipName: "" })}
-                title={isManualShipmentDone ? "Manual shipment details already added" : "Enter manual shipment details"}
-              >
-                Manual shipment
-              </Button>
-            ) : (
-              <Button
-                variant="outline"
-                disabled={syncingOrder || Boolean(shiprocketBusy) || isManualShipmentDone}
-                onClick={() => void handleSyncOrder()}
-                title={isManualShipmentDone ? "Order already shipped" : "Sync order to Shiprocket"}
-                className={isManualShipmentDone ? "cursor-not-allowed opacity-50 bg-gray-50 text-gray-400 border-gray-200" : ""}
-              >
-                {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-                Sync now
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              disabled={syncingOrder || Boolean(shiprocketBusy)}
+              onClick={() => void handleSyncOrder()}
+              title="Sync order from Shiprocket"
+            >
+              {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+              Sync now
+            </Button>
+
+            <Button
+              variant="outline"
+              className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+              onClick={handleOpenManualModal}
+              title="Enter or edit manual shipment details"
+            >
+              Manual shipment
+            </Button>
           </>
         )}
 
@@ -924,8 +1022,8 @@ export default function AdminOrderDetailPage() {
           <Button
             className="border border-red-300 bg-white text-red-600 hover:bg-red-50"
             onClick={() => setShowCancelModal(true)}
-            disabled={!isOrderAccepted || actionBusy === "admin_cancel" || orderShipped}
-            title={!isOrderAccepted ? "Available after order is accepted" : "Cancel order"}
+            disabled={actionBusy === "admin_cancel" || orderShipped}
+            title={orderShipped ? "Cannot cancel order once shipped" : "Cancel order"}
           >
             <Ban className="mr-1.5 h-4 w-4" />
             Cancel order
@@ -1050,6 +1148,7 @@ export default function AdminOrderDetailPage() {
                   <table className="w-full min-w-[720px] text-left text-sm">
                     <thead>
                       <tr className="border-b border-[#E5E7EB] text-xs text-[#6B7280]">
+                        <th className="py-2 pr-3 font-medium w-12 text-center">S.No.</th>
                         <th className="py-2 pr-3 font-medium">Product</th>
                         <th className="py-2 pr-3 font-medium">SKU code</th>
                         <th className="py-2 pr-3 font-medium">HSN Code</th>
@@ -1061,16 +1160,21 @@ export default function AdminOrderDetailPage() {
                     <tbody>
                       {(order.items ?? []).map((item, idx) => {
                         const productName = item.product?.name ?? "Deleted product"
-                        const weightLabel = item.variant?.weight || item.product?.weight || ""
-                        const variantName = item.variant?.name && item.variant.name !== weightLabel ? item.variant.name : ""
-                        const subtitle = [variantName, weightLabel].filter(Boolean).join(" | ")
-                        const sku = item.sku || item.variant?.sku || item.product?.sku || "—"
-                        const hsn = item.variant?.hsnCode || "—"
+                        const packMultiplier = resolveItemPackQuantity(item)
+                        const packName = resolveItemPackName(item)
+                        const baseWeight = item.variant?.weight || item.product?.weight || ""
+                        const weightDisplay = resolveItemWeightDisplay(baseWeight, packMultiplier)
+                        const variantName = item.variant?.name && item.variant.name !== baseWeight ? item.variant.name : ""
+                        const subtitle = [variantName, weightDisplay].filter(Boolean).join(" | ")
+                        const sku = resolveItemSku(item)
+                        const hsn = resolveItemHsn(item)
                         const qty = Number(item.quantity || 0)
                         const total = Number(item.lineTotal ?? 0)
-                        const unit = qty > 0 ? total / qty : Number(item.unitPrice ?? 0)
+                        const unit = qty > 0 ? (total > 0 ? total / qty : Number(item.unitPrice ?? 0)) : Number(item.unitPrice ?? 0)
+                        const savingsInfo = resolveItemSavings(item)
                         return (
                           <tr key={item.id ?? `${item.productId ?? "item"}-${idx}`} className="border-b border-[#F3F4F6] last:border-0">
+                            <td className="py-3 pr-3 text-center text-xs font-semibold text-[#6B7280]">{idx + 1}</td>
                             <td className="py-3 pr-3">
                               <div className="flex items-center gap-3">
                                 {item.product?.thumbnail ? (
@@ -1081,16 +1185,42 @@ export default function AdminOrderDetailPage() {
                                   </span>
                                 )}
                                 <div>
-                                  <p className="font-medium text-[#111827]">{productName}</p>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <p className="font-medium text-[#111827]">{productName}</p>
+                                    {packName && packMultiplier > 1 && (
+                                      <span className="inline-flex items-center rounded border border-[#E8DEC8] bg-[#FFF8EE] px-2 py-0.5 text-xs font-semibold text-[#A33838]">
+                                        {packName}
+                                      </span>
+                                    )}
+                                  </div>
                                   {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
                                 </div>
                               </div>
                             </td>
                             <td className="py-3 pr-3 text-[#374151]">{sku}</td>
                             <td className="py-3 pr-3 text-[#374151]">{hsn}</td>
-                            <td className="py-3 pr-3 text-[#111827]">{formatInr(unit)}</td>
+                            <td className="py-3 pr-3 text-[#111827]">
+                              {savingsInfo.hasSavings && (
+                                <div className="text-xs text-[#9CA3AF] line-through font-normal">
+                                  {formatInr(savingsInfo.comparePrice)}
+                                </div>
+                              )}
+                              <div>{formatInr(unit)}</div>
+                              {savingsInfo.hasSavings && (
+                                <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                  Save {formatInr(savingsInfo.totalSavings)} ({savingsInfo.discountPercent}% off)
+                                </span>
+                              )}
+                            </td>
                             <td className="py-3 pr-3 text-[#111827]">{qty}</td>
-                            <td className="py-3 font-medium text-[#111827]">{formatInr(total || unit * qty)}</td>
+                            <td className="py-3 font-medium text-[#111827]">
+                              {savingsInfo.hasSavings && (
+                                <div className="text-xs text-[#9CA3AF] line-through font-normal">
+                                  {formatInr(savingsInfo.comparePrice * qty)}
+                                </div>
+                              )}
+                              <div>{formatInr(total || unit * qty)}</div>
+                            </td>
                           </tr>
                         )
                       })}
@@ -1112,6 +1242,19 @@ export default function AdminOrderDetailPage() {
                     <span>Discount{order.couponCode ? ` (${order.couponCode})` : ""}</span>
                     <span>- {formatInr(Number(order.discount ?? 0))}</span>
                   </div>
+                  {(() => {
+                    const totalSavings = Math.max(
+                      Number(order.savingAmount ?? 0),
+                      (order.items ?? []).reduce((sum: number, it: any) => sum + resolveItemSavings(it).totalSavings, 0)
+                    )
+                    if (totalSavings <= 0) return null
+                    return (
+                      <div className="flex items-center justify-between gap-6 text-emerald-700 font-medium">
+                        <span>Total savings (Packs & Offers)</span>
+                        <span>- {formatInr(totalSavings)}</span>
+                      </div>
+                    )
+                  })()}
                   <div className="flex items-center justify-between gap-6">
                     <span>Tax</span>
                     <span>{formatInr(Number(order.tax ?? 0))}</span>
@@ -1129,22 +1272,33 @@ export default function AdminOrderDetailPage() {
             <div className="rounded-xl border border-[#E5E7EB] bg-white p-4 shadow-sm">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold text-[#111827]">Delivery details</h2>
-                <div className="flex items-center gap-1.5">
-                  <span className="text-xs text-[#6B7280]">Shipment Status:</span>
-                  <select
-                    value={shipmentState || "not_shipped"}
-                    disabled={updatingStatus !== null || shipmentState === "cancelled"}
-                    onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
-                    className="cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C] disabled:cursor-not-allowed disabled:opacity-50"
-                    title="Manually Change Shipment Status"
-                  >
-                    {getForwardShipmentStatusOptions(shipmentState || "not_shipped").map((val) => (
-                      <option key={val} value={val}>
-                        {orderStatusLabel(val)}
-                      </option>
-                    ))}
-                  </select>
-                  {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
+                <div className="flex flex-col items-end gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs text-[#6B7280]">Shipment Status:</span>
+                    <select
+                      value={shipmentState || "not_shipped"}
+                      disabled={updatingStatus !== null || shipmentState === "cancelled" || !isShipmentUpdateAllowed}
+                      onChange={(e) => void handleUpdateShipmentStatus(e.target.value)}
+                      className={
+                        !isShipmentUpdateAllowed
+                          ? "cursor-not-allowed rounded-lg border border-gray-300 bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-400 shadow-sm"
+                          : "cursor-pointer rounded-lg border border-[#16803C]/30 bg-[#F0FDF4] px-2.5 py-1 text-xs font-semibold text-[#16803C] shadow-sm hover:border-[#16803C] focus:outline-none focus:ring-1 focus:ring-[#16803C]"
+                      }
+                      title={shipmentStatusDisabledReason}
+                    >
+                      {getForwardShipmentStatusOptions(shipmentState || "not_shipped").map((val) => (
+                        <option key={val} value={val}>
+                          {orderStatusLabel(val)}
+                        </option>
+                      ))}
+                    </select>
+                    {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
+                  </div>
+                  {!isShipmentUpdateAllowed && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+                    <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 max-w-xs text-right">
+                      Locked until order is accepted, serviceability is checked, and synced with Shiprocket or shipped manually.
+                    </span>
+                  )}
                 </div>
               </div>
               {serviceabilitySummary ? <p className="mt-2 text-xs text-[#6B7280]">{serviceabilitySummary}</p> : null}

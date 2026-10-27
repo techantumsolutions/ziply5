@@ -22,6 +22,15 @@ import { resolveShipmentProgressIndex } from "@/src/lib/shipping/shipment-ui-con
 import { OrderStatusHistoryCard } from "@/src/components/orders/order-status-history-card"
 import { OrderSummaryHeroCard } from "@/src/components/orders/order-summary-hero-card"
 import { OrderHelpFooter } from "@/src/components/orders/order-help-footer"
+import {
+  multiplyWeight,
+  resolveItemHsn,
+  resolveItemPackName,
+  resolveItemPackQuantity,
+  resolveItemSavings,
+  resolveItemSku,
+  resolveItemWeightDisplay,
+} from "@/src/lib/orders/order-item-display"
 
 const FALLBACK_TIMELINE = [
   "pending_payment",
@@ -625,6 +634,7 @@ export default function OrderDetailPage() {
                 <table className="w-full min-w-[720px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-[#E5E7EB] text-xs text-[#6B7280]">
+                      <th className="py-2 pr-3 font-medium w-12 text-center">S.No.</th>
                       <th className="py-2 pr-3 font-medium">Product</th>
                       <th className="py-2 pr-3 font-medium">SKU code</th>
                       <th className="py-2 pr-3 font-medium">HSN Code</th>
@@ -636,17 +646,22 @@ export default function OrderDetailPage() {
                   <tbody>
                     {(order.items ?? []).map((item, idx) => {
                       const productName = item.product?.name ?? "Deleted product"
-                      const weightLabel = item.variant?.weight || item.product?.weight || ""
-                      const variantName = item.variant?.name && item.variant.name !== weightLabel ? item.variant.name : ""
-                      const subtitle = [variantName, weightLabel].filter(Boolean).join(" | ")
-                      const sku = item.sku || item.variant?.sku || item.product?.sku || "—"
-                      const hsn = item.variant?.hsnCode || "—"
+                      const packMultiplier = resolveItemPackQuantity(item)
+                      const packName = resolveItemPackName(item)
+                      const baseWeight = item.variant?.weight || item.product?.weight || ""
+                      const weightDisplay = resolveItemWeightDisplay(baseWeight, packMultiplier)
+                      const variantName = item.variant?.name && item.variant.name !== baseWeight ? item.variant.name : ""
+                      const subtitle = [variantName, weightDisplay].filter(Boolean).join(" | ")
+                      const sku = resolveItemSku(item)
+                      const hsn = resolveItemHsn(item)
                       const qty = Number(item.quantity || 0)
                       const total = Number(item.lineTotal ?? 0)
                       const unit = qty > 0 ? (total > 0 ? total / qty : Number(item.unitPrice ?? 0)) : Number(item.unitPrice ?? 0)
                       const thumbnail = item.product?.thumbnail || item.product?.image || null
+                      const savingsInfo = resolveItemSavings(item)
                       return (
                         <tr key={item.id ?? `${item.productId ?? "item"}-${idx}`} className="border-b border-[#F3F4F6] last:border-0">
+                          <td className="py-3 pr-3 text-center text-xs font-semibold text-[#6B7280]">{idx + 1}</td>
                           <td className="py-3 pr-3">
                             <div className="flex items-center gap-3">
                               {thumbnail ? (
@@ -657,7 +672,14 @@ export default function OrderDetailPage() {
                                 </span>
                               )}
                               <div>
-                                <p className="font-medium text-[#111827]">{productName}</p>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <p className="font-medium text-[#111827]">{productName}</p>
+                                  {packName && packMultiplier > 1 && (
+                                    <span className="inline-flex items-center rounded border border-[#E8DEC8] bg-[#FFF8EE] px-2 py-0.5 text-xs font-semibold text-[#A33838]">
+                                      {packName}
+                                    </span>
+                                  )}
+                                </div>
                                 {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
                               </div>
                             </div>
@@ -714,9 +736,28 @@ export default function OrderDetailPage() {
                           </td>
                           <td className="py-3 pr-3 text-[#374151]">{sku}</td>
                           <td className="py-3 pr-3 text-[#374151]">{hsn}</td>
-                          <td className="py-3 pr-3 text-[#111827]">{formatInr(unit)}</td>
+                          <td className="py-3 pr-3 text-[#111827]">
+                            {savingsInfo.hasSavings && (
+                              <div className="text-xs text-[#9CA3AF] line-through font-normal">
+                                {formatInr(savingsInfo.comparePrice)}
+                              </div>
+                            )}
+                            <div>{formatInr(unit)}</div>
+                            {savingsInfo.hasSavings && (
+                              <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                                Save {formatInr(savingsInfo.totalSavings)} ({savingsInfo.discountPercent}% off)
+                              </span>
+                            )}
+                          </td>
                           <td className="py-3 pr-3 text-[#111827]">{qty}</td>
-                          <td className="py-3 font-medium text-[#111827]">{formatInr(total || unit * qty)}</td>
+                          <td className="py-3 font-medium text-[#111827]">
+                            {savingsInfo.hasSavings && (
+                              <div className="text-xs text-[#9CA3AF] line-through font-normal">
+                                {formatInr(savingsInfo.comparePrice * qty)}
+                              </div>
+                            )}
+                            <div>{formatInr(total || unit * qty)}</div>
+                          </td>
                         </tr>
                       )
                     })}
@@ -736,8 +777,21 @@ export default function OrderDetailPage() {
                 </div>
                 <div className="flex items-center justify-between gap-6 text-green-700">
                   <span>Discount{order.couponCode ? ` (${order.couponCode})` : ""}</span>
-                  <span>- {formatInr(Number(order.discount ?? order.savingAmount ?? 0))}</span>
+                  <span>- {formatInr(Number(order.discount ?? 0))}</span>
                 </div>
+                {(() => {
+                  const totalSavings = Math.max(
+                    Number(order.savingAmount ?? 0),
+                    (order.items ?? []).reduce((sum: number, it: any) => sum + resolveItemSavings(it).totalSavings, 0)
+                  )
+                  if (totalSavings <= 0) return null
+                  return (
+                    <div className="flex items-center justify-between gap-6 text-emerald-700 font-medium">
+                      <span>Total savings (Packs & Offers)</span>
+                      <span>- {formatInr(totalSavings)}</span>
+                    </div>
+                  )
+                })()}
                 <div className="flex items-center justify-between gap-6">
                   <span>Tax</span>
                   <span>{formatInr(Number(order.tax ?? 0))}</span>

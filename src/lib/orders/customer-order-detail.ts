@@ -31,6 +31,8 @@ export type CustomerOrderDetail = {
       image?: string | null
       weight?: string | null
       sku?: string | null
+      hsnCode?: string | null
+      packs?: any[] | null
     } | null
     variant?: {
       name?: string | null

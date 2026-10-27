@@ -2,6 +2,13 @@ import jsPDF from "jspdf"
 import autoTable from "jspdf-autotable"
 import { formatOrderDateTime, toUtcIso } from "@/src/lib/datetime"
 import { buildPaymentQrMatrix } from "@/lib/payment-qr"
+import {
+  multiplyWeight,
+  resolveItemHsn,
+  resolveItemPackName,
+  resolveItemPackQuantity,
+  resolveItemWeightDisplay,
+} from "@/src/lib/orders/order-item-display"
 
 export type OrderForInvoice = {
   id: string
@@ -333,9 +340,14 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     const tableData = (order.items && order.items.length > 0 ? order.items : []).map((item, index) => {
       const sno = (index + 1).toString()
       const descName = item.product?.name || "Product"
-      const variantInfo = item.variant?.weight || item.variant?.name
+      const packMultiplier = resolveItemPackQuantity(item)
+      const packName = resolveItemPackName(item)
+      const baseWeight = item.variant?.weight || item.product?.weight || ""
+      const weightDisplay = resolveItemWeightDisplay(baseWeight, packMultiplier)
+      const variantName = item.variant?.name && item.variant.name !== baseWeight ? item.variant.name : ""
+      const variantInfo = [packName && packMultiplier > 1 ? packName : null, variantName, weightDisplay].filter(Boolean).join(" | ") || item.variant?.name || ""
       const description = variantInfo ? `${descName} (${variantInfo})` : descName
-      const hsn = item.hsnCode || item.hsn || item.product?.hsnCode || item.product?.hsn || "21069099"
+      const hsn = resolveItemHsn(item)
       const qty = (item.quantity || 1).toString()
       const rateNum = Number(item.unitPrice ?? item.price ?? 0)
       const lineNum = Number(item.lineTotal ?? item.subtotal ?? rateNum * Number(qty))
