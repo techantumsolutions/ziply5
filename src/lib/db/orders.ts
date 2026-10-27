@@ -1377,7 +1377,7 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         PRODUCT_TABLES,
         "id",
         productIds,
-        "id,name,slug,sku,weight,thumbnail,price,totalStock,type,stockStatus",
+        "id,name,slug,sku,weight,thumbnail,price,totalStock,type,stockStatus,packs",
       )
       const productById = new Map<string, Record<string, unknown>>()
       for (const product of productRows) {
@@ -1400,18 +1400,39 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
         const product = productById.get(productId) ?? null
         const variantId = safeString(rowItem.variantId ?? rowItem.variant_id)
         const variant = variantId ? variantById.get(variantId) ?? null : null
+        const rawSku = safeString(rowItem.sku)
+        const cleanSku =
+          safeString(variant?.sku)?.replace(/-PACK-\d+/i, "") ||
+          (rawSku ? rawSku.replace(/-PACK-\d+/i, "") : null) ||
+          safeString(product?.sku) ||
+          null
         return {
           ...rowItem,
           id: safeString(rowItem.id),
           orderId: safeString(rowItem.orderId ?? rowItem.order_id) || orderId,
           productId,
           variantId: variantId || null,
-          sku: safeString(rowItem.sku) || safeString(variant?.sku) || safeString(product?.sku) || null,
+          sku: cleanSku,
           quantity: safeNumber(rowItem.quantity, 0),
           unitPrice: safeNumber(rowItem.unitPrice ?? rowItem.unit_price, 0),
           subtotal: safeNumber(rowItem.subtotal ?? rowItem.lineTotal ?? rowItem.line_total, 0),
           tax: safeNumber(rowItem.tax, 0),
           lineTotal: safeNumber(rowItem.lineTotal ?? rowItem.line_total, 0),
+          packQuantity: safeNumber(rowItem.packQuantity ?? rowItem.pack_quantity, 1),
+          packName: safeString(rowItem.packName ?? rowItem.pack_name) || null,
+          comparePrice:
+            rowItem.comparePrice != null || rowItem.compare_price != null
+              ? safeNumber(rowItem.comparePrice ?? rowItem.compare_price)
+              : null,
+          savingAmount:
+            rowItem.savingAmount != null || rowItem.saving_amount != null
+              ? safeNumber(rowItem.savingAmount ?? rowItem.saving_amount)
+              : 0,
+          baseWeight:
+            safeString(rowItem.baseWeight ?? rowItem.base_weight) ||
+            safeString(variant?.weight) ||
+            safeString(product?.weight) ||
+            null,
           // Always present so the UI never NPEs on a missing/deleted product.
           product: product
             ? {
@@ -1424,6 +1445,17 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               totalStock: safeNumber(product.totalStock, 0),
               type: safeString(product.type) || "simple",
               stockStatus: safeString(product.stockStatus) || "in_stock",
+              packs: Array.isArray(product.packs)
+                ? product.packs
+                : typeof product.packs === "string"
+                  ? (() => {
+                      try {
+                        return JSON.parse(product.packs as string)
+                      } catch {
+                        return []
+                      }
+                    })()
+                  : [],
             }
             : {
               id: productId || "",
@@ -1435,12 +1467,13 @@ export const getOrderByIdSupabaseBasic = async (orderId: string) => {
               totalStock: 0,
               type: "simple",
               stockStatus: "out_of_stock",
+              packs: [],
             },
           variant: variant
             ? {
               id: safeString(variant.id),
               name: safeString(variant.name) || null,
-              sku: safeString(variant.sku) || null,
+              sku: safeString(variant.sku)?.replace(/-PACK-\d+/i, "") || null,
               weight: safeString(variant.weight) || null,
               price: safeNumber(variant.price, 0),
               stock: safeNumber(variant.stock, 0),

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { createPortal } from "react-dom"
 import { authedFetch, authedPost, authedPut } from "@/lib/dashboard-fetch"
 import { uploadAdminImage } from "@/lib/admin-upload"
-import { Loader2, Plus, X, Search } from "lucide-react"
+import { Loader2, Plus, X, Search, RotateCw } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   Select,
@@ -14,10 +14,22 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 
+type ProductVariantLite = {
+  id: string
+  name: string
+  weight?: string | null
+  price: number
+  mrp?: number | null
+  sku?: string | null
+  stock?: number
+  isDefault?: boolean
+}
+
 type ProductLite = {
   id: string
   name: string
   slug: string
+  type?: string
   sku?: string | null
   thumbnail?: string | null
   price: number
@@ -25,7 +37,18 @@ type ProductLite = {
   categoryId?: string | null
   categoryName?: string | null
   categorySlug?: string | null
+  dietary: "veg" | "non-veg"
+  variants?: ProductVariantLite[]
 }
+
+const generateSlug = (text: string) =>
+  text
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/--+/g, "-")
+    .replace(/^-+|-+$/g, "")
 
 type ComboFormProps = {
   bundleId?: string
@@ -43,7 +66,7 @@ type BundlePayload = {
   image?: string | null
   isActive: boolean
   productIds: string[]
-  productPrices: Array<{ productId: string; comboPrice: number }>
+  productPrices: Array<{ productId: string; comboPrice: number; variantId?: string | null }>
 }
 
 const MODAL_PAGE_SIZE = 15
@@ -57,15 +80,18 @@ const DEFAULT_CATEGORIES = [
 export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormProps) {
   const [name, setName] = useState("")
   const [slug, setSlug] = useState("")
+  const [slugEdited, setSlugEdited] = useState(false)
   const [pricingMode, setPricingMode] = useState<"fixed" | "dynamic">("fixed")
   const [comboPrice, setComboPrice] = useState("")
   const [description, setDescription] = useState("")
   const [image, setImage] = useState("")
   const [isActive, setIsActive] = useState(true)
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, string>>({})
+  const [variantPromptProduct, setVariantPromptProduct] = useState<ProductLite | null>(null)
   const [products, setProducts] = useState<ProductLite[]>([])
   const [categories, setCategories] = useState<Array<{ id: string; name: string; slug: string }>>(DEFAULT_CATEGORIES)
-  const [selectedCategory, setSelectedCategory] = useState<string>("all")
+  const [dietaryFilter, setDietaryFilter] = useState<"all" | "veg" | "non-veg">("all")
   const [search, setSearch] = useState("")
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -83,10 +109,14 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
   }, [])
 
   useEffect(() => {
-    if (!isProductModalOpen) return
+    if (!isProductModalOpen && !variantPromptProduct) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setIsProductModalOpen(false)
+        if (variantPromptProduct) {
+          setVariantPromptProduct(null)
+        } else {
+          setIsProductModalOpen(false)
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown)
@@ -96,7 +126,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
       window.removeEventListener("keydown", handleKeyDown)
       document.body.style.overflow = prevOverflow
     }
-  }, [isProductModalOpen])
+  }, [isProductModalOpen, variantPromptProduct])
 
   useEffect(() => {
     let cancelled = false
@@ -136,16 +166,42 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
         }
 
         const rows = (productsRes as any)?.items ?? (productsRes as any)?.data?.items ?? []
-        const lite = (Array.isArray(rows) ? rows : [])
+        const lite: ProductLite[] = (Array.isArray(rows) ? rows : [])
           .filter((p) => p?.id && p?.name && p?.slug && p?.status === "published" && p?.isActive !== false)
           .map((p) => {
             const cat = Array.isArray(p.categories) && p.categories[0]
               ? p.categories[0].category || p.categories[0]
               : p.category || null
+
+            const tagNames = (p.tags || [])
+              .map((t: any) => (t.tag?.name || t.name || "").toLowerCase())
+              .filter(Boolean)
+
+            const isNonVeg =
+              tagNames.includes("non-veg") ||
+              tagNames.includes("nonveg") ||
+              tagNames.includes("non-vegetarian") ||
+              p.foodType === "non-veg" ||
+              /\b(chicken|mutton|fish|prawn|egg|meat|seafood|keema)\b/i.test(p.name || "")
+
+            const variants: ProductVariantLite[] = Array.isArray(p.variants)
+              ? p.variants.map((v: any) => ({
+                  id: String(v.id),
+                  name: String(v.name || v.weight || "Variant"),
+                  weight: v.weight ? String(v.weight) : null,
+                  price: Number(v.price ?? 0),
+                  mrp: v.mrp != null ? Number(v.mrp) : (v.price != null ? Number(v.price) : null),
+                  sku: v.sku ? String(v.sku) : null,
+                  stock: Number(v.stock ?? 0),
+                  isDefault: Boolean(v.isDefault),
+                }))
+              : []
+
             return {
               id: String(p.id),
               name: String(p.name),
               slug: String(p.slug),
+              type: String(p.type || "simple"),
               sku: p.sku ? String(p.sku) : null,
               thumbnail: p.thumbnail ? String(p.thumbnail) : null,
               price: Number(p.price ?? 0),
@@ -153,6 +209,8 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
               categoryId: cat?.id ? String(cat.id) : (p.categoryId ? String(p.categoryId) : null),
               categoryName: cat?.name ? String(cat.name) : null,
               categorySlug: cat?.slug ? String(cat.slug) : null,
+              dietary: isNonVeg ? "non-veg" : "veg",
+              variants,
             }
           })
         setProducts(lite)
@@ -160,6 +218,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
         if (bundleRes) {
           setName(bundleRes.name ?? "")
           setSlug(bundleRes.slug ?? "")
+          if (bundleRes.slug) setSlugEdited(true)
           setPricingMode(bundleRes.pricingMode === "dynamic" ? "dynamic" : "fixed")
           setComboPrice(bundleRes.comboPrice != null ? String(bundleRes.comboPrice) : "")
           setDescription(bundleRes.description ?? "")
@@ -174,24 +233,62 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
           const removed = bundleProducts.filter((bp: any) => !kept.includes(bp))
           setRemovedProductNames(removed.map((bp: any) => String(bp.name || "Unpublished product")))
           setSelectedProductIds(kept.map((bp: any) => String(bp.productId || bp.id)))
+
+          const savedVariants: Record<string, string> = {}
           const savedPrices: Record<string, string> = {}
           for (const bp of kept) {
             const id = String(bp.productId || bp.id)
-            if (bp.comboPrice != null && bp.comboPrice !== "") savedPrices[id] = String(bp.comboPrice)
+            if (bp.variantId) {
+              savedVariants[id] = String(bp.variantId)
+            }
+            if (bp.comboPrice != null && bp.comboPrice !== "") {
+              savedPrices[id] = String(bp.comboPrice)
+            } else {
+              const prod = lite.find((x) => x.id === id) || bp
+              const chosenVariant = prod.variants?.find((v: any) => v.id === bp.variantId)
+              const defaultPrice = chosenVariant
+                ? (chosenVariant.mrp != null && chosenVariant.mrp > 0 ? chosenVariant.mrp : chosenVariant.price)
+                : (prod.basePrice != null && prod.basePrice > 0 ? prod.basePrice : (prod.price ?? 0))
+              savedPrices[id] = String(defaultPrice)
+            }
           }
+          setSelectedVariants(savedVariants)
           setItemComboPrices(savedPrices)
           setIsActive(kept.length >= 2 && bundleRes.isActive !== false)
 
           const extraLites: ProductLite[] = kept
             .filter((bp: any) => !publishedIds.has(String(bp.productId || bp.id)))
-            .map((bp: any) => ({
-              id: String(bp.productId || bp.id),
-              name: String(bp.name),
-              slug: String(bp.slug || ""),
-              price: Number(bp.price ?? 0),
-              basePrice: bp.basePrice != null ? Number(bp.basePrice) : Number(bp.price ?? 0),
-              thumbnail: bp.thumbnail ?? null,
-            }))
+            .map((bp: any) => {
+              const tagNames = (bp.tags || []).map((t: any) => (t.tag?.name || t.name || "").toLowerCase())
+              const isNonVeg =
+                tagNames.includes("non-veg") ||
+                tagNames.includes("nonveg") ||
+                tagNames.includes("non-vegetarian") ||
+                bp.foodType === "non-veg" ||
+                /\b(chicken|mutton|fish|prawn|egg|meat|seafood|keema)\b/i.test(bp.name || "")
+              return {
+                id: String(bp.productId || bp.id),
+                name: String(bp.name),
+                slug: String(bp.slug || ""),
+                type: bp.variantId ? "variant" : "simple",
+                price: Number(bp.price ?? 0),
+                basePrice: bp.basePrice != null ? Number(bp.basePrice) : Number(bp.price ?? 0),
+                thumbnail: bp.thumbnail ?? null,
+                dietary: isNonVeg ? "non-veg" : "veg",
+                variants: bp.variantId
+                  ? [
+                      {
+                        id: String(bp.variantId),
+                        name: String(bp.variantName || bp.variantWeight || "Variant"),
+                        weight: bp.variantWeight ? String(bp.variantWeight) : null,
+                        price: Number(bp.price ?? 0),
+                        mrp: bp.basePrice != null ? Number(bp.basePrice) : Number(bp.price ?? 0),
+                        sku: bp.variantSku ? String(bp.variantSku) : null,
+                      },
+                    ]
+                  : [],
+              }
+            })
           if (extraLites.length > 0) {
             setProducts([...lite, ...extraLites])
           }
@@ -208,17 +305,6 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     }
   }, [bundleId])
 
-  useEffect(() => {
-    if (!slug || slug.trim().length === 0 || slug === name) {
-      const auto = name
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, "-")
-        .replace(/[^a-z0-9_-]/g, "")
-      setSlug(auto)
-    }
-  }, [name])
-
   const filteredProducts = useMemo(() => {
     const q = search.trim().toLowerCase()
     return products.filter((p) => {
@@ -229,19 +315,12 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
         p.slug.toLowerCase().includes(q) ||
         (p.sku && p.sku.toLowerCase().includes(q))
 
-      const matchesCategory =
-        selectedCategory === "all" ||
-        p.categorySlug?.toLowerCase() === selectedCategory.toLowerCase() ||
-        p.categoryId?.toLowerCase() === selectedCategory.toLowerCase() ||
-        p.categoryName?.toLowerCase() === selectedCategory.toLowerCase() ||
-        p.categorySlug?.toLowerCase().includes(selectedCategory.toLowerCase()) ||
-        p.categoryName?.toLowerCase().includes(selectedCategory.toLowerCase()) ||
-        p.name.toLowerCase().includes(selectedCategory.toLowerCase()) ||
-        p.slug.toLowerCase().includes(selectedCategory.toLowerCase())
+      const matchesDietary =
+        dietaryFilter === "all" || p.dietary === dietaryFilter
 
-      return matchesSearch && matchesCategory
+      return matchesSearch && matchesDietary
     })
-  }, [products, search, selectedCategory])
+  }, [products, search, dietaryFilter])
 
   const totalModalPages = Math.max(1, Math.ceil(filteredProducts.length / MODAL_PAGE_SIZE))
   const paginatedProducts = useMemo(() => {
@@ -251,15 +330,31 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
 
   const [itemComboPrices, setItemComboPrices] = useState<Record<string, string>>({})
 
+  const getProductVariant = (p?: ProductLite) => {
+    if (!p) return null
+    const variantId = selectedVariants[p.id]
+    if (!variantId) return null
+    return p.variants?.find((v) => v.id === variantId) ?? null
+  }
+
+  const getProductEffectivePrice = (p?: ProductLite) => {
+    if (!p) return 0
+    const variant = getProductVariant(p)
+    if (variant) {
+      return variant.mrp != null && variant.mrp > 0 ? variant.mrp : variant.price
+    }
+    return p.basePrice != null && p.basePrice > 0 ? p.basePrice : p.price
+  }
+
   const sumOfSelectedPrices = useMemo(() => {
     return selectedProductIds.reduce((sum, id) => {
       const prod = products.find((p) => p.id === id)
-      const maxPrice = prod?.basePrice != null && prod.basePrice > 0 ? prod.basePrice : (prod?.price ?? 0)
+      const maxPrice = getProductEffectivePrice(prod)
       const customPriceStr = itemComboPrices[id]
       const customPrice = customPriceStr !== undefined && customPriceStr.trim() !== "" ? Number(customPriceStr) : maxPrice
       return sum + (Number.isFinite(customPrice) ? customPrice : 0)
     }, 0)
-  }, [selectedProductIds, products, itemComboPrices])
+  }, [selectedProductIds, products, itemComboPrices, selectedVariants])
 
   const isPriceTooHigh = useMemo(() => {
     if (pricingMode !== "fixed" || selectedProductIds.length === 0 || !comboPrice) return false
@@ -275,7 +370,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     for (const id of selectedProductIds) {
       const p = products.find((x) => x.id === id)
       if (!p) continue
-      const maxPrice = p.basePrice != null && p.basePrice > 0 ? p.basePrice : p.price
+      const maxPrice = getProductEffectivePrice(p)
       const customPriceStr = itemComboPrices[id]
       if (customPriceStr !== undefined && customPriceStr.trim() !== "") {
         const val = Number(customPriceStr)
@@ -291,12 +386,61 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
     return null
   }
 
-  const toggleProduct = (productId: string) => {
-    setSelectedProductIds((prev) => {
-      if (prev.includes(productId)) return prev.filter((id) => id !== productId)
-      if (prev.length >= 3) return prev
-      return [...prev, productId]
+  const removeProduct = (productId: string) => {
+    setSelectedProductIds((prev) => prev.filter((id) => id !== productId))
+    setSelectedVariants((prev) => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
     })
+    setItemComboPrices((prev) => {
+      const next = { ...prev }
+      delete next[productId]
+      return next
+    })
+  }
+
+  const selectSimpleProduct = (productId: string) => {
+    if (selectedProductIds.includes(productId)) return
+    if (selectedProductIds.length >= 3) return
+    setSelectedProductIds((prev) => [...prev, productId])
+    const prod = products.find((x) => x.id === productId)
+    const defaultPrice = prod ? (prod.basePrice != null && prod.basePrice > 0 ? prod.basePrice : prod.price) : 0
+    setItemComboPrices((prev) => ({
+      ...prev,
+      [productId]: String(defaultPrice),
+    }))
+  }
+
+  const selectProductVariant = (product: ProductLite, variant: ProductVariantLite) => {
+    setSelectedProductIds((prev) => {
+      if (prev.includes(product.id)) return prev
+      if (prev.length >= 3) return prev
+      return [...prev, product.id]
+    })
+    setSelectedVariants((prev) => ({
+      ...prev,
+      [product.id]: variant.id,
+    }))
+    const variantBasePrice = variant.mrp != null && variant.mrp > 0 ? variant.mrp : variant.price
+    setItemComboPrices((prev) => ({
+      ...prev,
+      [product.id]: String(variantBasePrice),
+    }))
+    setVariantPromptProduct(null)
+  }
+
+  const toggleProduct = (productId: string) => {
+    if (selectedProductIds.includes(productId)) {
+      removeProduct(productId)
+    } else {
+      const prod = products.find((x) => x.id === productId)
+      if (prod?.type === "variant" && (prod.variants?.length ?? 0) > 0) {
+        setVariantPromptProduct(prod)
+      } else {
+        selectSimpleProduct(productId)
+      }
+    }
   }
 
   const save = async () => {
@@ -318,10 +462,14 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
       productIds: selectedProductIds,
       productPrices: selectedProductIds.map((id) => {
         const prod = products.find((item) => item.id === id)
-        const maxPrice = prod?.basePrice != null && prod.basePrice > 0 ? prod.basePrice : (prod?.price ?? 0)
+        const maxPrice = getProductEffectivePrice(prod)
         const custom = itemComboPrices[id]
         const parsed = custom != null && custom.trim() !== "" ? Number(custom) : maxPrice
-        return { productId: id, comboPrice: Number((Number.isFinite(parsed) ? parsed : 0).toFixed(2)) }
+        return {
+          productId: id,
+          comboPrice: Number((Number.isFinite(parsed) ? parsed : maxPrice).toFixed(2)),
+          variantId: selectedVariants[id] || null,
+        }
       }),
     }
     try {
@@ -358,17 +506,40 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
               className="mt-1 w-full rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 text-sm text-[#4A1D1F] focus:border-[#7B3010] focus:outline-none"
               placeholder="Enter combo name"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                const newName = e.target.value
+                setName(newName)
+                if (!slugEdited) {
+                  setSlug(generateSlug(newName))
+                }
+              }}
             />
           </label>
           <label className="block text-sm">
             <span className="text-xs font-semibold text-[#7A7A7A]">Slug</span>
-            <input
-              className="mt-1 w-full rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 text-sm font-mono text-[#4A1D1F] focus:border-[#7B3010] focus:outline-none"
-              placeholder="e.g. breakfast-combo"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
-            />
+            <div className="relative mt-1">
+              <input
+                className="w-full rounded-lg border border-[#E8DCC8] bg-white px-3 py-2 pr-9 text-sm font-mono text-[#4A1D1F] focus:border-[#7B3010] focus:outline-none"
+                placeholder="e.g. breakfast-combo"
+                value={slug}
+                onChange={(e) => {
+                  const val = e.target.value.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "")
+                  setSlug(val)
+                  setSlugEdited(val.trim().length > 0)
+                }}
+              />
+              <button
+                type="button"
+                title="Regenerate slug from name"
+                onClick={() => {
+                  setSlug(generateSlug(name))
+                  setSlugEdited(false)
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-[#7A7A7A] hover:text-[#7B3010] rounded transition-colors"
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </label>
         </div>
       </div>
@@ -476,8 +647,9 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
             {selectedProductIds.map((id) => {
               const p = products.find((x) => x.id === id)
               if (!p) return null
-              const maxPrice = p.basePrice != null && p.basePrice > 0 ? p.basePrice : p.price
-              const itemVal = itemComboPrices[id] ?? ""
+              const chosenVariant = getProductVariant(p)
+              const maxPrice = getProductEffectivePrice(p)
+              const itemVal = itemComboPrices[id] !== undefined ? itemComboPrices[id] : String(maxPrice)
               const numericVal = itemVal.trim() !== "" ? Number(itemVal) : null
               const isItemPriceExceeded = numericVal !== null && Number.isFinite(numericVal) && numericVal > maxPrice
               return (
@@ -494,8 +666,38 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                       <div className="h-9 w-9 shrink-0 rounded-lg bg-[#E8DCC8]/40 border border-[#E8DCC8]" />
                     )}
                     <div className="truncate min-w-0">
-                      <p className="truncate font-semibold text-xs text-[#4A1D1F]">{p.name}</p>
-                      <p className="text-[11px] font-mono text-[#7A7A7A]">Base Price: ₹{maxPrice.toFixed(2)}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span
+                          className={`inline-flex shrink-0 items-center justify-center w-3 h-3 rounded-[2px] border ${
+                            p.dietary === "veg" ? "border-[#16A34A]" : "border-[#DC2626]"
+                          } bg-white shadow-2xs`}
+                          title={p.dietary === "veg" ? "Vegetarian" : "Non-Vegetarian"}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              p.dietary === "veg" ? "bg-[#16A34A]" : "bg-[#DC2626]"
+                            }`}
+                          />
+                        </span>
+                        <p className="truncate font-semibold text-xs text-[#4A1D1F]">{p.name}</p>
+                        {chosenVariant && (
+                          <span className="inline-flex items-center rounded-md bg-[#7B3010]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#7B3010]">
+                            {chosenVariant.weight || chosenVariant.name}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <p className="text-[11px] font-mono text-[#7A7A7A]">Base Price: ₹{maxPrice.toFixed(2)}</p>
+                        {p.variants && p.variants.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setVariantPromptProduct(p)}
+                            className="text-[10px] font-semibold text-[#7B3010] hover:underline"
+                          >
+                            Change variant
+                          </button>
+                        )}
+                      </div>
                       {isItemPriceExceeded && (
                         <p className="text-[10px] font-medium text-red-600">Cannot exceed ₹{maxPrice.toFixed(2)}</p>
                       )}
@@ -516,7 +718,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                           const val = e.target.value
                           setItemComboPrices((prev) => ({ ...prev, [id]: val }))
                         }}
-                        className={`w-full rounded-lg border pl-5 pr-2 py-1 text-xs font-semibold text-[#4A1D1F] focus:outline-none ${
+                        className={`w-full rounded-lg border pl-5 pr-2 py-1 text-xs font-semibold text-[#4A1D1F] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                           isItemPriceExceeded
                             ? "border-red-500 bg-red-50 focus:border-red-600"
                             : "border-[#E8DCC8] bg-white focus:border-[#7B3010]"
@@ -525,7 +727,7 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                     </div>
                     <button
                       type="button"
-                      onClick={() => toggleProduct(id)}
+                      onClick={() => removeProduct(id)}
                       className="rounded-lg p-1 text-[#7A7A7A] hover:bg-red-50 hover:text-red-700 transition-colors"
                       title="Remove item"
                     >
@@ -648,71 +850,90 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                   />
                 </div>
                 <Select
-                  value={selectedCategory}
+                  value={dietaryFilter}
                   onValueChange={(val) => {
-                    setSelectedCategory(val)
+                    setDietaryFilter(val as "all" | "veg" | "non-veg")
                     setModalPage(1)
                   }}
                 >
                   <SelectTrigger className="h-10 sm:w-[190px] rounded-xl border border-[#E8DCC8] bg-white px-3.5 text-sm font-medium text-[#4A1D1F] shadow-xs hover:border-[#7B3010]/60 focus-visible:border-[#7B3010] focus-visible:ring-1 focus-visible:ring-[#7B3010]/20">
-                    <SelectValue placeholder="All Categories" />
+                    <SelectValue placeholder="All Dietary Tags" />
                   </SelectTrigger>
                   <SelectContent className="z-[150] rounded-xl border border-[#E8DCC8] bg-white p-1 shadow-xl">
                     <SelectItem
                       value="all"
                       className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#4A1D1F] hover:bg-[#FFFBF3] focus:bg-[#FFFBF3] focus:text-[#7B3010] data-[state=checked]:font-semibold data-[state=checked]:text-[#7B3010]"
                     >
-                      All Categories
+                      All Tags
                     </SelectItem>
-                    {categories.map((cat) => (
-                      <SelectItem
-                        key={cat.id}
-                        value={cat.slug || cat.id}
-                        className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#4A1D1F] hover:bg-[#FFFBF3] focus:bg-[#FFFBF3] focus:text-[#7B3010] data-[state=checked]:font-semibold data-[state=checked]:text-[#7B3010]"
-                      >
-                        {cat.name}
-                      </SelectItem>
-                    ))}
+                    <SelectItem
+                      value="veg"
+                      className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#16A34A] hover:bg-[#FFFBF3] focus:bg-[#FFFBF3] focus:text-[#16A34A] data-[state=checked]:font-semibold data-[state=checked]:text-[#16A34A]"
+                    >
+                      Veg (Vegetarian)
+                    </SelectItem>
+                    <SelectItem
+                      value="non-veg"
+                      className="cursor-pointer rounded-lg px-3 py-2 text-sm text-[#DC2626] hover:bg-[#FFFBF3] focus:bg-[#FFFBF3] focus:text-[#DC2626] data-[state=checked]:font-semibold data-[state=checked]:text-[#DC2626]"
+                    >
+                      Non-Veg (Non-Vegetarian)
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Category Pills Bar */}
+              {/* Veg / Non-Veg Dietary Tabs Bar */}
               <div className="flex items-center gap-2 overflow-x-auto pb-1 pt-0.5 scrollbar-thin">
                 <button
                   type="button"
                   onClick={() => {
-                    setSelectedCategory("all")
+                    setDietaryFilter("all")
                     setModalPage(1)
                   }}
                   className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors ${
-                    selectedCategory === "all"
+                    dietaryFilter === "all"
                       ? "bg-[#7B3010] text-white shadow-xs"
                       : "bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#E8DCC8]/40"
                   }`}
                 >
-                  All
+                  All ({products.length})
                 </button>
-                {categories.map((cat) => {
-                  const isActive = selectedCategory === (cat.slug || cat.id)
-                  return (
-                    <button
-                      key={cat.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedCategory(cat.slug || cat.id)
-                        setModalPage(1)
-                      }}
-                      className={`shrink-0 rounded-full px-4 py-1.5 text-xs transition-colors ${
-                        isActive
-                          ? "bg-[#7B3010] text-white font-semibold shadow-xs"
-                          : "bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#E8DCC8]/40 font-medium"
-                      }`}
-                    >
-                      {cat.name}
-                    </button>
-                  )
-                })}
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDietaryFilter("veg")
+                    setModalPage(1)
+                  }}
+                  className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    dietaryFilter === "veg"
+                      ? "bg-[#16A34A] text-white shadow-xs"
+                      : "bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#E8DCC8]/40"
+                  }`}
+                >
+                  <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-current bg-white shadow-2xs">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#16A34A]" />
+                  </span>
+                  Veg ({products.filter((p) => p.dietary === "veg").length})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDietaryFilter("non-veg")
+                    setModalPage(1)
+                  }}
+                  className={`shrink-0 rounded-full px-4 py-1.5 text-xs font-semibold transition-colors flex items-center gap-2 ${
+                    dietaryFilter === "non-veg"
+                      ? "bg-[#DC2626] text-white shadow-xs"
+                      : "bg-[#FFFBF3] border border-[#E8DCC8] text-[#4A1D1F] hover:bg-[#E8DCC8]/40"
+                  }`}
+                >
+                  <span className="flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border border-current bg-white shadow-2xs">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[#DC2626]" />
+                  </span>
+                  Non-Veg ({products.filter((p) => p.dietary === "non-veg").length})
+                </button>
               </div>
             </div>
 
@@ -725,11 +946,22 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                   {paginatedProducts.map((p) => {
                     const isSelected = selectedProductIds.includes(p.id)
                     const isBlocked = !isSelected && selectedProductIds.length >= 3
+                    const hasVariants = p.type === "variant" && (p.variants?.length ?? 0) > 0
+                    const chosenVariant = isSelected ? getProductVariant(p) : null
+
                     return (
                       <div
                         key={p.id}
                         onClick={() => {
-                          if (!isBlocked || isSelected) toggleProduct(p.id)
+                          if (isSelected) {
+                            removeProduct(p.id)
+                          } else if (!isBlocked) {
+                            if (hasVariants) {
+                              setVariantPromptProduct(p)
+                            } else {
+                              selectSimpleProduct(p.id)
+                            }
+                          }
                         }}
                         className={`cursor-pointer rounded-xl border p-2.5 flex items-center justify-between gap-2.5 transition-all ${
                           isSelected
@@ -750,11 +982,51 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                             <div className="h-11 w-11 shrink-0 rounded-lg bg-[#E8DCC8]/40 border border-[#E8DCC8]" />
                           )}
                           <div className="min-w-0">
-                            <p className="truncate font-semibold text-xs text-[#4A1D1F]" title={p.name}>
-                              {p.name}
-                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`inline-flex shrink-0 items-center justify-center w-3 h-3 rounded-[2px] border ${
+                                  p.dietary === "veg" ? "border-[#16A34A]" : "border-[#DC2626]"
+                                } bg-white shadow-2xs`}
+                                title={p.dietary === "veg" ? "Vegetarian" : "Non-Vegetarian"}
+                              >
+                                <span
+                                  className={`w-1.5 h-1.5 rounded-full ${
+                                    p.dietary === "veg" ? "bg-[#16A34A]" : "bg-[#DC2626]"
+                                  }`}
+                                />
+                              </span>
+                              <p className="truncate font-semibold text-xs text-[#4A1D1F]" title={p.name}>
+                                {p.name}
+                              </p>
+                            </div>
                             <p className="truncate font-mono text-[10px] text-[#7A7A7A]">{p.sku || p.slug}</p>
-                            <p className="text-xs font-bold text-[#7B3010] mt-0.5">₹{p.price.toFixed(2)}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <p className="text-xs font-bold text-[#7B3010]">
+                                {chosenVariant ? `₹${chosenVariant.price.toFixed(2)}` : `₹${p.price.toFixed(2)}`}
+                              </p>
+                              {hasVariants && !isSelected && (
+                                <span className="rounded bg-[#E8DCC8]/50 px-1.5 py-0.2 text-[9px] font-semibold text-[#7B3010]">
+                                  {p.variants?.length} variants
+                                </span>
+                              )}
+                              {chosenVariant && (
+                                <span className="rounded bg-[#7B3010]/10 px-1.5 py-0.2 text-[9px] font-bold text-[#7B3010]">
+                                  {chosenVariant.weight || chosenVariant.name}
+                                </span>
+                              )}
+                            </div>
+                            {hasVariants && isSelected && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setVariantPromptProduct(p)
+                                }}
+                                className="text-[10px] font-semibold text-[#7B3010] hover:underline mt-0.5 block"
+                              >
+                                Change variant
+                              </button>
+                            )}
                           </div>
                         </div>
                         <div className="shrink-0">
@@ -811,6 +1083,123 @@ export function ComboForm({ bundleId, onSaved, onCancel, className }: ComboFormP
                 className="rounded-xl bg-[#7B3010] px-5 py-2 text-xs font-semibold uppercase tracking-wide text-white hover:bg-[#5c2410]"
               >
                 Done
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* Variant Selection Prompt Modal */}
+      {variantPromptProduct && mounted && createPortal(
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 sm:p-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setVariantPromptProduct(null)
+          }}
+        >
+          <div className="relative w-full max-w-lg flex flex-col rounded-3xl border border-[#E8DCC8] bg-white shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-start justify-between px-6 py-4 border-b border-[#E8DCC8] bg-[#FFFBF3]/50">
+              <div className="min-w-0 pr-3">
+                <span className="inline-block text-[10px] font-bold uppercase tracking-wider text-[#7B3010] bg-[#7B3010]/10 px-2 py-0.5 rounded-full mb-1">
+                  Select Variant
+                </span>
+                <h3 className="font-melon text-base font-bold text-[#4A1D1F] truncate">
+                  {variantPromptProduct.name}
+                </h3>
+                <p className="text-xs text-[#7A7A7A] mt-0.5">
+                  This product has multiple variants. Choose which pack size to include:
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setVariantPromptProduct(null)}
+                className="rounded-lg p-1 text-[#7A7A7A] hover:bg-white hover:text-[#4A1D1F] transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body: Variants List */}
+            <div className="p-6 max-h-[60vh] overflow-y-auto space-y-2.5">
+              {(variantPromptProduct.variants ?? []).map((v) => {
+                const isCurrent = selectedVariants[variantPromptProduct.id] === v.id
+                const isOutOfStock = v.stock !== undefined && v.stock <= 0
+
+                return (
+                  <div
+                    key={v.id}
+                    onClick={() => {
+                      selectProductVariant(variantPromptProduct, v)
+                    }}
+                    className={`group cursor-pointer rounded-2xl border p-3.5 flex items-center justify-between gap-3 transition-all ${
+                      isCurrent
+                        ? "border-[#7B3010] bg-[#FFFBF3] ring-1 ring-[#7B3010]"
+                        : "border-[#E8DCC8] hover:border-[#7B3010]/70 hover:bg-[#FFFBF3]/30"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div
+                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                          isCurrent
+                            ? "border-[#7B3010] bg-[#7B3010] text-white"
+                            : "border-[#E8DCC8] bg-white group-hover:border-[#7B3010]"
+                        }`}
+                      >
+                        {isCurrent && <div className="h-2 w-2 rounded-full bg-white" />}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-sm text-[#4A1D1F]">
+                            {v.weight || v.name}
+                          </p>
+                          {v.isDefault && (
+                            <span className="text-[10px] font-medium text-[#7A7A7A] bg-[#E8DCC8]/50 px-1.5 py-0.2 rounded">
+                              Default
+                            </span>
+                          )}
+                          {isOutOfStock ? (
+                            <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.2 rounded">
+                              Out of stock
+                            </span>
+                          ) : v.stock !== undefined ? (
+                            <span className="text-[10px] font-medium text-[#16A34A] bg-green-50 px-1.5 py-0.2 rounded">
+                              {v.stock} in stock
+                            </span>
+                          ) : null}
+                        </div>
+                        {v.sku && (
+                          <p className="font-mono text-[11px] text-[#9A9A92] mt-0.5">
+                            SKU: {v.sku}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <div className="font-bold text-sm text-[#7B3010]">
+                        ₹{v.price.toFixed(2)}
+                      </div>
+                      {v.mrp && v.mrp > v.price ? (
+                        <div className="text-[11px] text-[#9A9A92] line-through font-mono">
+                          MRP: ₹{v.mrp.toFixed(2)}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-end gap-3 px-6 py-3.5 border-t border-[#E8DCC8] bg-[#FFFBF3]/30">
+              <button
+                type="button"
+                onClick={() => setVariantPromptProduct(null)}
+                className="rounded-xl border border-[#E8DCC8] bg-white px-4 py-2 text-xs font-semibold uppercase tracking-wide text-[#4A1D1F] hover:bg-[#FFFBF3]"
+              >
+                Cancel
               </button>
             </div>
           </div>

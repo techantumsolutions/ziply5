@@ -42,7 +42,11 @@ type ValidatedCartItem = CartItem & {
   stock: number;
   variantError: boolean;
   productName: string;
-  basePrice?: number;
+  basePrice: number;
+  packName?: string | null;
+  packQuantity?: number;
+  baseWeight?: string;
+  savingAmount?: number;
 };
 
 export default function CheckoutPage() {
@@ -303,9 +307,18 @@ export default function CheckoutPage() {
       const p = products.find(p => p.id === item.productId || p.slug === item.slug);
       if (!p) return false;
 
+      const isPack = item.variantId?.includes(":pack-") || Boolean(p.packs?.some((pk: any) => pk.id === item.variantId));
+      const [rawVariantId] = item.variantId ? item.variantId.split(":pack-") : [null];
+      const baseVariantId = rawVariantId === "default" ? null : rawVariantId;
+
       // remove invalid variant items
       if (p.productKind === "variant") {
-        return item.variantId && p.variants.some(v => v.id === item.variantId);
+        if (!item.variantId) return false;
+        if (isPack) {
+          if (!baseVariantId || p.packs?.some((pk: any) => pk.id === item.variantId || pk.id === rawVariantId)) return true;
+          return p.variants.some(v => v.id === baseVariantId);
+        }
+        return p.variants.some(v => v.id === item.variantId);
       }
 
       return true;
@@ -331,23 +344,102 @@ export default function CheckoutPage() {
         };
       }
 
-      let price = p.price;
-      let basePrice = p.oldPrice;
+      const isPack = item.variantId?.includes(":pack-") || Boolean(p.packs?.some((pk: any) => pk.id === item.variantId));
+      const [rawVariantId, packSuffix] = item.variantId ? item.variantId.split(":pack-") : [null, "1"];
+      const baseVariantId = rawVariantId === "default" ? null : rawVariantId;
+      const packQuantity = isPack ? Math.max(1, Number(packSuffix) || 1) : 1;
+
+      let price = item.price;
+      let basePrice = item.comparePrice ?? item.basePrice ?? item.price;
       let stock = p.stock ?? 0;
       let variantError = false;
+      let packName: string | null = null;
+      let baseWeight: string = item.weight || "";
 
-      if (p.productKind === "variant") {
+      if (isPack) {
+        const v = baseVariantId
+          ? p.variants.find((v) => v.id === baseVariantId)
+          : (p.variants.find((v) => v.isDefault) ?? p.variants[0]);
+        if (v?.weight) baseWeight = v.weight;
+        else if (p.weight) baseWeight = p.weight;
+
+        const baseUnitRate = v ? Number(v.price) : Number(p.price);
+        const baseUnitMrp = v ? Number(v.mrp || v.price) : Number(p.oldPrice || p.price);
+
+        // If it's a pack, find corresponding pack configuration from product if available
+        const matchedPack = p.packs?.find((pk: any) => {
+          if (pk.id === item.variantId) return true;
+          if (pk.quantity !== packQuantity) return false;
+          if (baseVariantId && pk.variantId) return pk.variantId === baseVariantId;
+          if (item.variantLabel && pk.variantWeight) {
+            return item.variantLabel.toLowerCase().includes(pk.variantWeight.toLowerCase());
+          }
+          return true;
+        });
+
+        if (matchedPack) {
+          packName = matchedPack.name || `Pack of ${packQuantity}`;
+          price = Number(matchedPack.price) || item.price;
+          const packMrp = Number(matchedPack.mrp) || 0;
+          if (packMrp > price) {
+            basePrice = packMrp;
+          } else if (baseUnitRate * packQuantity > price) {
+            basePrice = baseUnitRate * packQuantity;
+          } else if (baseUnitMrp * packQuantity > price) {
+            basePrice = baseUnitMrp * packQuantity;
+          } else {
+            basePrice = price;
+          }
+        } else {
+          packName = `Pack of ${packQuantity}`;
+          price = item.price;
+          if (baseUnitRate * packQuantity > price) {
+            basePrice = baseUnitRate * packQuantity;
+          } else {
+            basePrice = item.comparePrice ?? item.basePrice ?? item.price;
+          }
+        }
+
+        if (p.productKind === "variant") {
+          if (v) {
+            stock = Math.floor(v.stock / packQuantity);
+          } else {
+            variantError = true;
+          }
+        } else {
+          stock = Math.floor((p.stock ?? 0) / packQuantity);
+        }
+      } else if (p.productKind === "variant") {
         const v = p.variants.find((v) => v.id === item.variantId);
         if (v) {
           price = v.price;
-          basePrice = v.mrp || p.oldPrice;
+          basePrice = v.mrp || p.oldPrice || v.price;
           stock = v.stock;
+          if (v.weight) baseWeight = v.weight;
         } else {
           variantError = true;
         }
+      } else {
+        price = p.price;
+        basePrice = p.oldPrice || p.price;
+        stock = p.stock ?? 0;
+        if (p.weight) baseWeight = p.weight;
       }
 
-      return { ...item, price, basePrice, stock, variantError, productName: p.name };
+      const itemSaving = basePrice > price ? (basePrice - price) * item.quantity : 0;
+
+      return {
+        ...item,
+        price,
+        basePrice,
+        stock,
+        variantError,
+        productName: p.name,
+        packName: isPack ? packName : null,
+        packQuantity: isPack ? packQuantity : 1,
+        baseWeight,
+        savingAmount: itemSaving,
+      };
     });
   }, [items, products]);
 
@@ -658,6 +750,10 @@ export default function CheckoutPage() {
           tax: Number((item.price * item.quantity * (taxPercentage / 100)).toFixed(2)),
           stock: item.stock ?? null,
           weight: item.weight,
+          packName: item.packName ?? null,
+          packQuantity: item.packQuantity ?? 1,
+          baseWeight: item.baseWeight ?? item.weight ?? "",
+          savingAmount: Number((item.savingAmount ?? 0).toFixed(2)),
         })),
         shippingAddress: normalizedAddress,
         billingAddress: normalizedAddress,
@@ -945,11 +1041,23 @@ export default function CheckoutPage() {
                           <div className="h-16 w-16 shrink-0" />
                         )}
                         <div className="min-w-0">
-                          <p className="font-melon font-medium tracking-wide text-black">{item.productName || item.name}</p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <p className="font-melon font-medium tracking-wide text-black">{item.productName || item.name}</p>
+                            {item.packName && (item.packQuantity ?? 1) > 1 && (
+                              <span className="inline-flex items-center rounded border border-[#E8DEC8] bg-[#FFF8EE] px-2 py-0.5 text-xs font-semibold text-[#A33838]">
+                                {item.packName}
+                              </span>
+                            )}
+                          </div>
                           <p className="text-xs text-[#787878]">
-                            Weight: <span className="font-medium text-black">{item.weight || "—"}</span>
+                            Weight:{" "}
+                            <span className="font-medium text-black">
+                              {(item.packQuantity ?? 1) > 1 && item.baseWeight
+                                ? `${item.baseWeight} * ${item.packQuantity}`
+                                : item.weight || "—"}
+                            </span>
                           </p>
-                          {item.variantLabel && item.variantLabel !== item.weight ? (
+                          {item.variantLabel && item.variantLabel !== item.weight && !item.variantLabel.startsWith("Pack of") ? (
                             <p className="text-xs text-[#787878]">
                               Variant: <span className="font-medium text-black">{item.variantLabel}</span>
                             </p>
@@ -959,21 +1067,37 @@ export default function CheckoutPage() {
                         </div>
                       </div>
                       <div className="grid grid-cols-3 gap-2 md:contents">
-                        <p className="font-melon font-medium tracking-wide text-primary">
+                        <div>
                           <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Price</span>
-                          Rs.{item.price.toFixed(2)}
-                        </p>
+                          {item.basePrice > item.price ? (
+                            <span className="block text-xs text-[#787878] line-through">
+                              Rs.{item.basePrice.toFixed(2)}
+                            </span>
+                          ) : null}
+                          <p className="font-melon font-medium tracking-wide text-primary">
+                            Rs.{item.price.toFixed(2)}
+                          </p>
+                          {item.basePrice > item.price ? (
+                            <span className="inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
+                              Save Rs.{((item.basePrice - item.price) * item.quantity).toFixed(2)} ({Math.round(((item.basePrice - item.price) / item.basePrice) * 100)}% off)
+                            </span>
+                          ) : null}
+                        </div>
                         <p className="font-medium text-black">
                           <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Quantity</span>
                           {item.quantity}
                         </p>
-                        <p className="font-melon font-medium tracking-wide text-black">
+                        <div>
                           <span className="mb-1 block text-[11px] font-normal text-[#787878] md:hidden">Total</span>
-                          {item.basePrice && item.basePrice > item.price ? (
-                            <span className="mr-1 text-[10px] line-through opacity-50">Rs.{(item.basePrice * item.quantity).toFixed(2)}</span>
-                          ) : null}
-                          Rs.{(item.price * item.quantity).toFixed(2)}
-                        </p>
+                          <p className="font-melon font-medium tracking-wide text-black">
+                            {item.basePrice > item.price ? (
+                              <span className="mr-1 text-[11px] line-through opacity-50">
+                                Rs.{(item.basePrice * item.quantity).toFixed(2)}
+                              </span>
+                            ) : null}
+                            Rs.{(item.price * item.quantity).toFixed(2)}
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )
@@ -994,6 +1118,12 @@ export default function CheckoutPage() {
               <span>Shipping ({totalPacksForShipping} packs)</span>
               <span>Rs.{(offerAdjustedShipping ?? shipping).toFixed(2)}</span>
             </div>
+            {totalProductSavings > 0 && (
+              <div className="flex justify-between text-emerald-800 font-semibold font-melon tracking-wide mt-2">
+                <span>Pack & Product Savings</span>
+                <span>-Rs.{totalProductSavings.toFixed(2)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-[#C03621] font-medium font-melon tracking-wide mt-2">
               <span>Coupon Discount</span>
               <span>-Rs.{couponDiscount.toFixed(2)}</span>
@@ -1006,10 +1136,12 @@ export default function CheckoutPage() {
                   <span>-Rs.{Number(entry.amount).toFixed(2)}</span>
                 </div>
               ))}
-            <div className="flex justify-between text-[#C03621] font-medium font-melon tracking-wide mt-2">
-              <span>Total Savings</span>
-              <span>-Rs.{(totalProductSavings + offerTotalDiscount).toFixed(2)}</span>
-            </div>
+            {(totalProductSavings + offerTotalDiscount) > 0 && (
+              <div className="flex justify-between text-emerald-800 font-bold font-melon tracking-wide mt-2 border-t border-[#C03621]/20 pt-2">
+                <span>Total Savings</span>
+                <span>-Rs.{(totalProductSavings + offerTotalDiscount).toFixed(2)}</span>
+              </div>
+            )}
             {taxPercentage > 0 && (
               <div className="flex justify-between text-[#C03621] font-medium font-melon tracking-wide mt-2">
                 <span>Tax ({taxPercentage}%)</span>

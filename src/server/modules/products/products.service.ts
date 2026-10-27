@@ -49,6 +49,7 @@ type CreateProductInput = {
   createdById?: string | null
   managedById?: string | null
   categoryId?: string | null
+  categoryIds?: string[]
   tagIds?: string[]
   brandId?: string | null
   variants?: Array<{
@@ -63,6 +64,18 @@ type CreateProductInput = {
     isDefault?: boolean
     hsnCode?: string | null
     eanCode?: string | null
+  }>
+  packs?: Array<{
+    id?: string
+    variantId?: string | null
+    variantWeight?: string | null
+    name: string
+    quantity: number
+    mrp: number
+    price: number
+    discountPercent?: number | null
+    sku?: string | null
+    isActive?: boolean
   }>
   images?: string[]
   features?: Array<{ featureDefinitionId?: string | null; title?: string; icon?: string | null }>
@@ -96,6 +109,7 @@ type UpdateProductInput = Partial<{
   metaDescription: string | null
   status: "draft" | "published" | "archived"
   categoryId: string | null
+  categoryIds: string[]
   amazonLink: string | null
   tagIds: string[]
   brandId: string | null
@@ -111,6 +125,18 @@ type UpdateProductInput = Partial<{
     isDefault?: boolean
     hsnCode?: string | null
     eanCode?: string | null
+  }>
+  packs: Array<{
+    id?: string
+    variantId?: string | null
+    variantWeight?: string | null
+    name: string
+    quantity: number
+    mrp: number
+    price: number
+    discountPercent?: number | null
+    sku?: string | null
+    isActive?: boolean
   }>
   images: string[]
   features: Array<{ featureDefinitionId?: string | null; title?: string; icon?: string | null }>
@@ -205,7 +231,7 @@ const productSelect = {
   details: { orderBy: { sortOrder: "asc" as const } },
   sections: { orderBy: { sortOrder: "asc" as const } },
   brand: true,
-  categories: { include: { category: true }, take: 1 },
+  categories: { include: { category: true } },
   tags: { include: { tag: true } },
   variants: true,
 } as const
@@ -239,7 +265,7 @@ const productSelectPublicList = {
   images: { take: 1, orderBy: { position: "asc" as const } },
   // Tags drive veg/non-veg detection.
   tags: { include: { tag: true } },
-  categories: { include: { category: true }, take: 1 },
+  categories: { include: { category: true } },
   // Weight/sku/stock are needed for product-card rendering.
   variants: {
     select: {
@@ -702,7 +728,7 @@ const hydrateProductsFromPg = async <T extends Record<string, unknown>>(items: T
   const [variantRows, categoryRows, productTagRows] = await Promise.all([
     pgQuery(`SELECT * FROM "ProductVariant" WHERE "productId" = ANY($1::text[])`, [ids]),
     pgQuery(
-      `SELECT pc."productId" as "productId", pc."categoryId" as "categoryId", c.slug as "categorySlug"
+      `SELECT pc."productId" as "productId", pc."categoryId" as "categoryId", c.slug as "categorySlug", c.name as "categoryName"
        FROM "ProductCategory" pc
        LEFT JOIN "Category" c ON c.id = pc."categoryId"
        WHERE pc."productId" = ANY($1::text[])`,
@@ -732,10 +758,13 @@ const hydrateProductsFromPg = async <T extends Record<string, unknown>>(items: T
     if (!pid) continue
     const categoryId = String((row as { categoryId?: string }).categoryId ?? "")
     const slug = String((row as { categorySlug?: string }).categorySlug ?? "").trim()
+    const name = String((row as { categoryName?: string }).categoryName ?? "").trim()
     const list = categoriesByProduct.get(pid) ?? []
     list.push({
       categoryId,
-      ...(slug ? { category: { slug }, slug } : {}),
+      ...(slug || name ? { category: { ...(slug ? { slug } : {}), ...(name ? { name } : {}) } } : {}),
+      ...(slug ? { slug } : {}),
+      ...(name ? { name } : {}),
     })
     categoriesByProduct.set(pid, list)
   }
@@ -752,14 +781,15 @@ const hydrateProductsFromPg = async <T extends Record<string, unknown>>(items: T
   return items.map((row) => {
     const id = String(row.id ?? "")
     const categories = categoriesByProduct.get(id) ?? []
-    const categoryId =
-      categories
-        .map((entry) => String((entry as { categoryId?: string }).categoryId ?? "").trim())
-        .find(Boolean) ?? null
+    const categoryIds = categories
+      .map((entry) => String((entry as { categoryId?: string }).categoryId ?? "").trim())
+      .filter(Boolean)
+    const categoryId = categoryIds[0] ?? null
     return {
       ...row,
       variants: variantsByProduct.get(id) ?? [],
       categories,
+      categoryIds,
       categoryId,
       tags: tagsByProduct.get(id) ?? [],
     }
@@ -956,6 +986,7 @@ const updateProductFromPg = async (
     if ("metaTitle" in input) push(`"metaTitle"`, input.metaTitle)
     if ("metaDescription" in input) push(`"metaDescription"`, input.metaDescription)
     if ("amazonLink" in input) push(`"amazonLink"`, input.amazonLink)
+    if ("packs" in input) push(`"packs"`, JSON.stringify(input.packs ?? []))
     if ("status" in input && input.status !== undefined) push("status", input.status)
     if ("brandId" in input) push(`"brandId"`, input.brandId ?? null)
     const manager = await client.query(`SELECT 1 FROM "User" WHERE id = $1 LIMIT 1`, [userId])
@@ -966,13 +997,16 @@ const updateProductFromPg = async (
     values.push(id)
     await client.query(`UPDATE "Product" SET ${sets.join(", ")} WHERE id = $${values.length}`, values)
 
-    if ("categoryId" in input) {
+    if ("categoryIds" in input || "categoryId" in input) {
       await client.query(`DELETE FROM "ProductCategory" WHERE "productId" = $1`, [id])
-      if (input.categoryId) {
+      const targetCategoryIds: string[] = Array.isArray(input.categoryIds)
+        ? input.categoryIds.filter(Boolean)
+        : (input.categoryId ? [input.categoryId] : [])
+      for (const catId of targetCategoryIds) {
         await withSavepoint(client, "sp_product_category", async () => {
           await client.query(
             `INSERT INTO "ProductCategory" ("productId", "categoryId") VALUES ($1, $2)`,
-            [id, input.categoryId],
+            [id, catId],
           )
         })
       }
@@ -1215,7 +1249,10 @@ export const createProduct = async (input: CreateProductInput) => {
       status: input.status ?? "draft",
       priceUpdatedAt: new Date(),
       brandId: input.brandId ?? undefined,
-      categories: input.categoryId ? { create: [{ categoryId: input.categoryId }] } : undefined,
+      packs: input.packs ?? [],
+      categories: input.categoryIds?.length
+        ? { create: input.categoryIds.map((cid: string) => ({ categoryId: cid })) }
+        : (input.categoryId ? { create: [{ categoryId: input.categoryId }] } : undefined),
       variants: input.variants?.length
         ? {
             create: input.variants.map((v) => ({
@@ -1274,7 +1311,8 @@ export const createProduct = async (input: CreateProductInput) => {
     } = (baseData as unknown) as Record<string, unknown>
     const created = await createProductSupabase({
       base: baseSupabase,
-      categoryId: input.categoryId ?? null,
+      categoryId: input.categoryId ?? input.categoryIds?.[0] ?? null,
+      categoryIds: input.categoryIds ?? (input.categoryId ? [input.categoryId] : []),
       tagIds: uniqueTagIds,
       variants: input.variants?.map((v) => ({
         name: v.name,
@@ -1378,9 +1416,11 @@ export const updateProduct = async (
           ...("amazonLink" in input ? { amazonLink: input.amazonLink } : {}),
           ...("status" in input && input.status !== undefined ? { status: input.status } : {}),
           ...("brandId" in input ? { brandId: input.brandId ?? null } : {}),
+          ...("packs" in input ? { packs: input.packs ?? [] } : {}),
           managedById: opts.userId,
         },
         categoryId: "categoryId" in input ? (input.categoryId ?? null) : undefined,
+        categoryIds: "categoryIds" in input ? input.categoryIds : undefined,
         variants:
           "variants" in input
             ? (input.variants ?? []).map((v) => ({

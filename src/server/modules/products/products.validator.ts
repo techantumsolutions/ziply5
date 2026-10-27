@@ -47,6 +47,20 @@ const sectionSchema = z.object({
   isActive: z.boolean().optional(),
 })
 
+const packSchema = z.object({
+  id: z.string().optional(),
+  variantId: z.string().optional().nullable(),
+  variantWeight: z.string().optional().nullable(),
+  name: z.string().min(1),
+  quantity: z.number().int().min(1),
+  mrp: z.number().min(0),
+  price: z.number().min(0),
+  discountPercent: z.number().min(0).max(100).optional().nullable(),
+  sku: z.string().optional().nullable(),
+  hsnCode: z.string().optional().nullable(),
+  isActive: z.boolean().default(true).optional(),
+})
+
 export const createProductSchema = z.object({
   id: z.string().optional(),
   name: z.string().min(2),
@@ -69,8 +83,10 @@ export const createProductSchema = z.object({
   metaDescription: z.string().optional().nullable(),
   status: z.enum(["draft", "published", "archived"]).optional(),
   categoryId: z.string().nullable().optional(),
+  categoryIds: z.array(z.string()).optional(),
   brandId: z.string().nullable().optional(),
   variants: z.array(variantSchema).optional(),
+  packs: z.array(packSchema).optional(),
   images: z.array(z.string().min(1)).optional(),
   features: z.array(featureSchema).optional(),
   featureDefinitionIds: z.array(z.string().min(1)).optional(),
@@ -123,9 +139,11 @@ export const updateProductSchema = z.object({
   metaDescription: z.string().nullable().optional(),
   status: z.enum(["draft", "published", "archived"]).optional(),
   categoryId: z.string().nullable().optional(),
+  categoryIds: z.array(z.string()).optional(),
   tagIds: z.array(z.string()).optional(),
   brandId: z.string().nullable().optional(),
   variants: z.array(variantSchema).optional(),
+  packs: z.array(packSchema).optional(),
   images: z.array(z.string().min(1)).optional(),
   features: z.array(featureSchema).optional(),
   featureDefinitionIds: z.array(z.string().min(1)).optional(),

@@ -10,6 +10,11 @@ export const createOrderSchema = z.object({
       price: z.number().nonnegative().optional(),
       subtotal: z.number().nonnegative().optional(),
       tax: z.number().nonnegative().optional(),
+      packName: z.string().nullable().optional(),
+      packQuantity: z.number().int().positive().optional(),
+      comparePrice: z.number().nonnegative().nullable().optional(),
+      savingAmount: z.number().nonnegative().nullable().optional(),
+      baseWeight: z.string().nullable().optional(),
     })
   ).min(1),
 

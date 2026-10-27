@@ -352,6 +352,7 @@ const resolveComboChildrenForCheckout = async (input: {
   const childRows = await pgQuery<
     Array<{
       productId: string
+      bpVariantId: string | null
       productName: string
       productStatus: string
       productIsActive: boolean | null
@@ -367,6 +368,7 @@ const resolveComboChildrenForCheckout = async (input: {
     `
       SELECT
         bp."productId" as "productId",
+        bp."variantId" as "bpVariantId",
         p.name as "productName",
         p.status as "productStatus",
         p."isActive" as "productIsActive",
@@ -417,6 +419,24 @@ const resolveComboChildrenForCheckout = async (input: {
     if (productStatus !== "published" || first.productIsActive === false) {
       console.error("[combo][validation.failed]", { comboId: bundle.id, productId, reason: "product_inactive" })
       throw new Error("One of the combo products is unavailable.")
+    }
+    if (first.bpVariantId) {
+      const chosen = rows.find((r) => r.variantId === first.bpVariantId)
+      if (!chosen) {
+        throw new Error(`Variant for "${first.productName}" is no longer available.`)
+      }
+      const available = Math.floor(Number(chosen.variantStock ?? 0))
+      if (available <= 0) {
+        throw new Error(`Variant "${chosen.variantName}" is out of stock.`)
+      }
+      children.push({
+        productId,
+        variantId: chosen.variantId,
+        unitPrice: Number(chosen.variantPrice ?? 0),
+        stock: available,
+      })
+      stockCaps.push(available)
+      continue
     }
     const validVariants = rows.filter(
       (row) => Boolean(row.variantId) && Number(row.variantStock ?? 0) > 0,
@@ -540,7 +560,20 @@ export async function validatePromoCode(input: { code?: string, id?: string }, s
 }
 
 export const createOrderFromCheckout = async (input: {
-  items: { productId: string; variantId?: string | null; sku?: string | null; quantity: number; price?: number; subtotal?: number; tax?: number }[]
+  items: {
+    productId: string
+    variantId?: string | null
+    sku?: string | null
+    quantity: number
+    price?: number
+    subtotal?: number
+    tax?: number
+    packName?: string | null
+    packQuantity?: number
+    comparePrice?: number | null
+    savingAmount?: number | null
+    baseWeight?: string | null
+  }[]
   userId?: string | null
   shipping?: number
   currency?: string
@@ -602,7 +635,20 @@ export const createOrderFromCheckout = async (input: {
   const byId = Object.fromEntries(products.map((p) => [p.id, p]))
   let subtotal = 0
   let taxTotal = 0
-  const lines: { productId: string; variantId?: string | null; sku?: string | null; quantity: number; unitPrice: number; lineTotal: number; tax: number }[] = []
+  const lines: {
+    productId: string
+    variantId?: string | null
+    sku?: string | null
+    quantity: number
+    unitPrice: number
+    lineTotal: number
+    tax: number
+    packMultiplier?: number
+    packName?: string | null
+    comparePrice?: number | null
+    savingAmount?: number | null
+    baseWeight?: string | null
+  }[] = []
 
   for (const line of input.items) {
     const p = byId[line.productId]
@@ -631,18 +677,34 @@ export const createOrderFromCheckout = async (input: {
       continue
     }
 
-    const variantId = line.variantId ?? null
+    const isPack = Boolean(line.variantId?.includes(":pack-") || (line.packQuantity != null && line.packQuantity > 1))
+    const [rawVariantId, packSuffix] = line.variantId ? line.variantId.split(":pack-") : [null, "1"]
+    const baseVariantId = rawVariantId === "default" ? null : rawVariantId
+    const packMultiplier = line.packQuantity != null && line.packQuantity > 0
+      ? line.packQuantity
+      : isPack ? Math.max(1, Number(packSuffix) || 1) : 1
+
     let unit = Number(p.price)
+    let chosenSku: string | null = null
+    let chosenWeight: string | null = null
     if (p.type === "variant") {
       const fallback = p.variants.find((v) => v.isDefault) ?? p.variants[0]
-      const chosen = variantId ? p.variants.find((v) => v.id === variantId) : fallback
+      const chosen = baseVariantId ? p.variants.find((v) => v.id === baseVariantId) : fallback
       if (!chosen) {
         throw new Error(`Variant is required for product: ${p.slug}`)
       }
-      if (chosen.stock < line.quantity) {
+      if (chosen.stock < line.quantity * packMultiplier) {
         throw new Error("Product is out of stock.")
       }
       unit = Number(chosen.price)
+      chosenSku = chosen.sku ? chosen.sku.replace(/-PACK-\d+/i, "") : null
+      chosenWeight = chosen.weight || null
+    } else {
+      if ((p.totalStock ?? 0) < line.quantity * packMultiplier) {
+        throw new Error("Product is out of stock.")
+      }
+      chosenSku = p.sku ? p.sku.replace(/-PACK-\d+/i, "") : null
+      chosenWeight = (p as any).weight || null
     }
 
     // Preserve unit price sent from checkout (sale price / offer price / pack price) if valid
@@ -650,20 +712,35 @@ export const createOrderFromCheckout = async (input: {
       unit = Number(line.price)
     }
 
+    const cleanLineSku = line.sku ? String(line.sku).replace(/-PACK-\d+/i, "") : null
+    const finalSku = chosenSku || cleanLineSku || (p.sku ? String(p.sku).replace(/-PACK-\d+/i, "") : null)
+
     const lineTotal = Number(
       line.subtotal != null && Number.isFinite(Number(line.subtotal)) && Number(line.subtotal) > 0
         ? Number(line.subtotal)
         : (unit * line.quantity).toFixed(2)
     )
     const lineTax = Math.max(0, Number(line.tax ?? 0))
+    const finalPackName = line.packName || (packMultiplier > 1 ? `Pack of ${packMultiplier}` : null)
+    const finalComparePrice = line.comparePrice != null ? Number(line.comparePrice) : null
+    const finalSavingAmount = line.savingAmount != null
+      ? Number(line.savingAmount)
+      : (finalComparePrice && finalComparePrice > unit ? (finalComparePrice - unit) * line.quantity : 0)
+    const finalBaseWeight = line.baseWeight || chosenWeight || null
+
     lines.push({
       productId: p.id,
-      variantId,
-      sku: line.sku ?? null,
+      variantId: baseVariantId,
+      sku: finalSku,
       quantity: line.quantity,
       unitPrice: unit,
       lineTotal,
       tax: lineTax,
+      packMultiplier,
+      packName: finalPackName,
+      comparePrice: finalComparePrice,
+      savingAmount: finalSavingAmount,
+      baseWeight: finalBaseWeight,
     })
     subtotal += lineTotal
     taxTotal += lineTax
@@ -709,7 +786,13 @@ export const createOrderFromCheckout = async (input: {
     total = Number(input.total)
   }
 
-  await reserveInventorySupabase(lines.map((line) => ({ productId: line.productId, variantId: line.variantId, quantity: line.quantity })))
+  await reserveInventorySupabase(
+    lines.map((line) => ({
+      productId: line.productId,
+      variantId: line.variantId,
+      quantity: line.quantity * (line.packMultiplier ?? 1),
+    }))
+  )
 
   const accountEmail = input.userId
     ? (await getUserEmailSupabase(input.userId).catch(() => null))?.trim() || null
@@ -749,6 +832,11 @@ export const createOrderFromCheckout = async (input: {
     subtotal: l.lineTotal,
     tax: l.tax,
     lineTotal: l.lineTotal,
+    packQuantity: l.packMultiplier ?? 1,
+    packName: l.packName ?? null,
+    comparePrice: l.comparePrice != null ? Number(l.comparePrice) : null,
+    savingAmount: l.savingAmount != null ? Number(l.savingAmount) : 0,
+    baseWeight: l.baseWeight ?? null,
   }));
 
   console.log("[orders.service] Attempting to create order with Supabase payload:", JSON.stringify({ orderData, itemCount: itemRows.length }, null, 2));

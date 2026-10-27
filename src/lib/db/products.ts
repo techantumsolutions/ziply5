@@ -50,6 +50,7 @@ const PRODUCT_BASE_COLUMNS = [
   "spiceLevel",
   "weight",
   "amazonLink",
+  "packs",
 ].join(",")
 
 const existsById = async (tables: string[], id: string): Promise<boolean> => {
@@ -508,15 +509,19 @@ const readByIds = async <T extends Record<string, unknown>>(
 const shapeCategories = (
   rows: Array<Record<string, unknown>>,
   categorySlugById?: Map<string, string>,
+  categoryNameById?: Map<string, string>,
 ) =>
   rows
     .map((row) => safeString((row as any).categoryId ?? (row as any).category_id))
     .filter(Boolean)
     .map((categoryId) => {
       const slug = categorySlugById?.get(categoryId) ?? null
+      const name = categoryNameById?.get(categoryId) ?? null
       return {
         categoryId,
-        ...(slug ? { category: { slug }, slug } : {}),
+        ...(slug || name ? { category: { ...(slug ? { slug } : {}), ...(name ? { name } : {}) } } : {}),
+        ...(slug ? { slug } : {}),
+        ...(name ? { name } : {}),
       }
     })
 
@@ -553,6 +558,11 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
       .map((c) => [safeString((c as any).id), safeString((c as any).slug)] as [string, string])
       .filter(([cid, slug]) => Boolean(cid && slug)),
   )
+  const categoryNameById = new Map<string, string>(
+    categoryRows
+      .map((c) => [safeString((c as any).id), safeString((c as any).name)] as [string, string])
+      .filter(([cid, name]) => Boolean(cid && name)),
+  )
 
   // Optionally hydrate tags (best-effort; keep empty if table mismatch).
   const tagIds = (productTags ?? [])
@@ -563,7 +573,7 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
     tags = await readByIds(TAG_TABLES, tagIds)
   }
 
-  const shapedCategories = shapeCategories(categories ?? [], categorySlugById)
+  const shapedCategories = shapeCategories(categories ?? [], categorySlugById, categoryNameById)
   return {
     ...base,
     variants,
@@ -574,6 +584,7 @@ export const getProductByIdSupabaseHydrated = async (id: string) => {
     sections,
     // Match admin UI expected shapes. categoryId is the primary link from ProductCategory.
     categories: shapedCategories,
+    categoryIds: shapedCategories.map((c) => c.categoryId),
     categoryId: shapedCategories[0]?.categoryId ?? null,
     tags: shapeTags(tags ?? []),
   } as ProductRow
@@ -597,6 +608,11 @@ export const hydrateProductsForListSupabase = async <T extends Record<string, un
     categoryRowsFull
       .map((c) => [safeString((c as any).id), safeString((c as any).slug)] as [string, string])
       .filter(([cid, slug]) => Boolean(cid && slug)),
+  )
+  const categoryNameById = new Map<string, string>(
+    categoryRowsFull
+      .map((c) => [safeString((c as any).id), safeString((c as any).name)] as [string, string])
+      .filter(([cid, name]) => Boolean(cid && name)),
   )
 
   const tagIds = productTagRows
@@ -640,11 +656,12 @@ export const hydrateProductsForListSupabase = async <T extends Record<string, un
     const variants = variantsByProduct.get(id) ?? []
     const cats = categoriesByProduct.get(id) ?? []
     const tags = tagsByProduct.get(id) ?? []
-    const shapedCategories = shapeCategories(cats, categorySlugById)
+    const shapedCategories = shapeCategories(cats, categorySlugById, categoryNameById)
     return {
       ...row,
       variants,
       categories: shapedCategories,
+      categoryIds: shapedCategories.map((c) => c.categoryId),
       categoryId: shapedCategories[0]?.categoryId ?? (row as { categoryId?: string | null }).categoryId ?? null,
       tags: shapeTags(tags),
     }
@@ -685,6 +702,7 @@ export const getNextProductSequenceId = async (): Promise<string> => {
 export const createProductSupabase = async (input: {
   base: Record<string, unknown>
   categoryId?: string | null
+  categoryIds?: string[]
   tagIds?: string[]
   variants?: Array<Record<string, unknown>>
   images?: string[]
@@ -723,6 +741,7 @@ export const createProductSupabase = async (input: {
       productId: exId,
       baseUpdate: baseInput,
       categoryId: input.categoryId,
+      categoryIds: input.categoryIds,
       tagIds: input.tagIds,
       variants: input.variants,
       images: input.images,
@@ -751,12 +770,16 @@ export const createProductSupabase = async (input: {
     throw new Error(`Unable to create product via Supabase${detail}`)
   }
 
-  if (input.categoryId) {
-    const linked = await insertFirstNoId(PRODUCT_CATEGORY_TABLES, [{ productId, categoryId: input.categoryId }])
+  const targetCategoryIds = Array.isArray(input.categoryIds) && input.categoryIds.length > 0
+    ? input.categoryIds.filter(Boolean)
+    : (input.categoryId ? [input.categoryId] : [])
+
+  for (const catId of targetCategoryIds) {
+    const linked = await insertFirstNoId(PRODUCT_CATEGORY_TABLES, [{ productId, categoryId: catId }])
     if (!linked.ok) {
       logger.error("Supabase insert failed for table 'ProductCategory' with payload", {
         productId,
-        categoryId: input.categoryId,
+        categoryId: catId,
         errors: linked.errors.slice(0, 5),
       })
     }
@@ -853,6 +876,7 @@ export const updateProductSupabase = async (input: {
   productId: string
   baseUpdate: Record<string, unknown>
   categoryId?: string | null
+  categoryIds?: string[]
   tagIds?: string[]
   variants?: Array<Record<string, unknown>>
   images?: string[]
@@ -899,14 +923,17 @@ export const updateProductSupabase = async (input: {
     throw new Error(`Unable to update base product via Supabase${detail}`)
   }
 
-  if (input.categoryId !== undefined) {
+  if (input.categoryIds !== undefined || input.categoryId !== undefined) {
     await deleteByProductId(PRODUCT_CATEGORY_TABLES, input.productId)
-    if (input.categoryId) {
-      const linked = await insertFirstNoId(PRODUCT_CATEGORY_TABLES, [{ productId: input.productId, categoryId: input.categoryId }])
+    const targetCategoryIds = Array.isArray(input.categoryIds)
+      ? input.categoryIds.filter(Boolean)
+      : (input.categoryId ? [input.categoryId] : [])
+    for (const catId of targetCategoryIds) {
+      const linked = await insertFirstNoId(PRODUCT_CATEGORY_TABLES, [{ productId: input.productId, categoryId: catId }])
       if (!linked.ok) {
         logger.error("Supabase insert failed for table 'ProductCategory' with payload", {
           productId: input.productId,
-          categoryId: input.categoryId,
+          categoryId: catId,
           errors: linked.errors.slice(0, 5),
         })
       }

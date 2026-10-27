@@ -14,21 +14,20 @@ import { AnimatePresence, m, useReducedMotion } from "framer-motion"
 import { clearSession } from "@/lib/auth-session"
 import { getFavoriteSlugs } from "@/lib/favorites"
 
-type MenuCategory = {
-  id: string
-  name: string
-  slug: string
-  products: Array<{ id: string; name: string; slug: string }>
+type MenuItem = { id: string; name: string; slug: string }
+type MenuDietaryProducts = {
+  veg: MenuItem[]
+  nonVeg: MenuItem[]
 }
 
-type ApiCategory = { id?: string; name?: string; slug?: string }
 type ApiProduct = {
   id?: string
   name?: string
   slug?: string
   status?: string
   isActive?: boolean
-  categories?: Array<{ categoryId?: string; category?: { id?: string } }>
+  foodType?: string
+  tags?: any[]
 }
 
 export default function Header() {
@@ -43,7 +42,7 @@ export default function Header() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userDropdownOpen, setUserDropdownOpen] = useState(false)
   const userDropdownRef = useRef<HTMLDivElement>(null)
-  const [menuCategories, setMenuCategories] = useState<MenuCategory[]>([])
+  const [menuDietaryProducts, setMenuDietaryProducts] = useState<MenuDietaryProducts>({ veg: [], nonVeg: [] })
   const closeCartTimeoutRef = useRef<number | null>(null)
   const [cmsData, setCmsData] = useState<any>(null)
   const [wishlistCount, setWishlistCount] = useState(0)
@@ -74,51 +73,44 @@ export default function Header() {
 
   const loadMenuData = useCallback(async () => {
     try {
-      const [catsRes, productsRes] = await Promise.all([
-        fetch("/api/v1/categories").then((r) => r.json()).catch(() => ({ data: [] })),
-        // Dropdown only needs a small subset; reduce load.
-        fetch("/api/v1/products?page=1&limit=80&status=published").then((r) => r.json()).catch(() => ({ data: { items: [] } })),
-      ])
+      const productsRes = await fetch("/api/v1/products?page=1&limit=100&status=published")
+        .then((r) => r.json())
+        .catch(() => ({ data: { items: [] } }))
 
-      const cats = ((catsRes as { data?: ApiCategory[] })?.data ?? [])
-        .filter((c) => c.id && c.name)
-        .map((c) => ({
-          id: c.id as string,
-          name: c.name as string,
-          slug: (c.slug ?? c.name ?? "").toString(),
-        }))
+      const products = ((productsRes as { data?: { items?: ApiProduct[]; products?: ApiProduct[] } })?.data?.items ?? (productsRes as any)?.data?.products ?? [])
+        .filter((p: any) => p.id && p.name && p.slug)
+        .filter((p: any) => (p.status ?? "published") === "published" && p.isActive !== false)
 
-      const products = ((productsRes as { data?: { items?: ApiProduct[] } })?.data?.items ?? [])
-        .filter((p) => p.id && p.name && p.slug)
-        .filter((p) => (p.status ?? "published") === "published" && p.isActive !== false)
+      const vegList: MenuItem[] = []
+      const nonVegList: MenuItem[] = []
 
-      let grouped = cats.map((cat) => ({
-        ...cat,
-        products: products
-          .filter((p) =>
-            p.categories?.some((x) => x.category?.id === cat.id || x.categoryId === cat.id),
-          )
-          .map((p) => ({ id: p.id as string, name: p.name as string, slug: p.slug as string })),
-      }))
+      for (const p of products) {
+        const item: MenuItem = { id: String(p.id), name: String(p.name), slug: String(p.slug) }
+        const tags: string[] = (p.tags ?? [])
+          .map((t: any) => String(t?.tag?.name ?? t?.name ?? t?.slug ?? t?.tag?.slug ?? "").trim().toLowerCase())
+          .filter(Boolean)
 
-      const hasAnyMappedProducts = grouped.some((g) => g.products.length > 0)
-      if (!hasAnyMappedProducts && cats.length > 0 && products.length > 0) {
-        grouped = grouped.map((g, idx) => ({
-          ...g,
-          products:
-            idx === 0
-              ? products.map((p) => ({
-                id: p.id as string,
-                name: p.name as string,
-                slug: p.slug as string,
-              }))
-              : [],
-        }))
+        const isExplicitVeg = tags.some((t) => t === "veg" || t === "vegetarian") || p.foodType === "veg"
+        const isExplicitNonVeg = tags.some((t) => t === "non-veg" || t === "nonveg" || t === "non veg" || t === "non-vegetarian" || t === "non vegetarian") || p.foodType === "non-veg"
+
+        if (isExplicitNonVeg) {
+          nonVegList.push(item)
+        } else if (isExplicitVeg) {
+          vegList.push(item)
+        } else {
+          const lowerName = String(p.name).toLowerCase()
+          const meatKeywords = ["chicken", "prawn", "meat", "fish", "egg", "mutton", "seafood", "beef"]
+          if (meatKeywords.some((k) => lowerName.includes(k))) {
+            nonVegList.push(item)
+          } else {
+            vegList.push(item)
+          }
+        }
       }
 
-      setMenuCategories(grouped.filter((c) => c.products.length > 0).slice(0, 8))
+      setMenuDietaryProducts({ veg: vegList, nonVeg: nonVegList })
     } catch {
-      setMenuCategories([])
+      setMenuDietaryProducts({ veg: [], nonVeg: [] })
     }
   }, [])
 
@@ -375,14 +367,14 @@ export default function Header() {
             {/* PRODUCTS WITH DROPDOWN */}
             <div
               ref={productRef}
-              className="relative flex flex-col items-center"
+              className="relative flex flex-col items-center group"
               onMouseEnter={() => {
                 setProductDropdownOpen(true)
                 if (productRef.current) {
                   const rect = productRef.current.getBoundingClientRect()
                   setArrowLeft(rect.left + rect.width / 2)
                 }
-                if (menuCategories.length === 0) {
+                if (menuDietaryProducts.veg.length === 0 && menuDietaryProducts.nonVeg.length === 0) {
                   void loadMenuData()
                 }
               }}
@@ -397,48 +389,77 @@ export default function Header() {
               </Link>
 
               {/* DROPDOWN */}
-              <div className={`absolute left-0 top-[calc(100%+16px)] w-[100vw] flex justify-start ${productDropdownOpen ? "opacity-100 visible" : "opacity-0 invisible"} transition-all duration-300`}>
+              <div className={`absolute left-0 top-full pt-3 w-[100vw] flex justify-start transition-all duration-300 ${productDropdownOpen ? "opacity-100 visible pointer-events-auto" : "opacity-0 invisible pointer-events-none group-hover:opacity-100 group-hover:visible group-hover:pointer-events-auto"}`}>
+                <div className="relative w-auto max-w-4xl">
+                  <div className="bg-[#7a1e0e] text-white rounded-2xl shadow-xl p-8 sm:p-10 min-w-[540px]">
+                    <div className="grid grid-cols-2 gap-10 sm:gap-14">
 
-                <div className="relative w-auto max-w-7xl">
+                      {/* VEG COLUMN */}
+                      <div>
+                        <div className="flex items-center gap-2.5 mb-4">
+                          <span className="flex items-center justify-center w-4 h-4 rounded-[3px] border border-[#16A34A] bg-white shadow-xs">
+                            <span className="w-2 h-2 rounded-full bg-[#16A34A]" />
+                          </span>
+                          <h3 className="text-lg font-bold text-white">Veg</h3>
+                        </div>
 
-                  {/*  DYNAMIC ARROW */}
-                  {/* <div
-                    className="absolute -top-3 w-0 h-0 
-                      border-l-[10px] border-r-[10px] border-b-[10px] 
-                      border-l-transparent border-r-transparent border-b-[#7a1e0e] transition-all duration-200"
-                    style={{
-                      left: arrowLeft,
-                      transform: "translateX(-10%)"
-                    }}
-                  /> */}
+                        <ul className="space-y-3">
+                          {menuDietaryProducts.veg.length === 0 ? (
+                            <li className="text-sm text-white/70 py-1 italic">No veg products found.</li>
+                          ) : (
+                            menuDietaryProducts.veg.map((product) => (
+                              <li key={product.id}>
+                                <Link
+                                  href={`/product/${product.slug}`}
+                                  onClick={() => setProductDropdownOpen(false)}
+                                  className={`block text-[15px] sm:text-base transition-colors ${
+                                    pathname === `/product/${product.slug}`
+                                      ? "text-orange-400 font-bold"
+                                      : "text-white hover:underline"
+                                  }`}
+                                >
+                                  {product.name}
+                                </Link>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
 
-                  <div className="bg-[#7a1e0e] text-white rounded-2xl shadow-xl p-10">
-                    <div className="grid grid-cols-3 gap-5">
-                      {menuCategories.length === 0 ? (
-                        <div className="col-span-4 text-sm text-white/80">No categories with products yet.</div>
-                      ) : (
-                        menuCategories.map((category) => (
-                          <div key={category.id}>
-                            <h3 className="text-lg font-bold mb-4">{category.name}</h3>
-                            <ul className="space-y-3">
-                              {category.products.slice(0, 8).map((product, idx) => (
-                                <li key={product.id}>
-                                  <Link
-                                    href={`/product/${product.slug}`}
-                                    onClick={() => setProductDropdownOpen(false)}
-                                    className={`${pathname === `/product/${product.slug}` ? "text-orange-400 font-semibold" : "text-white"} hover:underline`}
-                                  >
-                                    {product.name}
-                                  </Link>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))
-                      )}
+                      {/* NON-VEG COLUMN */}
+                      <div>
+                        <div className="flex items-center gap-2.5 mb-4">
+                          <span className="flex items-center justify-center w-4 h-4 rounded-[3px] border border-[#DC2626] bg-white shadow-xs">
+                            <span className="w-2 h-2 rounded-full bg-[#DC2626]" />
+                          </span>
+                          <h3 className="text-lg font-bold text-white">Non-Veg</h3>
+                        </div>
+
+                        <ul className="space-y-3">
+                          {menuDietaryProducts.nonVeg.length === 0 ? (
+                            <li className="text-sm text-white/70 py-1 italic">No non-veg products found.</li>
+                          ) : (
+                            menuDietaryProducts.nonVeg.map((product) => (
+                              <li key={product.id}>
+                                <Link
+                                  href={`/product/${product.slug}`}
+                                  onClick={() => setProductDropdownOpen(false)}
+                                  className={`block text-[15px] sm:text-base transition-colors ${
+                                    pathname === `/product/${product.slug}`
+                                      ? "text-orange-400 font-bold"
+                                      : "text-white hover:underline"
+                                  }`}
+                                >
+                                  {product.name}
+                                </Link>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      </div>
+
                     </div>
                   </div>
-
                 </div>
               </div>
             </div>

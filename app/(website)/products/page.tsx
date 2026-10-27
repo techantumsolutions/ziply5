@@ -277,8 +277,12 @@ function ProductsPageContent() {
 
   const filteredProducts = useMemo(() => {
     let items = products.filter((item) => {
-      // Merged logic: filter matches either the category field OR the diet type field
-      const categoryMatch = categoryFilter === "all" || item.category === categoryFilter || item.type === categoryFilter
+      // Merged logic: filter matches either any linked category OR the diet type field
+      const categoryMatch =
+        categoryFilter === "all" ||
+        item.category === categoryFilter ||
+        (item.categorySlugs && item.categorySlugs.includes(categoryFilter)) ||
+        item.type === categoryFilter
 
       const packMatch =
         packFilter === "all" ||

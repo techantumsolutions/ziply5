@@ -3,15 +3,62 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import Image from "next/image"
 import { useParams, useRouter } from "next/navigation"
-import { ArrowLeft, ChevronLeft, ChevronRight, Play, X } from "lucide-react"
+import { ArrowLeft, ChevronLeft, ChevronRight, Flame, Play, X } from "lucide-react"
 import { getFavoriteSlugs, toggleFavoriteSlug } from "@/lib/favorites"
 import { getCartItems, getCartQuantity, setCartItemQuantity } from "@/lib/cart"
-import { productImageSrc, toStorefrontProduct, type StorefrontProduct } from "@/lib/storefront-products"
+import { productImageSrc, toStorefrontProduct, type StorefrontProduct, type StorefrontPack } from "@/lib/storefront-products"
 import { isVideoUrl } from "@/lib/media-utils"
 import Link from "next/link"
 import { toast } from "@/lib/toast"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ModalAnimation } from "@/components/animations"
+import VegNonVegTag from "@/components/VegNonVegTag"
+
+const getSpiceLevelBadge = (spiceLevel: string | null | undefined) => {
+  if (!spiceLevel) return null
+  const clean = spiceLevel.trim()
+  if (!clean) return null
+
+  const normalized = clean.toLowerCase().replace(/[-_]+/g, " ")
+  if (normalized === "mild") {
+    return {
+      label: "Mild",
+      bg: "#F0FDF4",
+      text: "#15803D",
+      border: "#BBF7D0",
+    }
+  }
+  if (normalized === "medium") {
+    return {
+      label: "Medium",
+      bg: "#FFF7ED",
+      text: "#C2410C",
+      border: "#FED7AA",
+    }
+  }
+  if (normalized === "hot") {
+    return {
+      label: "Hot",
+      bg: "#FEF2F2",
+      text: "#DC2626",
+      border: "#FECACA",
+    }
+  }
+  if (normalized === "extra hot") {
+    return {
+      label: "Extra Hot",
+      bg: "#FEF2F2",
+      text: "#991B1B",
+      border: "#FCA5A5",
+    }
+  }
+  return {
+    label: clean.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    bg: "#FFF7ED",
+    text: "#C2410C",
+    border: "#FED7AA",
+  }
+}
 
 export default function ProductPage() {
   const params = useParams()
@@ -25,6 +72,7 @@ export default function ProductPage() {
   const [cartQtyBySlug, setCartQtyBySlug] = useState<Record<string, number>>({})
   const [quantity, setQuantity] = useState(0)
   const [selectedSize, setSelectedSize] = useState("")
+  const [selectedPackId, setSelectedPackId] = useState<string>("pack-1")
   const [openSection, setOpenSection] = useState<string | null>(null)
   const [favorite, setFavorite] = useState(false)
   const [relatedStart, setRelatedStart] = useState(0)
@@ -135,13 +183,73 @@ export default function ProductPage() {
     if (!product) return null
     return product.variants.find((v) => v.name === selectedSize || v.weight === selectedSize) ?? product.variants[0] ?? null
   }, [product, selectedSize])
-  const allVariantsOutOfStock = useMemo(
-    () => Boolean(product?.variants.length) && product?.variants.every((v) => v.stock <= 0),
-    [product],
-  )
 
-  const currentOldPrice = (activeVariant ? activeVariant.mrp : product?.oldPrice) || 0
-  const currentPrice = (activeVariant ? activeVariant.price : product?.price) || currentOldPrice
+  const calculateUnitRate = (price: number, qty: number, weightStr: string) => {
+    if (!price || !qty) return null
+    const cleanWeight = (weightStr || "").toLowerCase().trim()
+    let weightInGrams: number | null = null
+
+    const kgMatch = cleanWeight.match(/^([\d.]+)\s*kg$/i)
+    if (kgMatch) {
+      weightInGrams = parseFloat(kgMatch[1]) * 1000
+    } else {
+      const gMatch = cleanWeight.match(/^([\d.]+)\s*(g|gm|gms|gram|grams|ml)$/i)
+      if (gMatch) {
+        weightInGrams = parseFloat(gMatch[1])
+      }
+    }
+
+    if (weightInGrams && weightInGrams > 0) {
+      const totalGrams = weightInGrams * qty
+      const pricePer100g = (price / totalGrams) * 100
+      return `(₹${pricePer100g.toFixed(2)} /100 g)`
+    }
+
+    if (qty > 1) {
+      return `(₹${(price / qty).toFixed(2)} /unit)`
+    }
+    return null
+  }
+
+  const baseVariantPrice = (activeVariant ? Number(activeVariant.price) : Number(product?.price)) || 0
+  const baseVariantMrp = (activeVariant ? Number(activeVariant.mrp) : Number(product?.oldPrice)) || baseVariantPrice
+
+  const packOf1: StorefrontPack = useMemo(() => ({
+    id: "pack-1",
+    name: "Pack Of 1",
+    quantity: 1,
+    price: baseVariantPrice,
+    mrp: baseVariantMrp,
+    discountPercent: baseVariantMrp > baseVariantPrice && baseVariantPrice > 0 ? Math.round((1 - baseVariantPrice / baseVariantMrp) * 100) : null,
+    isActive: true,
+  }), [baseVariantPrice, baseVariantMrp])
+
+  const allPacks = useMemo(() => {
+    if (!product?.packs?.length) return [packOf1]
+    const matchingPacks = product.packs.filter((p) => {
+      if (p.isActive === false) return false
+      if (p.variantWeight) {
+        return p.variantWeight.trim().toLowerCase() === selectedSize.trim().toLowerCase()
+      }
+      if (p.variantId && activeVariant?.id) {
+        return p.variantId === activeVariant.id
+      }
+      return true
+    })
+
+    const hasPack1 = matchingPacks.some((p) => p.quantity === 1)
+    const list: StorefrontPack[] = hasPack1 ? [...matchingPacks] : [packOf1, ...matchingPacks]
+    return list.sort((a, b) => a.quantity - b.quantity)
+  }, [product?.packs, selectedSize, activeVariant?.id, packOf1])
+
+  const activePack = useMemo(() => {
+    if (allPacks.length === 0) return packOf1
+    const found = allPacks.find((p) => (p.id && p.id === selectedPackId) || (p.quantity === 1 && selectedPackId === "pack-1"))
+    return found ?? allPacks[0] ?? packOf1
+  }, [allPacks, selectedPackId, packOf1])
+
+  const currentPrice = activePack ? Number(activePack.price) : baseVariantPrice
+  const currentOldPrice = activePack ? Number(activePack.mrp) : baseVariantMrp
   const hasDiscount = currentOldPrice > currentPrice && currentPrice > 0
   const stockCount = product
     ? product.productKind === "simple"
@@ -150,6 +258,45 @@ export default function ProductPage() {
     : 0
 
   const salePercent = hasDiscount ? Math.round((1 - currentPrice / currentOldPrice) * 100) : null
+  const spiceBadge = useMemo(() => getSpiceLevelBadge(product?.spiceLevel), [product?.spiceLevel])
+  const categoryBadgeText = useMemo(() => {
+    if (!product) return null
+    if (product.categoryName) return product.categoryName
+    if (product.category && product.category !== "all") {
+      return product.category
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ")
+    }
+    return null
+  }, [product])
+
+  const currentCartVariantId = useMemo(() => {
+    const baseVId = activeVariant?.id ?? "default"
+    if (activePack && activePack.quantity > 1) {
+      return `${baseVId}:pack-${activePack.quantity}`
+    }
+    return activeVariant?.id ?? null
+  }, [activeVariant?.id, activePack])
+
+  const packCartLabel = useMemo(() => {
+    const size = selectedSize?.trim() || ""
+    if (!activePack || activePack.quantity <= 1) {
+      return size
+    }
+    return size ? `${size} (${activePack.name})` : activePack.name
+  }, [activePack, selectedSize])
+
+  const packStock = useMemo(() => {
+    const rawStock = activeVariant?.stock ?? product?.stock ?? 0
+    const packUnits = activePack?.quantity && activePack.quantity > 0 ? activePack.quantity : 1
+    return Math.floor(rawStock / packUnits)
+  }, [activeVariant?.stock, product?.stock, activePack?.quantity])
+
+  const allVariantsOutOfStock = useMemo(
+    () => Boolean(product?.variants.length) && product?.variants.every((v) => v.stock <= 0),
+    [product],
+  )
 
   useEffect(() => {
     if (!product) return
@@ -157,6 +304,7 @@ export default function ProductPage() {
     setIsMainVideoPlaying(false)
     const defaultVariant = product.variants.find((v) => v.isDefault) ?? product.variants[0]
     setSelectedSize(defaultVariant?.weight || defaultVariant?.name || product.weight)
+    setSelectedPackId("pack-1")
     const initialQty = getCartQuantity(product.id, defaultVariant?.id ?? null)
     setQuantity(initialQty)
     setOpenSection(null)
@@ -180,7 +328,7 @@ export default function ProductPage() {
       setCartQtyBySlug(qtyMap)
     }
     const syncQty = () => {
-      const qty = getCartQuantity(product.id, activeVariant?.id ?? null)
+      const qty = getCartQuantity(product.id, currentCartVariantId)
       setQuantity(qty)
     }
 
@@ -197,7 +345,7 @@ export default function ProductPage() {
       window.removeEventListener("ziply5:cart-updated", handleUpdate)
       window.removeEventListener("storage", handleUpdate)
     }
-  }, [activeVariant?.id, product])
+  }, [currentCartVariantId, product])
 
   // Fetch DB Favorites on mount if logged in
   useEffect(() => {
@@ -434,26 +582,50 @@ export default function ProductPage() {
 
             <h1 className="font-heading mt-3 text-4xl leading-none text-[#201A1A]">{product.name}</h1>
 
-            <div className="mt-2 grid grid-cols-2 gap-2 md:flex md:items-center md:gap-2">
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <VegNonVegTag type={product.type} className="inline-flex items-center justify-center" />
+
+              {categoryBadgeText && (
+                <span className="inline-flex items-center rounded-md border border-[#E8DEC8] bg-[#F4F0EB] px-2.5 py-1 text-[11px] font-semibold text-[#4A1D1F]">
+                  {categoryBadgeText}
+                </span>
+              )}
+
+              {spiceBadge && (
+                <span
+                  className="inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-[11px] font-semibold"
+                  style={{
+                    backgroundColor: spiceBadge.bg,
+                    color: spiceBadge.text,
+                    borderColor: spiceBadge.border,
+                  }}
+                >
+                  <Flame size={12} className="shrink-0" />
+                  <span>{spiceBadge.label}</span>
+                </span>
+              )}
+
+              {salePercent && salePercent > 0 && (
+                <span className="rounded-md bg-[#2E84CF] px-2.5 py-1 text-[11px] font-semibold text-white text-center">
+                  SALE {salePercent}% Off
+                </span>
+              )}
+
               {stockCount > 0 && stockCount < 5 && (
                 <span className="rounded-full border border-[#C2410C] bg-[#FFF1E8] px-3 py-1 text-[12px] font-semibold text-[#C2410C] text-center">
                   Only few items left
                 </span>
               )}
-              {salePercent && salePercent > 0 && (
-                <span className="rounded-md bg-[#2E84CF] px-2 py-1 text-[11px] font-semibold text-white text-center">SALE {salePercent}% Off</span>
-              )}
+
               {product.labels.slice(0, 2).map((label, idx) => (
-                <span key={`${label.label || "label"}-${idx}`} className="rounded-md px-2 py-1 text-[11px] font-semibold text-white text-center" style={{ backgroundColor: label.color ?? "#A32424" }}>
+                <span
+                  key={`${label.label || "label"}-${idx}`}
+                  className="rounded-md px-2.5 py-1 text-[11px] font-semibold text-white text-center"
+                  style={{ backgroundColor: label.color ?? "#A32424" }}
+                >
                   {label.label}
                 </span>
               ))}
-              <span
-                className={`rounded-md px-2 py-1 text-[11px] font-semibold text-white text-center ${product.type === "veg" ? "bg-[#2EA852]" : "bg-[#A32424]"
-                  }`}
-              >
-                {product.type === "veg" ? "Vegetarian" : "Non-Vegetarian"}
-              </span>
             </div>
 
             <div className="mt-3 flex items-end gap-2">
@@ -480,7 +652,10 @@ export default function ProductPage() {
                   <button
                     type="button"
                     key={`${size || "size"}-${idx}`}
-                    onClick={() => setSelectedSize(size)}
+                    onClick={() => {
+                      setSelectedSize(size)
+                      setSelectedPackId("pack-1")
+                    }}
                     disabled={outOfStock}
                     className={`rounded-md border px-3 py-1 text-xs font-semibold ${selectedSize === size
                       ? "border-[#A33838] bg-[#A33838] text-white"
@@ -494,6 +669,72 @@ export default function ProductPage() {
             </div>
             {allVariantsOutOfStock && <p className="mt-2 text-sm font-semibold text-red-700">Out of Stock</p>}
 
+            {/* Package Size / Packs Section */}
+            {allPacks.length > 1 && (
+              <div className="mt-4 space-y-2">
+                <p className="text-sm text-[#444]">
+                  Package Size Name:{" "}
+                  <strong className="font-bold text-[#111]">{activePack.name}</strong>
+                </p>
+                <div className="flex flex-wrap items-stretch gap-2.5">
+                  {allPacks.map((pack) => {
+                    const isSelected =
+                      (pack.id && pack.id === activePack.id) ||
+                      pack.quantity === activePack.quantity
+                    const unitRate = calculateUnitRate(
+                      Number(pack.price),
+                      pack.quantity,
+                      selectedSize
+                    )
+                    const packMrp = Number(pack.mrp)
+                    const packPrice = Number(pack.price)
+                    const showPackMrp = packMrp > packPrice && packPrice > 0
+
+                    return (
+                      <button
+                        type="button"
+                        key={pack.id || `pack-${pack.quantity}`}
+                        onClick={() => setSelectedPackId(pack.id || `pack-${pack.quantity}`)}
+                        className={`group flex flex-col text-left rounded-lg transition-all overflow-hidden min-w-[110px] sm:min-w-[120px] cursor-pointer ${
+                          isSelected
+                            ? "border-2 border-[#0066C0] bg-white ring-1 ring-[#0066C0]/20 shadow-xs"
+                            : "border border-[#B8B8B8] bg-white hover:border-[#666]"
+                        }`}
+                      >
+                        {/* Header */}
+                        <div
+                          className={`px-3 py-1.5 border-b text-xs sm:text-sm font-bold transition-colors ${
+                            isSelected
+                              ? "bg-[#EDF5FF] border-[#0066C0]/25 text-[#111]"
+                              : "bg-white border-[#E5E5E5] text-[#111] group-hover:bg-[#F9F9F9]"
+                          }`}
+                        >
+                          {pack.name}
+                        </div>
+
+                        {/* Body */}
+                        <div className="px-3 py-2 flex flex-col gap-0.5 justify-center flex-1">
+                          <span className="text-xs sm:text-sm font-bold text-[#111] leading-tight">
+                            ₹{packPrice.toFixed(2)}
+                          </span>
+                          {unitRate ? (
+                            <span className="text-[10px] sm:text-[11px] text-[#555] leading-tight font-normal">
+                              {unitRate}
+                            </span>
+                          ) : null}
+                          {showPackMrp ? (
+                            <span className="text-[11px] text-[#777] line-through leading-tight font-normal">
+                              ₹{packMrp.toFixed(2)}
+                            </span>
+                          ) : null}
+                        </div>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 flex items-center gap-4">
               <span className="text-xs font-light font-melon tracking-wide text-[#272727]" title="Quantity Add to Cart">Add to cart</span>
               <div className="flex items-center overflow-hidden rounded-2xl border border-[#FF8A00]">
@@ -503,17 +744,17 @@ export default function ProductPage() {
                     const nextQty = Math.max(0, quantity - 1)
                     setCartItemQuantity({
                       productId: product.id,
-                      variantId: activeVariant?.id ?? null,
+                      variantId: currentCartVariantId,
                       slug: product.slug,
                       name: product.name,
-                      variantLabel: selectedSize,
-                      variantOptions: selectedSize ? [selectedSize] : [],
+                      variantLabel: packCartLabel,
+                      variantOptions: packCartLabel ? [packCartLabel] : [],
                       price: currentPrice,
                       comparePrice: currentOldPrice,
-                      stock: activeVariant?.stock ?? product.stock ?? null,
+                      stock: packStock,
                       image: product.image,
-                      weight: selectedSize,
-                      sku: activeVariant?.sku,
+                      weight: packCartLabel,
+                      sku: activeVariant?.sku || (activePack?.sku ? activePack.sku.replace(/-PACK-\d+/i, "") : product.sku),
                     }, nextQty)
                     setQuantity(nextQty)
                   }}
@@ -528,17 +769,17 @@ export default function ProductPage() {
                     const nextQty = quantity + 1
                     setCartItemQuantity({
                       productId: product.id,
-                      variantId: activeVariant?.id ?? null,
+                      variantId: currentCartVariantId,
                       slug: product.slug,
                       name: product.name,
-                      variantLabel: selectedSize,
-                      variantOptions: selectedSize ? [selectedSize] : [],
+                      variantLabel: packCartLabel,
+                      variantOptions: packCartLabel ? [packCartLabel] : [],
                       price: currentPrice,
                       comparePrice: currentOldPrice,
-                      stock: activeVariant?.stock ?? product.stock ?? null,
+                      stock: packStock,
                       image: product.image,
-                      weight: selectedSize,
-                      sku: activeVariant?.sku,
+                      weight: packCartLabel,
+                      sku: activeVariant?.sku || (activePack?.sku ? activePack.sku.replace(/-PACK-\d+/i, "") : product.sku),
                     }, nextQty)
                     setQuantity(nextQty)
                   }}
@@ -548,27 +789,26 @@ export default function ProductPage() {
                 </button>
               </div>
             </div>
-            {/* <p className="mt-4 text-sm font-bold text-[#272727]"><span className="font-light font-melon tracking-wide">Variant:</span> <span>{selectedSize}</span></p> */}
 
             <div className="mt-5 flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => {
-                  const existingQty = getCartQuantity(product.id, activeVariant?.id ?? null)
+                  const existingQty = getCartQuantity(product.id, currentCartVariantId)
                   if (existingQty <= 0) {
                     setCartItemQuantity({
                       productId: product.id,
-                      variantId: activeVariant?.id ?? null,
+                      variantId: currentCartVariantId,
                       slug: product.slug,
                       name: product.name,
-                      variantLabel: selectedSize,
-                      variantOptions: selectedSize ? [selectedSize] : [],
+                      variantLabel: packCartLabel,
+                      variantOptions: packCartLabel ? [packCartLabel] : [],
                       price: currentPrice,
                       comparePrice: currentOldPrice,
-                      stock: activeVariant?.stock ?? product.stock ?? null,
+                      stock: packStock,
                       image: product.image,
-                      weight: selectedSize,
-                      sku: activeVariant?.sku,
+                      weight: packCartLabel,
+                      sku: activeVariant?.sku || (activePack?.sku ? activePack.sku.replace(/-PACK-\d+/i, "") : product.sku),
                     }, 1)
                   }
                   router.push("/cart")
