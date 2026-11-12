@@ -13,6 +13,7 @@ import { toast } from "@/lib/toast"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ModalAnimation } from "@/components/animations"
 import VegNonVegTag from "@/components/VegNonVegTag"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 const getSpiceLevelBadge = (spiceLevel: string | null | undefined) => {
   if (!spiceLevel) return null
@@ -83,8 +84,11 @@ export default function ProductPage() {
   const [reviews, setReviews] = useState<Array<{ id: string; rating: number; body?: string | null; user?: { name?: string | null } | null }>>([])
   const [selectedRelatedProduct, setSelectedRelatedProduct] = useState<StorefrontProduct | null>(null)
 
+  const CART_ADDED_TOAST = "Product added to cart successfully"
+
   const updateVariantQty = (prod: StorefrontProduct, variant: any, nextQty: number) => {
     const vId = variant.id ? String(variant.id) : (variant.sku || variant.weight || variant.name);
+    const prevQty = getCartQuantity(String(prod.id), vId)
     setCartItemQuantity({
       productId: String(prod.id),
       variantId: vId,
@@ -95,6 +99,9 @@ export default function ProductPage() {
       weight: variant.weight || variant.name,
       sku: variant.sku
     }, nextQty)
+    if (nextQty > 0 && prevQty <= 0) {
+      toast.success(CART_ADDED_TOAST)
+    }
   }
 
   const galleryImages = useMemo(() => {
@@ -292,6 +299,63 @@ export default function ProductPage() {
     const packUnits = activePack?.quantity && activePack.quantity > 0 ? activePack.quantity : 1
     return Math.floor(rawStock / packUnits)
   }, [activeVariant?.stock, product?.stock, activePack?.quantity])
+
+  const getPackCartVariantId = (pack: StorefrontPack) => {
+    const baseVId = activeVariant?.id ?? "default"
+    return pack.quantity > 1 ? `${baseVId}:pack-${pack.quantity}` : (activeVariant?.id ?? null)
+  }
+
+  /** Single click: select pack only — never increase cart qty. */
+  const handleSelectPack = (pack: StorefrontPack) => {
+    if (!product) return
+    const nextPackId = pack.id || `pack-${pack.quantity}`
+    setSelectedPackId(nextPackId)
+    const existingQty = getCartQuantity(product.id, getPackCartVariantId(pack))
+    setQuantity(existingQty)
+  }
+
+  /** Double click / double tap: add qty 1 only if this pack is not already in cart. */
+  const handleDoubleClickPack = (pack: StorefrontPack) => {
+    if (!product) return
+    const nextPackId = pack.id || `pack-${pack.quantity}`
+    setSelectedPackId(nextPackId)
+
+    const nextVariantId = getPackCartVariantId(pack)
+    const existingQty = getCartQuantity(product.id, nextVariantId)
+    if (existingQty > 0) {
+      setQuantity(existingQty)
+      return
+    }
+
+    const size = selectedSize?.trim() || ""
+    const label =
+      pack.quantity <= 1 ? size : size ? `${size} (${pack.name})` : pack.name
+    const rawStock = activeVariant?.stock ?? product.stock ?? 0
+    const packUnits = pack.quantity > 0 ? pack.quantity : 1
+    const stock = Math.floor(rawStock / packUnits)
+
+    setCartItemQuantity(
+      {
+        productId: product.id,
+        variantId: nextVariantId,
+        slug: product.slug,
+        name: product.name,
+        variantLabel: label,
+        variantOptions: label ? [label] : [],
+        price: Number(pack.price),
+        comparePrice: Number(pack.mrp),
+        stock,
+        image: product.image,
+        weight: label,
+        sku:
+          activeVariant?.sku ||
+          (pack.sku ? pack.sku.replace(/-PACK-\d+/i, "") : product.sku),
+      },
+      1,
+    )
+    setQuantity(1)
+    toast.success(CART_ADDED_TOAST)
+  }
 
   const allVariantsOutOfStock = useMemo(
     () => Boolean(product?.variants.length) && product?.variants.every((v) => v.stock <= 0),
@@ -691,44 +755,51 @@ export default function ProductPage() {
                     const showPackMrp = packMrp > packPrice && packPrice > 0
 
                     return (
-                      <button
-                        type="button"
-                        key={pack.id || `pack-${pack.quantity}`}
-                        onClick={() => setSelectedPackId(pack.id || `pack-${pack.quantity}`)}
-                        className={`group flex flex-col text-left rounded-lg transition-all overflow-hidden min-w-[110px] sm:min-w-[120px] cursor-pointer ${
-                          isSelected
-                            ? "border-2 border-[#0066C0] bg-white ring-1 ring-[#0066C0]/20 shadow-xs"
-                            : "border border-[#B8B8B8] bg-white hover:border-[#666]"
-                        }`}
-                      >
-                        {/* Header */}
-                        <div
-                          className={`px-3 py-1.5 border-b text-xs sm:text-sm font-bold transition-colors ${
-                            isSelected
-                              ? "bg-[#EDF5FF] border-[#0066C0]/25 text-[#111]"
-                              : "bg-white border-[#E5E5E5] text-[#111] group-hover:bg-[#F9F9F9]"
-                          }`}
-                        >
-                          {pack.name}
-                        </div>
+                      <Tooltip key={pack.id || `pack-${pack.quantity}`}>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectPack(pack)}
+                            onDoubleClick={() => handleDoubleClickPack(pack)}
+                            className={`group flex flex-col text-left rounded-lg transition-all overflow-hidden min-w-[110px] sm:min-w-[120px] cursor-pointer ${
+                              isSelected
+                                ? "border-2 border-[#0066C0] bg-white ring-1 ring-[#0066C0]/20 shadow-xs"
+                                : "border border-[#B8B8B8] bg-white hover:border-[#666]"
+                            }`}
+                          >
+                            {/* Header */}
+                            <div
+                              className={`px-3 py-1.5 border-b text-xs sm:text-sm font-bold transition-colors ${
+                                isSelected
+                                  ? "bg-[#EDF5FF] border-[#0066C0]/25 text-[#111]"
+                                  : "bg-white border-[#E5E5E5] text-[#111] group-hover:bg-[#F9F9F9]"
+                              }`}
+                            >
+                              {pack.name}
+                            </div>
 
-                        {/* Body */}
-                        <div className="px-3 py-2 flex flex-col gap-0.5 justify-center flex-1">
-                          <span className="text-xs sm:text-sm font-bold text-[#111] leading-tight">
-                            ₹{packPrice.toFixed(2)}
-                          </span>
-                          {unitRate ? (
-                            <span className="text-[10px] sm:text-[11px] text-[#555] leading-tight font-normal">
-                              {unitRate}
-                            </span>
-                          ) : null}
-                          {showPackMrp ? (
-                            <span className="text-[11px] text-[#777] line-through leading-tight font-normal">
-                              ₹{packMrp.toFixed(2)}
-                            </span>
-                          ) : null}
-                        </div>
-                      </button>
+                            {/* Body */}
+                            <div className="px-3 py-2 flex flex-col gap-0.5 justify-center flex-1">
+                              <span className="text-xs sm:text-sm font-bold text-[#111] leading-tight">
+                                ₹{packPrice.toFixed(2)}
+                              </span>
+                              {unitRate ? (
+                                <span className="text-[10px] sm:text-[11px] text-[#555] leading-tight font-normal">
+                                  {unitRate}
+                                </span>
+                              ) : null}
+                              {showPackMrp ? (
+                                <span className="text-[11px] text-[#777] line-through leading-tight font-normal">
+                                  ₹{packMrp.toFixed(2)}
+                                </span>
+                              ) : null}
+                            </div>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="normal-case tracking-normal">
+                          Double tap to add cart
+                        </TooltipContent>
+                      </Tooltip>
                     )
                   })}
                 </div>
@@ -766,6 +837,7 @@ export default function ProductPage() {
                 <button
                   type="button"
                   onClick={() => {
+                    const prevQty = quantity
                     const nextQty = quantity + 1
                     setCartItemQuantity({
                       productId: product.id,
@@ -782,6 +854,7 @@ export default function ProductPage() {
                       sku: activeVariant?.sku || (activePack?.sku ? activePack.sku.replace(/-PACK-\d+/i, "") : product.sku),
                     }, nextQty)
                     setQuantity(nextQty)
+                    if (prevQty <= 0) toast.success(CART_ADDED_TOAST)
                   }}
                   className="h-10 w-9 text-lg cursor-pointer font-bold transition hover:bg-[#6A3033]"
                 >
@@ -810,6 +883,7 @@ export default function ProductPage() {
                       weight: packCartLabel,
                       sku: activeVariant?.sku || (activePack?.sku ? activePack.sku.replace(/-PACK-\d+/i, "") : product.sku),
                     }, 1)
+                    toast.success(CART_ADDED_TOAST)
                   }
                   router.push("/cart")
                 }}
@@ -1059,6 +1133,7 @@ export default function ProductPage() {
                               sku: item.sku,
                               stock: item.stock,
                             }, nextQty)
+                            if (qty <= 0) toast.success(CART_ADDED_TOAST)
                           }}
                           className="h-6 w-6 rounded text-sm cursor-pointer font-light text-[#5A272A] hover:bg-[#f4efec]"
                         >
@@ -1086,6 +1161,7 @@ export default function ProductPage() {
                               sku: item.sku,
                               stock: item.stock,
                             }, 1)
+                            toast.success(CART_ADDED_TOAST)
                           }
                         }}
                         className="rounded-lg border cursor-pointer border-white tracking-wide px-4 py-1.5 text-[12px] font-light text-white hover:bg-primary hover:text-white transition-all "
@@ -1113,6 +1189,7 @@ export default function ProductPage() {
                               sku: item.sku,
                               stock: item.stock,
                             }, 1)
+                            toast.success(CART_ADDED_TOAST)
                           }
                           router.push("/checkout")
                         }

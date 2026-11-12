@@ -49,27 +49,9 @@ export default function Header() {
   const [productUsageNav, setProductUsageNav] = useState<{ title: string; url: string; enabled: boolean } | null>(null)
 
   const productRef = useRef<HTMLDivElement>(null)
+  const productCloseTimeoutRef = useRef<number | null>(null)
   const [productDropdownOpen, setProductDropdownOpen] = useState(false)
   const [arrowLeft, setArrowLeft] = useState(0)
-
-  useEffect(() => {
-    if (!pathname) return
-
-    const excludedPaths = [
-      "/login",
-      "/signup",
-      "/forgotPassword",
-      "/reset-password",
-      "/resetPassword",
-    ]
-
-    const isExcluded = excludedPaths.some((p) => pathname.startsWith(p)) || pathname.startsWith("/api")
-
-    if (!isExcluded) {
-      const fullPath = pathname + window.location.search
-      window.sessionStorage.setItem("ziply5_last_visited", fullPath)
-    }
-  }, [pathname])
 
   const loadMenuData = useCallback(async () => {
     try {
@@ -113,6 +95,57 @@ export default function Header() {
       setMenuDietaryProducts({ veg: [], nonVeg: [] })
     }
   }, [])
+
+  const openProductDropdown = useCallback(() => {
+    if (productCloseTimeoutRef.current) {
+      window.clearTimeout(productCloseTimeoutRef.current)
+      productCloseTimeoutRef.current = null
+    }
+    setProductDropdownOpen(true)
+    if (productRef.current) {
+      const rect = productRef.current.getBoundingClientRect()
+      setArrowLeft(rect.left + rect.width / 2)
+    }
+  }, [])
+
+  const closeProductDropdown = useCallback(() => {
+    if (productCloseTimeoutRef.current) {
+      window.clearTimeout(productCloseTimeoutRef.current)
+    }
+    productCloseTimeoutRef.current = window.setTimeout(() => {
+      setProductDropdownOpen(false)
+      productCloseTimeoutRef.current = null
+    }, 120)
+  }, [])
+
+  const closeProductDropdownNow = useCallback(() => {
+    if (productCloseTimeoutRef.current) {
+      window.clearTimeout(productCloseTimeoutRef.current)
+      productCloseTimeoutRef.current = null
+    }
+    setProductDropdownOpen(false)
+  }, [])
+
+  useEffect(() => {
+    if (!pathname) return
+
+    closeProductDropdownNow()
+
+    const excludedPaths = [
+      "/login",
+      "/signup",
+      "/forgotPassword",
+      "/reset-password",
+      "/resetPassword",
+    ]
+
+    const isExcluded = excludedPaths.some((p) => pathname.startsWith(p)) || pathname.startsWith("/api")
+
+    if (!isExcluded) {
+      const fullPath = pathname + window.location.search
+      window.sessionStorage.setItem("ziply5_last_visited", fullPath)
+    }
+  }, [pathname, closeProductDropdownNow])
 
   const persistCart = (next: CartItem[]) => {
     setLocalCartItems(next)
@@ -239,6 +272,9 @@ export default function Header() {
     return () => {
       if (closeCartTimeoutRef.current) {
         window.clearTimeout(closeCartTimeoutRef.current)
+      }
+      if (productCloseTimeoutRef.current) {
+        window.clearTimeout(productCloseTimeoutRef.current)
       }
       window.removeEventListener("ziply5:cart-updated", syncCart)
       window.removeEventListener("ziply5:favorites-updated", syncWishlist)
@@ -367,29 +403,34 @@ export default function Header() {
             {/* PRODUCTS WITH DROPDOWN */}
             <div
               ref={productRef}
-              className="relative flex flex-col items-center group"
+              className="relative flex flex-col items-center"
               onMouseEnter={() => {
-                setProductDropdownOpen(true)
-                if (productRef.current) {
-                  const rect = productRef.current.getBoundingClientRect()
-                  setArrowLeft(rect.left + rect.width / 2)
-                }
+                openProductDropdown()
                 if (menuDietaryProducts.veg.length === 0 && menuDietaryProducts.nonVeg.length === 0) {
                   void loadMenuData()
                 }
               }}
-              onMouseLeave={() => setProductDropdownOpen(false)}
+              onMouseLeave={closeProductDropdown}
             >
               <Link
                 href="/products"
-                onClick={() => setProductDropdownOpen(false)}
-                className="font-extrabold text-black hover:text-[#f97316] transition-colors text-[15px]"
+                onClick={closeProductDropdownNow}
+                className={`font-extrabold transition-colors text-[15px] ${
+                  productDropdownOpen ? "text-[#f97316]" : "text-black hover:text-[#f97316]"
+                }`}
               >
                 Products
               </Link>
 
-              {/* DROPDOWN */}
-              <div className={`absolute left-0 top-full pt-3 w-[100vw] flex justify-start transition-all duration-300 ${productDropdownOpen ? "opacity-100 visible pointer-events-auto" : "opacity-0 invisible pointer-events-none group-hover:opacity-100 group-hover:visible group-hover:pointer-events-auto"}`}>
+              {/* DROPDOWN — visibility is state-only (no group-hover) so leave/click can close it */}
+              <div
+                className={`absolute left-0 top-full pt-3 z-[110] transition-opacity duration-200 ${
+                  productDropdownOpen
+                    ? "opacity-100 visible pointer-events-auto"
+                    : "opacity-0 invisible pointer-events-none"
+                }`}
+                aria-hidden={!productDropdownOpen}
+              >
                 <div className="relative w-auto max-w-4xl">
                   <div className="bg-[#7a1e0e] text-white rounded-2xl shadow-xl p-8 sm:p-10 min-w-[540px]">
                     <div className="grid grid-cols-2 gap-10 sm:gap-14">
@@ -411,7 +452,7 @@ export default function Header() {
                               <li key={product.id}>
                                 <Link
                                   href={`/product/${product.slug}`}
-                                  onClick={() => setProductDropdownOpen(false)}
+                                  onClick={closeProductDropdownNow}
                                   className={`block text-[15px] sm:text-base transition-colors ${
                                     pathname === `/product/${product.slug}`
                                       ? "text-orange-400 font-bold"
@@ -443,7 +484,7 @@ export default function Header() {
                               <li key={product.id}>
                                 <Link
                                   href={`/product/${product.slug}`}
-                                  onClick={() => setProductDropdownOpen(false)}
+                                  onClick={closeProductDropdownNow}
                                   className={`block text-[15px] sm:text-base transition-colors ${
                                     pathname === `/product/${product.slug}`
                                       ? "text-orange-400 font-bold"

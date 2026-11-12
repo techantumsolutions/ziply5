@@ -419,8 +419,11 @@ function ProductsPageContent() {
     return () => ro.disconnect()
   }, [])
 
+  const CART_ADDED_TOAST = "Product added to cart successfully"
+
   const updateVariantQty = (product: any, variant: any, nextQty: number) => {
     const vId = variant.id ? String(variant.id) : (variant.sku || variant.weight || variant.name);
+    const prevQty = getCartQuantity(String(product.id), vId)
     setCartItemQuantity({
       productId: String(product.id),
       variantId: vId,
@@ -431,6 +434,9 @@ function ProductsPageContent() {
       weight: variant.weight || variant.name,
       sku: variant.sku
     }, nextQty)
+    if (nextQty > 0 && prevQty <= 0) {
+      toast.success(CART_ADDED_TOAST)
+    }
   }
   console.log("fetch products:::::::", filteredProducts)
 
@@ -730,7 +736,9 @@ function ProductsPageContent() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setCartItemQuantity(product as any, (cartQtyBySlug[product.slug] ?? 0) + 1);
+                              const qty = cartQtyBySlug[product.slug] ?? 0
+                              setCartItemQuantity(product as any, qty + 1);
+                              if (qty <= 0) toast.success(CART_ADDED_TOAST)
                             }}
                             className="h-6 w-6 rounded text-sm text-[#5A272A] hover:bg-[#f4efec]"
                           >
@@ -748,6 +756,7 @@ function ProductsPageContent() {
                               setSelectedProduct(product);
                             } else {
                               setCartItemQuantity(product as any, 1);
+                              toast.success(CART_ADDED_TOAST)
                             }
                           }}
                           className="rounded-lg border cursor-pointer border-white tracking-wide px-4 py-1.5 text-[12px] font-light text-white hover:bg-primary hover:text-white transition-all "
@@ -763,6 +772,7 @@ function ProductsPageContent() {
                           } else {
                             if ((cartQtyBySlug[product.slug] ?? 0) === 0) {
                               setCartItemQuantity(product as any, 1);
+                              toast.success(CART_ADDED_TOAST)
                             }
                             router.push("/checkout");
                           }
