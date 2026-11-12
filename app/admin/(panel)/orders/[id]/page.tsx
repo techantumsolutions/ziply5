@@ -11,6 +11,7 @@ import { generateAdminInvoicePDF } from "@/lib/invoice"
 import { formatOrderDateTime } from "@/src/lib/datetime"
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status"
 import { orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status"
+import { getAdminOrderDetailsButtonFlags } from "@/src/lib/orders/admin-order-actions"
 import { toast } from "@/lib/toast"
 import {
   multiplyWeight,
@@ -169,6 +170,12 @@ type OrderDetail = {
   trackingNumber?: string | null
   trackingUrl?: string | null
   shipmentStatus?: string | null
+  shipmentId?: string | null
+  shipmentNo?: string | null
+  shippingMethod?: string | null
+  shiprocketOrderId?: string | null
+  isShipmentCreated?: boolean | null
+  fulfillment?: { fulfillmentStatus?: string | null } | null
   pickupStatus?: string | null
   isPickupGenerated?: boolean | null
   estimatedDeliveryDate?: string | null
@@ -285,11 +292,29 @@ export default function AdminOrderDetailPage() {
     return targets.includes(s1) || targets.includes(s2)
   }, [lifecycleStatus, shipmentState])
 
-  const isManualShipmentDone = useMemo(() => {
-    const hasDetails = Boolean(courier && trackingNumber)
-    const isManualMethod = (order as any)?.shippingMethod === "manual" || (order as any)?.shipping_method === "manual"
-    return hasDetails || isManualMethod || (isUnserviceable && Boolean(courier || trackingNumber || isShippedOrBeyond))
-  }, [courier, trackingNumber, order, isUnserviceable, isShippedOrBeyond])
+  const buttonFlags = useMemo(
+    () =>
+      getAdminOrderDetailsButtonFlags(
+        {
+          status: order?.status,
+          lifecycleStatus,
+          shipmentStatus: shipmentState,
+          fulfillmentStatus: order?.fulfillment?.fulfillmentStatus,
+          shippingMethod: order?.shippingMethod,
+          shipping_method: (order as any)?.shipping_method,
+          shipmentId: order?.shipmentId,
+          shipmentNo: order?.shipmentNo ?? activeShipment?.shipmentNo,
+          shiprocketOrderId: order?.shiprocketOrderId,
+          isShipmentCreated: order?.isShipmentCreated,
+          awbCode: order?.awbCode,
+          shipments: order?.shipments,
+        },
+        { isOrderAccepted }
+      ),
+    [order, lifecycleStatus, shipmentState, activeShipment, isOrderAccepted]
+  )
+
+  const isManualShipmentDone = buttonFlags.isManualShipmentOrder
 
   const pickupDone = Boolean(
     (order?.isPickupGenerated && isConfirmedPickupRequest(pickupStatusText)) ||
@@ -306,42 +331,27 @@ export default function AdminOrderDetailPage() {
     return false
   }, [order, serviceabilitySummary, serviceableIds, unserviceableIds])
 
-  const isShiprocketSynced = useMemo(() => {
-    if (!order?.id) return false
-    return Boolean(
-      order?.shiprocketOrderId ||
-      order?.isShipmentCreated ||
-      order?.awbCode ||
-      (activeShipment && String(activeShipment.shipmentNo || "").trim() && !String(activeShipment.shipmentNo).startsWith("manual-"))
-    )
-  }, [order, activeShipment])
-
-  const isManualShipped = useMemo(() => {
-    if (!order?.id) return false
-    return Boolean(
-      isManualShipmentDone ||
-      (order as any)?.shippingMethod === "manual" ||
-      (order as any)?.shipping_method === "manual" ||
-      (activeShipment && (String(activeShipment.shipmentNo || "").startsWith("manual-") || String(activeShipment.carrier || "").toLowerCase() === "manual"))
-    )
-  }, [order, isManualShipmentDone, activeShipment])
+  const isShiprocketSynced = buttonFlags.isShiprocketShipment
+  const isManualShipped = buttonFlags.isManualShipmentOrder
 
   const isShipmentUpdateAllowed = useMemo(() => {
     if (!order?.id) return false
+    if (buttonFlags.disableStatusUpdateSelect) return false
     if (!isOrderAccepted) return false
     if (!isServiceabilityChecked) return false
     return isShiprocketSynced || isManualShipped
-  }, [order, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
+  }, [order, buttonFlags.disableStatusUpdateSelect, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
 
   const shipmentStatusDisabledReason = useMemo(() => {
     if (shipmentState === "cancelled") return "Shipment is cancelled"
+    if (buttonFlags.isDelivered) return "Order is already delivered"
     if (!isOrderAccepted) return "Order must be accepted first before updating shipment status"
     if (!isServiceabilityChecked) return "Courier serviceability must be checked first before updating shipment status"
     if (!isShiprocketSynced && !isManualShipped) {
       return "Order must be synced with Shiprocket or manual shipment created before updating shipment status"
     }
     return "Manually Change Shipment Status"
-  }, [shipmentState, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
+  }, [shipmentState, buttonFlags.isDelivered, isOrderAccepted, isServiceabilityChecked, isShiprocketSynced, isManualShipped])
 
   const [manualModal, setManualModal] = useState<{
     courier: string
@@ -934,11 +944,11 @@ export default function AdminOrderDetailPage() {
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
-        {!isOrderAccepted && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+        {!isOrderAccepted && !["cancelled", "rejected"].includes(lifecycleStatus) && !buttonFlags.isDelivered && (
           <>
             <Button
               className="bg-[#16803C] text-white hover:bg-[#146C33] disabled:opacity-50"
-              disabled={actionBusy === "approve_order"}
+              disabled={actionBusy === "approve_order" || buttonFlags.isDelivered}
               onClick={() => void runAction("approve_order")}
             >
               <Check className="mr-1.5 h-4 w-4" />
@@ -947,7 +957,7 @@ export default function AdminOrderDetailPage() {
 
             <Button
               variant="outline"
-              disabled={actionBusy === "reject_order"}
+              disabled={actionBusy === "reject_order" || buttonFlags.isDelivered}
               onClick={() => void runAction("reject_order")}
               title="Reject order"
             >
@@ -956,36 +966,49 @@ export default function AdminOrderDetailPage() {
           </>
         )}
 
-        {isOrderAccepted && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+        {(buttonFlags.showCheckServiceability || buttonFlags.showSyncButton || buttonFlags.showManualShipmentButton) && (
           <>
-            <Button
-              variant="outline"
-              disabled={Boolean(shiprocketBusy)}
-              onClick={() => void runShiprocketAction("serviceability")}
-              title="Check courier serviceability"
-            >
-              {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
-              {busy("serviceability") ? "Checking..." : "Check serviceability"}
-            </Button>
+            {buttonFlags.showCheckServiceability && (
+              <Button
+                variant="outline"
+                disabled={Boolean(shiprocketBusy) || buttonFlags.disableCheckServiceability}
+                onClick={() => void runShiprocketAction("serviceability")}
+                title={
+                  buttonFlags.isDelivered
+                    ? "Order is delivered"
+                    : buttonFlags.hasShipmentCreated
+                      ? "Courier serviceability disabled after shipment is created"
+                      : "Check courier serviceability"
+                }
+              >
+                {busy("serviceability") ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                {busy("serviceability") ? "Checking..." : "Check serviceability"}
+              </Button>
+            )}
 
-            <Button
-              variant="outline"
-              disabled={syncingOrder || Boolean(shiprocketBusy)}
-              onClick={() => void handleSyncOrder()}
-              title="Sync order from Shiprocket"
-            >
-              {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
-              Sync now
-            </Button>
+            {buttonFlags.showSyncButton && (
+              <Button
+                variant="outline"
+                disabled={syncingOrder || Boolean(shiprocketBusy) || buttonFlags.disableSyncButton}
+                onClick={() => void handleSyncOrder()}
+                title={buttonFlags.isDelivered ? "Order is delivered" : "Sync order from Shiprocket"}
+              >
+                {syncingOrder ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-1.5 h-4 w-4" />}
+                Sync now
+              </Button>
+            )}
 
-            <Button
-              variant="outline"
-              className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
-              onClick={handleOpenManualModal}
-              title="Enter or edit manual shipment details"
-            >
-              Manual shipment
-            </Button>
+            {buttonFlags.showManualShipmentButton && (
+              <Button
+                variant="outline"
+                className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                disabled={buttonFlags.disableManualShipmentButton}
+                onClick={handleOpenManualModal}
+                title={buttonFlags.isDelivered ? "Order is delivered" : "Enter or edit manual shipment details"}
+              >
+                Manual shipment
+              </Button>
+            )}
           </>
         )}
 
@@ -1022,8 +1045,14 @@ export default function AdminOrderDetailPage() {
           <Button
             className="border border-red-300 bg-white text-red-600 hover:bg-red-50"
             onClick={() => setShowCancelModal(true)}
-            disabled={actionBusy === "admin_cancel" || orderShipped}
-            title={orderShipped ? "Cannot cancel order once shipped" : "Cancel order"}
+            disabled={actionBusy === "admin_cancel" || orderShipped || buttonFlags.disableCancelButton}
+            title={
+              buttonFlags.isDelivered
+                ? "Cannot cancel a delivered order"
+                : orderShipped
+                  ? "Cannot cancel order once shipped"
+                  : "Cancel order"
+            }
           >
             <Ban className="mr-1.5 h-4 w-4" />
             Cancel order
@@ -1294,7 +1323,7 @@ export default function AdminOrderDetailPage() {
                     </select>
                     {updatingStatus === "shipment" && <Loader2 className="h-3.5 w-3.5 animate-spin text-[#16803C]" />}
                   </div>
-                  {!isShipmentUpdateAllowed && !["cancelled", "rejected"].includes(lifecycleStatus) && (
+                  {!isShipmentUpdateAllowed && !buttonFlags.isDelivered && !["cancelled", "rejected"].includes(lifecycleStatus) && (
                     <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200/60 max-w-xs text-right">
                       Locked until order is accepted, serviceability is checked, and synced with Shiprocket or shipped manually.
                     </span>

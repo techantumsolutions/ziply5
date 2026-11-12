@@ -28,7 +28,25 @@ export type OrderForInvoice = {
   paymentMethod?: string | null
   paymentStatus?: string | null
   codPaymentLinkUrl?: string | null
-  transactions?: Array<{ id: string; gateway?: string; amount?: string | number; status?: string; createdAt?: string }>
+  refNo?: string | null
+  transactionId?: string | null
+  gateway?: string | null
+  paidFrom?: string | null
+  shiprocketOrderId?: string | number | null
+  shipmentId?: string | number | null
+  awbCode?: string | null
+  courierName?: string | null
+  trackingNumber?: string | null
+  shiprocketRawResponse?: unknown
+  transactions?: Array<{
+    id: string
+    gateway?: string
+    amount?: string | number
+    status?: string
+    createdAt?: string
+    transactionId?: string
+    refNo?: string
+  }>
   user?: { email?: string | null } | null
   items?: Array<{
     id?: string
@@ -40,7 +58,7 @@ export type OrderForInvoice = {
     sku?: string | null
     hsnCode?: string | null
     hsn?: string | null
-    product?: { name?: string | null; sku?: string | null; hsnCode?: string | null; hsn?: string | null } | null
+    product?: { name?: string | null; sku?: string | null; hsnCode?: string | null; hsn?: string | null; weight?: string | null } | null
     variant?: { sku?: string | null; name?: string | null; weight?: string | null } | null
   }>
 }
@@ -197,6 +215,86 @@ export const formatISTDateTime = (dateInput: string | Date | number): string => 
   return formatted === "—" ? formatted : `${formatted} IST`
 }
 
+export const isInvoiceOrderPaid = (order: OrderForInvoice): boolean => {
+  const pStatus = String(order.paymentStatus ?? "").trim().toLowerCase()
+  if (["success", "paid", "completed", "captured", "settled"].includes(pStatus)) {
+    return true
+  }
+  const oStatus = String(order.status ?? "").trim().toLowerCase()
+  if (oStatus === "payment_success") {
+    return true
+  }
+  if (
+    Array.isArray(order.transactions) &&
+    order.transactions.some((t) => /paid|captured|success|settled/i.test(String(t.status ?? "")))
+  ) {
+    return true
+  }
+  if (order.paymentId && String(order.paymentId).startsWith("pay_")) {
+    return true
+  }
+  return false
+}
+
+export const resolveInvoicePaidFrom = (order: OrderForInvoice): string => {
+  if (order.paidFrom && String(order.paidFrom).trim()) {
+    return String(order.paidFrom).trim()
+  }
+  const pm = String(order.paymentMethod || "").trim().toLowerCase()
+  const gw = String(order.gateway || order.transactions?.[0]?.gateway || "").trim().toLowerCase()
+  const isShiprocket = Boolean(
+    (order as any).shiprocketOrderId ||
+    (order as any).shipmentId ||
+    (order as any).awbCode ||
+    (order as any).courierName ||
+    (order as any).trackingNumber ||
+    (order as any).shiprocketRawResponse ||
+    pm.includes("shiprocket") ||
+    gw.includes("shiprocket")
+  )
+  if (isShiprocket) {
+    return "Shiprocket"
+  }
+  if (pm) {
+    return pm.charAt(0).toUpperCase() + pm.slice(1)
+  }
+  if (gw) {
+    return gw.charAt(0).toUpperCase() + gw.slice(1)
+  }
+  return "Shiprocket"
+}
+
+export const resolveInvoiceReferenceNo = (order: OrderForInvoice): string => {
+  if (order.refNo && String(order.refNo).trim()) {
+    return String(order.refNo).trim()
+  }
+  if (order.transactions?.[0]?.refNo && String(order.transactions[0].refNo).trim()) {
+    return String(order.transactions[0].refNo).trim()
+  }
+  if (order.paymentId && String(order.paymentId).trim() && !String(order.paymentId).startsWith("checkout_ref:")) {
+    return String(order.paymentId).trim()
+  }
+  if (order.transactionId && String(order.transactionId).trim()) {
+    return String(order.transactionId).trim()
+  }
+  if (order.transactions?.[0]?.transactionId && String(order.transactions[0].transactionId).trim()) {
+    return String(order.transactions[0].transactionId).trim()
+  }
+  if ((order as any).shiprocketOrderId && String((order as any).shiprocketOrderId).trim()) {
+    return String((order as any).shiprocketOrderId).trim()
+  }
+  if (order.paymentId && String(order.paymentId).trim()) {
+    return String(order.paymentId).trim()
+  }
+  if ((order as any).awbCode && String((order as any).awbCode).trim()) {
+    return String((order as any).awbCode).trim()
+  }
+  if (order.transactions?.[0]?.id && String(order.transactions[0].id).trim()) {
+    return String(order.transactions[0].id).trim()
+  }
+  return String(order.id).trim()
+}
+
 // Core Tax Invoice PDF Generator following reference layout
 const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string = "invoice"): Promise<boolean> => {
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" })
@@ -308,8 +406,9 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
     const invoiceNo = formatInvoiceNumber(order.id, order.createdAt)
     const invoiceDateStr = formatInvoiceDate(order.createdAt)
     const isCod = (order.paymentMethod || "").toLowerCase().includes("cod") || (order.paymentMethod || "").toLowerCase().includes("cash")
+    const isPaid = isInvoiceOrderPaid(order)
     const paymentMode = isCod ? "COD" : (order.paymentMethod || "Immediate").toUpperCase()
-    const paymentTerms = isCod ? "COD" : "NEFT/RTGS/IMPS"
+    const paymentTerms = isPaid ? "Paid" : isCod ? "COD" : "NEFT/RTGS/IMPS"
 
     const labelX = col2Right + 4
     const valueX = pageWidth - margin - 4
@@ -463,147 +562,187 @@ const generateTaxInvoice = async (order: OrderForInvoice, filenamePrefix: string
 
     topY = Math.max(currentSummaryY + 6, tableFinalY + wordsLines.length * 4.5 + 4)
 
-    // 6. Bank Details & Payment Section Box
-    const codPaid = String(order.paymentStatus ?? "").toUpperCase() === "SUCCESS"
-    const codPayUrl = String(order.codPaymentLinkUrl ?? "").trim()
-    const showCodQr = isCod && !codPaid && Boolean(codPayUrl)
-    const bankBoxHeight = showCodQr ? 64 : 36
-    doc.setDrawColor(209, 213, 219)
-    doc.setLineWidth(0.3)
-    doc.rect(margin, topY, contentWidth, bankBoxHeight)
+    // 6. Payment / Bank Details Section Box
+    if (isPaid) {
+      const paidFrom = resolveInvoicePaidFrom(order)
+      const refNo = resolveInvoiceReferenceNo(order)
+      const paidBoxHeight = 26
 
-    const bankColWidth = 110
-    const bankColRight = margin + bankColWidth
-    doc.line(bankColRight, topY, bankColRight, topY + bankBoxHeight)
+      doc.setDrawColor(209, 213, 219)
+      doc.setLineWidth(0.3)
+      doc.setFillColor(249, 250, 251)
+      doc.rect(margin, topY, contentWidth, paidBoxHeight, "FD")
 
-    // Bank Details (Left)
-    let bY = topY + 5
-    doc.setFont("helvetica", "bold")
-    doc.setFontSize(9)
-    doc.setTextColor(17, 24, 39)
-    doc.text("Bank Details", margin + 4, bY)
-    bY += 4.5
+      const startX = margin + 6
+      let rowY = topY + 6.5
 
-    const renderBankRow = (lbl: string, val: string) => {
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(8)
-      doc.setTextColor(70, 70, 70)
-      doc.text(lbl, margin + 4, bY)
-      doc.setTextColor(30, 30, 30)
-      doc.text(val, margin + 28, bY)
-      bY += 4
-    }
-
-    renderBankRow("A/c Name:", "Sai Venkata Rama Agro Farms Pvt. Ltd.")
-    renderBankRow("Bank:", "HDFC Bank")
-    renderBankRow("Branch:", "Hyderguda")
-    renderBankRow("A/c No.:", "50200060220792")
-    renderBankRow("IFSC:", "HDFC0001996")
-
-    // Payment Info / UPI QR Code Box (Right)
-    const pX = bankColRight + 4
-    let pY = topY + 6
-
-    if (isCod && codPaid) {
-      doc.setFont("helvetica", "bold")
-      doc.setFontSize(9)
-      doc.setTextColor(22, 101, 52)
-      doc.text("Payment received", pX, pY)
-      pY += 5.5
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(8)
-      doc.setTextColor(55, 65, 81)
-      doc.text("This order is already paid. Do not collect again.", pX, pY)
-    } else if (showCodQr) {
-      doc.setFont("helvetica", "bold")
-      doc.setFontSize(9)
-      doc.setTextColor(17, 24, 39)
-      doc.text("Scan once to pay", pX, pY)
-      pY += 2
-      try {
-        const matrix = buildPaymentQrMatrix(codPayUrl)
-        const quiet = 4
-        const qrSize = 32
-        const cell = qrSize / (matrix.length + quiet * 2)
-        doc.setFillColor(255, 255, 255)
-        doc.rect(pX, pY, qrSize, qrSize, "F")
-        doc.setFillColor(17, 24, 39)
-        matrix.forEach((row, y) => {
-          row.forEach((on, x) => {
-            if (!on) return
-            const moduleX = pX + (x + quiet) * cell
-            const moduleY = pY + (y + quiet) * cell
-            doc.rect(moduleX, moduleY, cell + 0.08, cell + 0.08, "F")
-          })
-        })
-      } catch {
-        // The payment link below still works if the symbol cannot be drawn
-      }
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(7)
-      doc.setTextColor(70, 70, 70)
-      const textX = pX + 34
-      const linkLines = doc.splitTextToSize(codPayUrl, Math.max(24, margin + contentWidth - textX - 4))
-      doc.text(linkLines.slice(0, 3), textX, pY + 6)
-      doc.text("One payment for this order only.", textX, pY + 22)
-    } else if (isCod) {
-      doc.setFont("helvetica", "bold")
-      doc.setFontSize(9)
-      doc.setTextColor(180, 83, 9) // Amber
-      doc.text("Payment Mode: Cash on Delivery (COD)", pX, pY)
-      pY += 5.5
-
+      // Payment Status
       doc.setFont("helvetica", "bold")
       doc.setFontSize(8.5)
-      doc.setTextColor(220, 38, 38) // Red
-      doc.text("Status: Payment Pending", pX, pY)
-      pY += 5.5
+      doc.setTextColor(70, 70, 70)
+      doc.text("Payment Status:", startX, rowY)
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(9)
+      doc.setTextColor(22, 101, 52) // #166534 Green
+      doc.text("Paid", startX + 30, rowY)
 
+      rowY += 6
+
+      // Paid From
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8.5)
+      doc.setTextColor(70, 70, 70)
+      doc.text("Paid From:", startX, rowY)
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8.5)
+      doc.setTextColor(17, 24, 39)
+      doc.text(paidFrom, startX + 30, rowY)
+
+      rowY += 6
+
+      // Reference No.
+      doc.setFont("helvetica", "bold")
+      doc.setFontSize(8.5)
+      doc.setTextColor(70, 70, 70)
+      doc.text("Reference No.:", startX, rowY)
+      doc.setFont("helvetica", "normal")
+      doc.setFontSize(8.5)
+      doc.setTextColor(17, 24, 39)
+      const refLines = doc.splitTextToSize(refNo, contentWidth - 40)
+      doc.text(refLines[0] ?? refNo, startX + 30, rowY)
+
+      topY += paidBoxHeight + 8
+    } else {
+      const codPayUrl = String(order.codPaymentLinkUrl ?? "").trim()
+      const showCodQr = isCod && Boolean(codPayUrl)
+      const bankBoxHeight = showCodQr ? 64 : 36
+      doc.setDrawColor(209, 213, 219)
+      doc.setLineWidth(0.3)
+      doc.rect(margin, topY, contentWidth, bankBoxHeight)
+
+      const bankColWidth = 110
+      const bankColRight = margin + bankColWidth
+      doc.line(bankColRight, topY, bankColRight, topY + bankBoxHeight)
+
+      // Bank Details (Left)
+      let bY = topY + 5
       doc.setFont("helvetica", "bold")
       doc.setFontSize(9)
       doc.setTextColor(17, 24, 39)
-      doc.text("Payable Amount:", pX, pY)
-      const lblW = doc.getTextWidth("Payable Amount:")
-      const rImg = getRupeeSymbolDataUrl("#111827", true)
-      let valX = pX + lblW + 1.5
-      if (rImg && rImg.startsWith("data:image")) {
+      doc.text("Bank Details", margin + 4, bY)
+      bY += 4.5
+
+      const renderBankRow = (lbl: string, val: string) => {
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(8)
+        doc.setTextColor(70, 70, 70)
+        doc.text(lbl, margin + 4, bY)
+        doc.setTextColor(30, 30, 30)
+        doc.text(val, margin + 28, bY)
+        bY += 4
+      }
+
+      renderBankRow("A/c Name:", "Sai Venkata Rama Agro Farms Pvt. Ltd.")
+      renderBankRow("Bank:", "HDFC Bank")
+      renderBankRow("Branch:", "Hyderguda")
+      renderBankRow("A/c No.:", "50200060220792")
+      renderBankRow("IFSC:", "HDFC0001996")
+
+      // Payment Info / UPI QR Code Box (Right)
+      const pX = bankColRight + 4
+      let pY = topY + 6
+
+      if (showCodQr) {
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(9)
+        doc.setTextColor(17, 24, 39)
+        doc.text("Scan once to pay", pX, pY)
+        pY += 2
         try {
-          doc.addImage(rImg, "PNG", valX, pY - 3.1, 3.8, 3.8)
-          valX += 4.5
+          const matrix = buildPaymentQrMatrix(codPayUrl)
+          const quiet = 4
+          const qrSize = 32
+          const cell = qrSize / (matrix.length + quiet * 2)
+          doc.setFillColor(255, 255, 255)
+          doc.rect(pX, pY, qrSize, qrSize, "F")
+          doc.setFillColor(17, 24, 39)
+          matrix.forEach((row, y) => {
+            row.forEach((on, x) => {
+              if (!on) return
+              const moduleX = pX + (x + quiet) * cell
+              const moduleY = pY + (y + quiet) * cell
+              doc.rect(moduleX, moduleY, cell + 0.08, cell + 0.08, "F")
+            })
+          })
         } catch {
-          // ignore
+          // The payment link below still works if the symbol cannot be drawn
+        }
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(7)
+        doc.setTextColor(70, 70, 70)
+        const textX = pX + 34
+        const linkLines = doc.splitTextToSize(codPayUrl, Math.max(24, margin + contentWidth - textX - 4))
+        doc.text(linkLines.slice(0, 3), textX, pY + 6)
+        doc.text("One payment for this order only.", textX, pY + 22)
+      } else if (isCod) {
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(9)
+        doc.setTextColor(180, 83, 9) // Amber
+        doc.text("Payment Mode: Cash on Delivery (COD)", pX, pY)
+        pY += 5.5
+
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(8.5)
+        doc.setTextColor(220, 38, 38) // Red
+        doc.text("Status: Payment Pending", pX, pY)
+        pY += 5.5
+
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(9)
+        doc.setTextColor(17, 24, 39)
+        doc.text("Payable Amount:", pX, pY)
+        const lblW = doc.getTextWidth("Payable Amount:")
+        const rImg = getRupeeSymbolDataUrl("#111827", true)
+        let valX = pX + lblW + 1.5
+        if (rImg && rImg.startsWith("data:image")) {
+          try {
+            doc.addImage(rImg, "PNG", valX, pY - 3.1, 3.8, 3.8)
+            valX += 4.5
+          } catch {
+            // ignore
+          }
+        }
+        doc.text(totalVal.toFixed(2), valX, pY)
+        pY += 5.5
+
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(7.5)
+        doc.setTextColor(100, 100, 100)
+        doc.text("Please pay exact order total to courier agent upon delivery.", pX, pY)
+      } else {
+        doc.setFont("helvetica", "bold")
+        doc.setFontSize(8.5)
+        doc.setTextColor(17, 24, 39)
+        doc.text("Scan to Pay (UPI)", pX, pY)
+        pY += 4.5
+
+        doc.setFont("helvetica", "normal")
+        doc.setFontSize(8)
+        doc.setTextColor(70, 70, 70)
+        doc.text("UPI ID: 9908888296@hdfc", pX, pY)
+        pY += 4.5
+
+        doc.text(`Payment Mode: ${paymentMode}`, pX, pY)
+        pY += 4.5
+
+        if (order.paymentId || order.transactions?.[0]?.id) {
+          const txId = order.paymentId || order.transactions?.[0]?.id || ""
+          doc.text(`Txn ID: ${txId.slice(0, 24)}`, pX, pY)
         }
       }
-      doc.text(totalVal.toFixed(2), valX, pY)
-      pY += 5.5
 
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(7.5)
-      doc.setTextColor(100, 100, 100)
-      doc.text("Please pay exact order total to courier agent upon delivery.", pX, pY)
-    } else {
-      doc.setFont("helvetica", "bold")
-      doc.setFontSize(8.5)
-      doc.setTextColor(17, 24, 39)
-      doc.text("Scan to Pay (UPI)", pX, pY)
-      pY += 4.5
-
-      doc.setFont("helvetica", "normal")
-      doc.setFontSize(8)
-      doc.setTextColor(70, 70, 70)
-      doc.text("UPI ID: 9908888296@hdfc", pX, pY)
-      pY += 4.5
-
-      doc.text(`Payment Mode: ${paymentMode}`, pX, pY)
-      pY += 4.5
-
-      if (order.paymentId || order.transactions?.[0]?.id) {
-        const txId = order.paymentId || order.transactions?.[0]?.id || ""
-        doc.text(`Txn ID: ${txId.slice(0, 24)}`, pX, pY)
-      }
+      topY += bankBoxHeight + 8
     }
-
-    topY += bankBoxHeight + 8
 
     // 7. Declaration & Authorised Signatory
     doc.setFont("helvetica", "normal")

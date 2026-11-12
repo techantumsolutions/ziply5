@@ -10,6 +10,7 @@ import { formatIstSqlDateTime, formatOrderDate, formatOrderTime, toUtcIso } from
 import { isConfirmedPickupRequest } from "@/src/server/modules/shipping/shiprocket-status";
 import { assessPackageMeasures, awbQuoteWarning } from "@/src/server/modules/shipping/package-measures";
 import { isManualShipment, MANUAL_ORDER_STATUSES, orderStatusLabel, resolveCanonicalOrderStatus } from "@/src/lib/orders/manual-order-status";
+import { shouldShowAdminListingRowActions } from "@/src/lib/orders/admin-order-actions";
 import {
   Select,
   SelectContent,
@@ -1613,10 +1614,21 @@ export default function AdminOrdersPage() {
                           </TooltipContent>
                         </Tooltip>
                         {(() => {
-                          const shipCancelled = latestShipmentStatus(o) === "cancelled";
                           const lc = lifecycleStatus(o);
-                          const manual = isManualShipment({ shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo, shippingMethod: o.shippingMethod });
-                          if (shipCancelled || lc === "cancelled" || lc === "rejected" || manual) {
+                          const showExtraActions = shouldShowAdminListingRowActions({
+                            status: o.status,
+                            lifecycleStatus: lc,
+                            shipmentStatus: latestShipmentStatus(o),
+                            fulfillmentStatus: o.fulfillment?.fulfillmentStatus,
+                            shippingMethod: o.shippingMethod,
+                            shipmentId: o.shipmentId,
+                            shipmentNo: o.shipmentNo ?? o.shipments?.[0]?.shipmentNo,
+                            shiprocketOrderId: o.shiprocketOrderId,
+                            isShipmentCreated: o.isShipmentCreated,
+                            awbCode: o.awbCode,
+                            shipments: o.shipments,
+                          });
+                          if (!showExtraActions) {
                             return null;
                           }
 
